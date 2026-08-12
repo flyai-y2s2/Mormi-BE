@@ -448,7 +448,6 @@ type TurnContract = {
 
 ## 14. 관련 문서
 
-- [프론트 연동 세부 규격](./FRONTEND_INTEGRATION.md)
 - [전체 아키텍처](./ARCHITECTURE.md)
 - [시각자료 계약](./VISUAL_CONTRACTS.md)
 - [시각자료 JSON Schema](./visual-contract.schema.json)

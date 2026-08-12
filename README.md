@@ -48,7 +48,6 @@ uvicorn mormi_api.main:app --reload
 - Swagger UI: `http://localhost:8000/docs`
 - 상태 확인: `GET http://localhost:8000/health`
 - API 명세: [`ai-dialogue/docs/API_SPEC.md`](./ai-dialogue/docs/API_SPEC.md)
-- 프론트 연동 규격: [`ai-dialogue/docs/FRONTEND_INTEGRATION.md`](./ai-dialogue/docs/FRONTEND_INTEGRATION.md)
 - OpenAPI: [`ai-dialogue/docs/openapi.json`](./ai-dialogue/docs/openapi.json)
 
 ## 책임 경계
