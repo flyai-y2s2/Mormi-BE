@@ -16,6 +16,9 @@ Mormi-BE/
 학습자, 반복학습 결과, 진행도, 보상 원장, 장소 해금 등 일반 학습 데이터를
 담당합니다.
 
+현재 저장소의 Spring Boot 구현 범위는 `/health` 초기 골격이며, 위 일반 학습
+기능은 팀 백엔드가 순차적으로 추가할 예정입니다.
+
 - Java 21
 - Spring Boot 4
 - Spring MVC, JPA, Security, Validation
@@ -44,6 +47,7 @@ uvicorn mormi_api.main:app --reload
 
 - Swagger UI: `http://localhost:8000/docs`
 - 상태 확인: `GET http://localhost:8000/health`
+- API 명세: [`ai-dialogue/docs/API_SPEC.md`](./ai-dialogue/docs/API_SPEC.md)
 - 프론트 연동 규격: [`ai-dialogue/docs/FRONTEND_INTEGRATION.md`](./ai-dialogue/docs/FRONTEND_INTEGRATION.md)
 - OpenAPI: [`ai-dialogue/docs/openapi.json`](./ai-dialogue/docs/openapi.json)
 

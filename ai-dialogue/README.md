@@ -135,3 +135,8 @@ pytest
 ```
 
 상세 설계와 프론트엔드 연동 규격은 `docs/`를 참고하세요.
+
+- 사람이 읽는 API 명세: [`docs/API_SPEC.md`](./docs/API_SPEC.md)
+- 프론트 연동 규격: [`docs/FRONTEND_INTEGRATION.md`](./docs/FRONTEND_INTEGRATION.md)
+- OpenAPI 원본: [`docs/openapi.json`](./docs/openapi.json)
+- 시각자료 계약: [`docs/VISUAL_CONTRACTS.md`](./docs/VISUAL_CONTRACTS.md)
