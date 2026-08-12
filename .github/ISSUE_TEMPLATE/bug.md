@@ -1,3 +1,11 @@
+---
+name: Bug
+about: 버그 제보
+title: '[Bug] '
+labels: bug
+assignees: ''
+---
+
 ## #️⃣ 어떤 버그인가요?
 
 > 어떤 버그인지 간결하게 설명해주세요.
