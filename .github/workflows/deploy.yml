@@ -1,4 +1,4 @@
-name: CI/CD (develop → EC2)
+name: CI/CD (develop → ECR → EC2)
 
 on:
   push:
@@ -8,6 +8,10 @@ on:
 concurrency:
   group: deploy-develop
   cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
 
 jobs:
   build:
@@ -42,16 +46,51 @@ jobs:
           retention-days: 7
 
   deploy:
-    name: Deploy to EC2
+    name: Build image, push to ECR, deploy to EC2
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    permissions:
+      id-token: write
+      contents: read
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download JAR artifact
         uses: actions/download-artifact@v4
         with:
           name: app-jar
-          path: ./dist
+          path: build/libs
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Compute image tags
+        id: tags
+        run: |
+          REGISTRY="${{ steps.ecr.outputs.registry }}"
+          REPO="${{ env.ECR_REPOSITORY }}"
+          SHA_TAG="${GITHUB_SHA}"
+          BRANCH_TAG="develop"
+          echo "sha_image=${REGISTRY}/${REPO}:${SHA_TAG}" >> "$GITHUB_OUTPUT"
+          echo "branch_image=${REGISTRY}/${REPO}:${BRANCH_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Docker image
+        run: |
+          docker build \
+            -t "${{ steps.tags.outputs.sha_image }}" \
+            -t "${{ steps.tags.outputs.branch_image }}" \
+            .
+          docker push "${{ steps.tags.outputs.sha_image }}"
+          docker push "${{ steps.tags.outputs.branch_image }}"
 
       - name: Configure SSH key
         run: |
@@ -61,18 +100,47 @@ jobs:
           chmod 600 ~/.ssh/id_deploy
           ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
 
-      - name: Upload JAR to EC2
-        run: |
-          scp -i ~/.ssh/id_deploy \
-              ./dist/app.jar \
-              "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/app.jar"
-
-      - name: Install JAR and restart service
+      - name: Deploy container on EC2
+        env:
+          IMAGE_URI: ${{ steps.tags.outputs.sha_image }}
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          AWS_REGION: ${{ env.AWS_REGION }}
         run: |
           ssh -i ~/.ssh/id_deploy \
               "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-              'set -e
-               sudo install -o mormi -g mormi -m 640 /tmp/app.jar /opt/mormi-backend/app.jar
-               rm -f /tmp/app.jar
-               sudo systemctl restart mormi-backend
-               sudo systemctl --no-pager status mormi-backend | sed -n "1,15p"'
+              "IMAGE_URI='${IMAGE_URI}' REGISTRY='${REGISTRY}' AWS_REGION='${AWS_REGION}' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          aws ecr get-login-password --region "${AWS_REGION}" \
+            | docker login --username AWS --password-stdin "${REGISTRY}"
+
+          docker pull "${IMAGE_URI}"
+
+          docker rm -f mormi-backend 2>/dev/null || true
+
+          docker run -d \
+            --name mormi-backend \
+            --restart unless-stopped \
+            --env-file /etc/mormi-backend/mormi.env \
+            -p 8080:8080 \
+            --log-opt max-size=10m \
+            --log-opt max-file=5 \
+            "${IMAGE_URI}"
+
+          for i in $(seq 1 30); do
+            if curl -fsS -o /dev/null http://localhost:8080/actuator/health 2>/dev/null \
+               || curl -fsS -o /dev/null http://localhost:8080/ 2>/dev/null; then
+              echo "container is responding on :8080"
+              break
+            fi
+            if ! docker ps --format '{{.Names}}' | grep -q '^mormi-backend$'; then
+              echo "container exited during startup"
+              docker logs --tail=200 mormi-backend || true
+              exit 1
+            fi
+            sleep 2
+          done
+
+          docker image prune -f >/dev/null
+          docker ps --filter name=mormi-backend
+          REMOTE

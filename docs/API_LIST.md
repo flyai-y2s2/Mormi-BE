@@ -1,283 +1,280 @@
-# Mormi 백엔드 구현 API 목록
+# Mormi 백엔드 API 목록 및 구현 현황
 
-프로토타입(Mormi-FE)으로 실제 대상자 테스트를 하기 위해 필요한 API 전체 목록입니다.
+프로토타입(Mormi-FE)으로 실제 대상자 테스트를 하기 위한 API 전체 목록입니다.
 
-## 0. 현재 상태
+## 0. 서비스 구성
 
 | 레포 | 역할 | 상태 |
 |---|---|---|
-| `Mormi-FE` | Next.js 16 화면 + BFF | 화면 완성. **모든 데이터가 localStorage**, 백엔드 호출 0건 |
-| `Mormi-AI` | FastAPI + LangGraph 대화 | **완성**. 8개 엔드포인트 구현됨 |
-| `Mormi-BE` | Spring Boot 학습 기록 | **`GET /health` 뿐**. 엔티티·마이그레이션 0개 |
+| `Mormi-FE` | Next.js 16 화면 + BFF | 화면 완성. **서버 연동 완료** |
+| `Mormi-AI` | FastAPI + LangGraph 대화 | 완성 (8개 엔드포인트) |
+| `Mormi-BE` | Spring Boot 학습 기록 | **완성 (18개 엔드포인트)** |
 
-즉 이번에 만들 것은 **Spring 학습 API 18개 + Next.js BFF 4개**, 그리고 FE의 localStorage를 이 API로 교체하는 작업입니다.
-
-### FE가 지금 localStorage에 들고 있는 것 (전부 서버로 옮겨야 함)
-
-| 키 | 내용 | 위치 |
-|---|---|---|
-| `mormey-learner` | `{id:1, name}` — **모든 아이가 id=1 하드코딩** | `MoramiApp.tsx:891` |
-| `morami-completed-sessions` | 완료 세션 id 배열 → 카페 해금 판정 | `MoramiApp.tsx:1381` |
-| `mormey-coins` | 지갑 잔액(기본 6000) | `MoramiApp.tsx:1395` |
-| `morami-onboarding-complete` | `"true"` | `MoramiApp.tsx:1450` |
-| `morami-report` / `-history` | 세션 리포트 | `MoramiApp.tsx:1179` |
-
-카페(`CafeJourney.tsx`)는 **저장이 아예 없습니다.** `journeyProgress` 0→4가 순수 React state라 새로고침하면 1번 스테이지로 돌아갑니다. 결제·거스름돈 기록도 PostHog 이벤트로만 나가고 어디에도 안 남습니다.
+```text
+브라우저
+  → Next.js BFF
+      ├── Spring Boot: 학습 기록·진행도·보상·해금
+      └── Mormi-AI:    AI 대화 턴·도움 카드·별노트
+```
 
 ---
 
-## 1. Mormi-AI — 이미 구현 완료 (만들 필요 없음)
+## 1. Mormi-BE (Spring Boot) — 구현 완료
 
-인증은 `X-Mormi-Service-Key` 헤더. 브라우저가 직접 호출하지 않고 Next.js BFF를 경유합니다.
-
-| Method | Path | 용도 |
-|---|---|---|
-| `GET` | `/health` | 상태 확인 |
-| `POST` | `/v1/practice-results` | 반복학습 결과 적재 → `practice_result_id` 반환 |
-| `POST` | `/v1/conversations` | 대화 시작 → `TurnContract` |
-| `POST` | `/v1/conversations/{conversation_id}/responses` | 아이 응답 제출 → 다음 `TurnContract` |
-| `GET` | `/v1/conversations/{conversation_id}` | 최신 턴 복구 (409 이후) |
-| `GET` | `/v1/learners/{learner_id}/skill-profiles` | 스킬 프로파일 |
-| `GET` | `/v1/learners/{learner_id}/star-notes` | 별노트 목록 |
-| `GET` | `/v1/conversations/{conversation_id}/transcript` | 대화 원문(암호화 저장분) |
-
-`response_id` 멱등, 409 conflict + `state_version`, 503 시 상태 불변까지 이미 구현돼 있습니다.
-
----
-
-## 2. Mormi-BE (Spring Boot) — 구현 대상
-
-> 규칙: 보상 계산, 정오 판정, 해금 판정은 **전부 서버가 확정**합니다. FE는 표시만 합니다.
-> 현재 FE는 이 셋을 모두 클라이언트에서 계산해 localStorage에 씁니다.
+인증: `Authorization: Bearer <learner token>`.
+보상 계산, 정오 판정, 해금 판정은 **전부 서버가 확정**합니다. 프런트는 표시만 합니다.
 
 ### A. 학습자
 
-| # | Method | Path | 설명 |
+| Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| 1 | `POST` | `/v1/learners` | 온보딩 이름 제출. 학습자 생성 |
-| 2 | `GET` | `/v1/learners/{learner_id}` | 프로필 조회 |
-| 3 | `POST` | `/v1/learners/auth` | 연구코드로 기존 학습자 복구 → 토큰 재발급 |
+| `POST` | `/v1/learners` | — | 온보딩. 이름 + 참여 번호로 생성 또는 복구 |
+| `POST` | `/v1/learners/auth` | — | 참여 번호로 복구, 토큰 재발급 |
+| `GET` | `/v1/learners/{learner_id}` | ✓ | 프로필 조회 (본인만) |
 
-**1) `POST /v1/learners`**
 ```jsonc
-// req
+// POST /v1/learners
 { "display_name": "민준", "research_code": "MORMI-A03" }
-// res 201
+// 201
 {
-  "id": 1,
-  "display_name": "민준",
-  "research_code": "MORMI-A03",
-  "analytics_id": "b3f1...",      // PostHog identify 전용 가명 ID
-  "access_token": "...",           // 이후 요청 Authorization: Bearer
-  "created_at": "2026-08-12T10:00:00+09:00"
+  "id": 1, "display_name": "민준", "research_code": "MORMI-A03",
+  "analytics_id": "4fc04095-...",   // PostHog identify 전용 가명 ID
+  "conversation_storage_consent": false, "retention_policy": "no_raw",
+  "access_token": "KMw_gyMdWRtm..."
 }
 ```
-- FE의 `name` ← 응답의 `display_name` 매핑.
-- `display_name`은 화면 표시 전용. **PostHog·LLM 프롬프트에 절대 안 보냄** (현재 `MoramiApp.tsx:1109`가 `learnerName`을 LLM에 보내고 있어 수정 필요).
-- `analytics_id`는 `learners.id`와 별개여야 함 (`docs/posthog-plan.md` 요구사항).
+
+- **같은 참여 번호로 다시 들어오면 새 학습자를 만들지 않고 기존 진행도를 이어받습니다.** 기기 교체·캐시 삭제 후에도 복구됩니다.
+- `display_name` 은 화면 표시 전용. PostHog 와 AI 프롬프트에는 `analytics_id` 만 씁니다.
+- 토큰은 평문 저장하지 않고 SHA-256 해시만 보관합니다.
 
 ### B. 진행도 / 해금
 
-| # | Method | Path | 설명 |
-|---|---|---|---|
-| 4 | `GET` | `/v1/progress` | 앱 시작 시 1회. 전체 상태 복구 |
-| 5 | `GET` | `/v1/themes` | 장소별 해금 상태 |
+| Method | Path | 설명 |
+|---|---|---|
+| `GET` | `/v1/progress` | 앱 시작 시 1회. 화면 상태 통째로 복구 |
+| `GET` | `/v1/themes` | 장소별 해금 상태와 남은 필수 세션 |
 
-**4) `GET /v1/progress`** — localStorage 4개 키를 한 번에 대체
 ```jsonc
+// GET /v1/progress
 {
-  "learner": { "id": 1, "display_name": "민준" },
+  "learner_id": 1, "display_name": "민준", "analytics_id": "...",
   "onboarding_complete": true,
   "completed_session_ids": ["money-count", "money-price"],
   "wallet_balance": 7850,
-  "level": 1,                    // floor(완료수/4)+1  — MoramiApp.tsx:991
-  "stars": 6,                    // 완료수*3
+  "level": 1, "stars": 6,
   "cafe_unlocked": false,
-  "active_learning_session_id": null,   // 진행 중 세션 복구용
+  "cafe_required_session_ids": ["money-count","money-price","money-budget","money-mission"],
+  "active_learning_session_id": null,
   "active_cafe_visit_id": null
 }
 ```
-카페 해금 = `money-count`, `money-price`, `money-budget`, `money-mission` 4개 전부 완료 (`journey-config.ts:1-6`). **서버가 계산하고 FE는 표시만.**
+
+`level`·`stars`·`cafe_unlocked` 는 프런트가 계산하던 값을 서버로 옮긴 것입니다.
 
 ### C. 학습 세션 (집)
 
-| # | Method | Path | 설명 |
-|---|---|---|---|
-| 6 | `POST` | `/v1/learning-sessions` | 세션 시작 |
-| 7 | `GET` | `/v1/learning-sessions/{id}` | 새로고침 복구 |
-| 8 | `POST` | `/v1/learning-sessions/{id}/attempts` | 문제 시도 1건 기록 |
-| 9 | `POST` | `/v1/learning-sessions/{id}/complete` | 종료 + 보상 정산 |
+| Method | Path | 설명 |
+|---|---|---|
+| `POST` | `/v1/learning-sessions` | 세션 시작 |
+| `GET` | `/v1/learning-sessions/{id}` | 새로고침 복구 (시도 전체 포함) |
+| `POST` | `/v1/learning-sessions/{id}/attempts` | 문제 시도 1건 |
+| `POST` | `/v1/learning-sessions/{id}/complete` | 종료 + 보상 정산 |
 
-**6) `POST /v1/learning-sessions`**
 ```jsonc
-// req
-{ "learner_id": 1, "curriculum_session_id": "money-count", "variant_seed": 1284 }
-// res 201
-{ "learning_session_id": "session_a1b2", "started_at": "...", "expires_in_seconds": 480 }
+// POST /v1/learning-sessions
+{ "curriculum_session_id": "money-count", "variant_seed": 1284 }
 ```
-`variant_seed`를 꼭 받으세요. FE는 문제를 `varyProblem()`으로 런타임 생성하므로(`MoramiApp.tsx:431-592`), seed 없이는 **아이가 실제로 뭘 틀렸는지 재구성이 불가능합니다.**
+`variant_seed` 는 필수입니다. 프런트가 `varyProblem()` 으로 문제를 런타임 생성하므로 seed 없이는 아이가 실제로 본 문제를 재구성할 수 없습니다.
 
-**8) `POST /v1/learning-sessions/{id}/attempts`**
 ```jsonc
-// req
+// POST .../attempts  — 정답·오답 모두 보낸다
 {
-  "activity": "drill",           // drill | teach | transfer
-  "attempt_no": 3,
-  "item_id": "money-count:2",    // drill_index 포함
-  "is_correct": false,
-  "elapsed_ms": 4200,
-  "answer_meta": {               // JSONB. 구조 데이터만
-    "selected_choice_id": "c2",
-    "wrong_count_before": 1,
+  "activity": "drill", "attempt_no": 1,
+  "item_id": "money-count:0", "question_index": 0,
+  "is_correct": false, "elapsed_ms": 4200,
+  "answer_meta": {
+    "selected_answer": "200원",
+    "locked_answers": [],
     "misconception_tag": "coin_count_not_value"
   }
 }
-// res 200
-{ "attempt_id": 91, "reward_granted": 0, "session_reward_subtotal": 350 }
-```
-- 멱등키 `(learning_session_id, activity, attempt_no)`.
-- **오답 상세가 현재 어디에도 저장되지 않습니다.** `wrongDrillAnswers`는 정답 맞히면 초기화되고(`MoramiApp.tsx:1211`) 개수만 PostHog로 나갑니다. 이번에 새로 수집해야 하는 데이터입니다.
-- `answer_meta`에 아이 이름·자유발화 원문·음성은 넣지 않습니다.
-
-**9) `POST /v1/learning-sessions/{id}/complete`** — 한 트랜잭션으로 보상 확정
-```jsonc
-// req
-{
-  "conversation_id": "conversation_x9",   // Mormi-AI 대화 ID (가르치기 500원 검증용)
-  "transfer_solved": true,
-  "timed_out": false,
-  "elapsed_seconds": 142,
-  "idempotency_key": "complete:session_a1b2"
-}
-// res 200
-{
-  "drill_reward": 850, "teach_reward": 500, "total_reward": 1350,
-  "wallet_balance": 7350,
-  "completed_session_ids": [...], "cafe_unlocked": true,
-  "practice_result_id": "practice_77"
-}
+// 200
+{ "attempt_id": 1, "duplicate": false, "reward_granted": 0,
+  "session_reward_subtotal": 0, "correct_count": 0,
+  "mastery_target": 5, "drill_completed": false }
 ```
 
-보상 규칙 (서버 소유, `MoramiApp.tsx:1194-1200` / `mormey.md` §4):
+- 멱등키 `(learning_session_id, activity, attempt_no)`. 재전송하면 `duplicate: true` 로 첫 결과를 그대로 돌려주고 보상을 다시 주지 않습니다.
+- **보상은 클라이언트 값을 쓰지 않고, 서버가 저장된 오답 수를 세어 등급을 정합니다.**
 
 | 정답 전 오답 수 | 보상 |
 |---:|---:|
 | 0개 | 200원 |
 | 1개 | 150원 |
 | 2개 | 100원 |
-| 3개 | 50원 |
+| 3개 이상 | 50원 |
 
-5문제 × 최대 200원 = 드릴 최대 **1,000원**, 가르치기 성공 고정 **500원**. 지갑 시작값 6,000원.
+드릴 최대 1,000원 (5문제 × 200원), 가르치기 성공 고정 500원, 지갑 시작 6,000원.
 
-500원은 `conversation_id`로 Mormi-AI에 `completion.teach_reward_eligible == true`를 **검증한 뒤에만** 지급합니다. `bright_exit`는 세션은 끝나되 500원 없음. 멱등키 `teach-reward:{learning_session_id}:{conversation_id}`.
+```jsonc
+// POST .../complete
+{ "conversation_id": "conversation_x9", "transfer_solved": true,
+  "timed_out": false, "scaffold_level": 3, "elapsed_seconds": 142 }
+// 200
+{ "drill_reward": 850, "teach_reward": 500, "total_reward": 1350,
+  "wallet_balance": 7350, "teach_reward_eligible": true,
+  "practice_result_id": "practice_...",
+  "completed_session_ids": [...], "cafe_unlocked": true }
+```
 
-> ⚠️ FE의 `saveReport()`는 성공 경로에서 **두 번 호출**됩니다 (`MoramiApp.tsx:1367`, `:1379`). 멱등 처리 없으면 보상이 두 번 들어갑니다.
+가르치기 500원은 `conversation_id` 로 **Mormi-AI 에 `completion.teach_reward_eligible` 을 확인한 뒤에만** 지급합니다. 대화 서비스 주소가 없거나 조회에 실패하면 지급하지 않습니다. 멱등키 `teach-reward:{session}:{conversation}`.
 
 ### D. 카페
 
-| # | Method | Path | 설명 |
-|---|---|---|---|
-| 10 | `POST` | `/v1/cafe-visits` | 방문 시작 (해금 검증) |
-| 11 | `GET` | `/v1/cafe-visits/{id}` | 스테이지 진행 복구 |
-| 12 | `POST` | `/v1/cafe-visits/{id}/queue` | 줄 서기 제출 |
-| 13 | `POST` | `/v1/cafe-visits/{id}/menu` | 메뉴 2개 선택 |
-| 14 | `POST` | `/v1/cafe-visits/{id}/payments` | 결제 제출 |
-| 15 | `POST` | `/v1/cafe-visits/{id}/change` | 거스름돈 제출 |
-| 16 | `POST` | `/v1/cafe-visits/{id}/complete` | 방문 완료 |
+| Method | Path | 설명 |
+|---|---|---|
+| `POST` | `/v1/cafe-visits` | 방문 시작 (해금 검증, 진행 중 방문 있으면 이어받음) |
+| `GET` | `/v1/cafe-visits/{id}` | 진행 복구 (시도 전체 포함) |
+| `POST` | `/v1/cafe-visits/{id}/queue` | 줄 서기 |
+| `POST` | `/v1/cafe-visits/{id}/menu` | 메뉴 2개 |
+| `POST` | `/v1/cafe-visits/{id}/payments` | 결제 |
+| `POST` | `/v1/cafe-visits/{id}/change` | 거스름돈 |
+| `POST` | `/v1/cafe-visits/{id}/complete` | 완료 |
 
-`stage = queue | menu | calculate | change | complete`. **다음 돌다리 잠금 해제는 서버가 판정합니다.**
+`stage = queue | menu | calculate | change | complete`. 다음 돌다리 해금은 서버가 판정합니다. 해금 전 방문은 403.
 
-**14) `POST /v1/cafe-visits/{id}/payments`**
 ```jsonc
-// req
-{ "target_amount": 10000, "order_total": 7000,
-  "counts": { "100": 0, "500": 0, "1000": 5, "5000": 1 },
-  "attempt_no": 2 }
-// res 200
-{ "is_correct": true, "paid_amount": 10000, "difference": 0,
-  "stage": "change", "next_stage_unlocked": true, "attempts": 2 }
+// POST .../payments
+{ "counts": { "5000": 1, "1000": 4 }, "attempt_no": 1 }
+// 200
+{ "stage": "calculate", "is_correct": false,
+  "next_stage": "calculate", "next_stage_unlocked": false,
+  "attempts": 1, "expected_amount": 10000, "submitted_amount": 9000,
+  "difference": -1000, "feedback_code": "payment_short" }
 ```
-버튼 클릭 원본 로그는 저장하지 않고 **최종 화폐별 개수만** 저장합니다.
 
-메뉴는 6종 고정(아메리카노 3000 / 우유 2000 / 딸기주스 4000 / 쿠키 2000 / 딸기케이크 3000 / 샌드위치 4000), 정확히 2개, 합계 10,000원 이하. 결제는 10,000원 정확히 일치해야 통과. 거스름돈은 `10000 - order_total`을 1000·500원으로만 구성.
-
-> 참고: `cafe_visits` 테이블을 contract대로 `menu_id` 단수로 만들면 안 됩니다. **메뉴 2개**이고 결제/거스름돈이 별개 단계라 `cafe_visit_stages` 자식 테이블이 필요합니다.
+- 메뉴 합계는 클라이언트 값이 아니라 **서버 가격표**로 계산합니다.
+- 화폐별 최종 구성만 저장하고 −/＋ 버튼 클릭 로그는 저장하지 않습니다.
+- 결제는 10,000원 정확히 일치, 거스름돈은 `낸 돈 − 메뉴값` 일치해야 통과.
 
 ### E. 리포트
 
-| # | Method | Path | 설명 |
-|---|---|---|---|
-| 17 | `GET` | `/v1/reports/summary` | 최신 세션 리포트 |
-| 18 | `GET` | `/v1/reports/history` | 세션 이력 (FE는 8건 보관하나 현재 미사용) |
+| Method | Path | 설명 |
+|---|---|---|
+| `GET` | `/v1/reports/summary` | 최신 완료 세션 리포트 |
+| `GET` | `/v1/reports/history?limit=8` | 세션 이력 |
 
-`ReportDashboard.tsx:10-30`의 `Report` 타입이 그대로 응답 스키마입니다:
-`date, sessionId, sessionTitle, sessionUnit, sessionLevel, masteryTarget, repetitions, masterySeconds, misconception, synchronized, transfer, ladder, timedOut, learnedLine, learnerName, learnerId, earnedCoins, drillCoins, teachCoins`
+`ReportDashboard.tsx` 의 `Report` 타입과 같은 필드 구성입니다. `sessionTitle`·`misconception`·`learnedLine` 처럼 커리큘럼 본문에 있는 값은 `session_id` 로 프런트가 채웁니다.
 
-`ladder`가 현재 FE는 0~3인데 Mormi-AI 계약은 `L4~L0`입니다. **매핑 규칙을 확정해야 합니다.**
+### F. 운영
 
----
-
-## 3. Mormi-FE — Next.js BFF 라우트
-
-서비스 키(`MORMI_DIALOGUE_SERVICE_KEY`)는 서버에만 두고 브라우저 번들에 넣지 않습니다.
-
-| # | Method | Path | → 전달 |
-|---|---|---|---|
-| 19 | `POST` | `/api/dialogue/conversations` | Mormi-AI `POST /v1/conversations` |
-| 20 | `POST` | `/api/dialogue/conversations/{id}/responses` | Mormi-AI `.../responses` |
-| 21 | `GET` | `/api/dialogue/conversations/{id}` | Mormi-AI `GET /v1/conversations/{id}` |
-| 22 | `POST` | `/api/mormi/respond` | 기존 `/api/morami/respond`의 신규 경로. 호환 기간 동안 같은 핸들러 |
+| Method | Path | 설명 |
+|---|---|---|
+| `GET` | `/health` | 상태 확인 (인증 불필요) |
 
 ---
 
-## 4. DB 스키마 (Flyway `V1__init.sql`)
+## 2. Mormi-AI — 이미 구현 완료
 
-`ddl-auto: validate` + `db/migration` 비어 있음 → **엔티티 추가하는 순간 기동 실패합니다.** 마이그레이션이 먼저입니다.
+`X-Mormi-Service-Key` 헤더 인증. 브라우저가 아니라 Next.js BFF 가 호출합니다.
+
+| Method | Path |
+|---|---|
+| `GET` | `/health` |
+| `POST` | `/v1/practice-results` |
+| `POST` | `/v1/conversations` |
+| `POST` | `/v1/conversations/{conversation_id}/responses` |
+| `GET` | `/v1/conversations/{conversation_id}` |
+| `GET` | `/v1/learners/{learner_id}/skill-profiles` |
+| `GET` | `/v1/learners/{learner_id}/star-notes` |
+| `GET` | `/v1/conversations/{conversation_id}/transcript` |
+
+`response_id` 멱등, 409 + `state_version`, 503 시 상태 불변까지 구현돼 있습니다.
+
+---
+
+## 3. Mormi-FE — 남은 작업
+
+연동 완료:
+- 온보딩에서 이름 + 참여 번호 → `POST /v1/learners` → 토큰 보관
+- 부팅 시 `GET /v1/progress` 로 상태 복구
+- 드릴 정답·오답 전건 `POST .../attempts`
+- 세션 종료 `POST .../complete` → 지갑·완료목록·해금을 서버 응답으로 갱신
+- 카페 전 스테이지 기록 + 방문 복구
+- PostHog `identify` 는 `analytics_id` 만 사용
+
+**미연동 (다음 단계):**
+- Next.js BFF → Mormi-AI 대화 라우트 (`/api/dialogue/*`, `/api/mormi/respond`)
+- 가르치기 대화를 Mormi-AI 턴 계약으로 교체 (현재는 `/api/morami/respond` 가 Claude 직접 호출)
+- 리포트 화면은 `localStorage` 유지 (요청대로). 서버에는 원본 데이터가 모두 쌓입니다
+
+---
+
+## 4. DB 스키마 (`V1__init.sql`)
 
 ```
-learners             id, display_name, research_code UNIQUE, analytics_id UUID,
-                     conversation_storage_consent, retention_policy, created_at
-learning_sessions    id, learner_id, curriculum_session_id, variant_seed,
-                     started_at, completed_at, scaffold_level, timed_out,
-                     conversation_id, practice_result_id
-attempts             id, learning_session_id, activity, attempt_no, item_id,
-                     is_correct, elapsed_ms, answer_meta JSONB
+learners             id, display_name, research_code UNIQUE, analytics_id UUID UNIQUE,
+                     token_hash UNIQUE, conversation_storage_consent, retention_policy,
+                     onboarding_completed_at, created_at
+learning_sessions    id, public_id UNIQUE, learner_id, curriculum_session_id, variant_seed,
+                     scaffold_level, elapsed_seconds, transfer_solved, timed_out,
+                     conversation_id, practice_result_id, started_at, completed_at
+attempts             id, learning_session_id, activity, attempt_no, item_id, question_index,
+                     is_correct, elapsed_ms, reward_granted, answer_meta JSONB, created_at
                      UNIQUE(learning_session_id, activity, attempt_no)
-theme_progress       learner_id, theme_id, unlocked_at, completed_at
-cafe_visits          id, learner_id, stage, order_total, target_amount,
-                     started_at, completed_at
-cafe_visit_stages    id, cafe_visit_id, stage, attempt_no, is_correct,
-                     payload JSONB   -- 화폐별 개수, 선택 메뉴 id 등
+theme_progress       id, learner_id, theme_id, unlocked_at, completed_at
+                     UNIQUE(learner_id, theme_id)
+cafe_visits          id, public_id UNIQUE, learner_id, stage, target_amount,
+                     order_total, paid_amount, change_amount, started_at, completed_at
+cafe_visit_stages    id, cafe_visit_id, stage, attempt_no, is_correct, elapsed_ms,
+                     payload JSONB, created_at
+                     UNIQUE(cafe_visit_id, stage, attempt_no)
 reward_ledger        id, learner_id, learning_session_id, source, amount,
                      idempotency_key UNIQUE, created_at
 ```
 
-- 모든 아동 데이터 테이블에 `learner_id` 인덱스.
-- 지갑 잔액은 별도 컬럼 없이 `reward_ledger` 합계로 도출.
-- 대화 원문은 이 DB에 넣지 않습니다 (Mormi-AI가 암호화 저장).
+- 지갑 잔액은 별도 컬럼 없이 `reward_ledger` 합계로 도출합니다.
+- 아동 데이터 테이블에는 `learner_id` 인덱스가 있습니다.
+- 아이 이름·자유 발화 원문·음성은 저장하지 않습니다. 대화 원문은 Mormi-AI 가 암호화 보관합니다.
 
 ---
 
-## 5. 구현 순서
+## 5. 실행
 
-1. **Flyway `V1__init.sql` + `SecurityConfig` + CORS** — 지금 Security가 클래스패스에 있는데 `SecurityFilterChain` 빈이 없어서 `/health` 포함 전 엔드포인트가 랜덤 비밀번호 Basic 인증에 막힙니다. CORS 설정도 없어 FE가 아예 호출 못 합니다.
-2. 학습자 + 진행도 (1·2·4) → FE 온보딩·부팅 연결
-3. 학습 세션 + 시도 + 완료 (6·8·9) → 보상을 서버로 이전
-4. 카페 (10~16) → 지금 완전히 유실되는 데이터 확보
-5. 리포트 (17)
-6. BFF (19~22) → Mormi-AI 연결
+```bash
+# DB
+docker run -d --name mormi-db -e POSTGRES_DB=mormi -e POSTGRES_USER=mormi \
+  -e POSTGRES_PASSWORD=mormi -p 5432:5432 postgres:16-alpine
 
-1~3만 되어도 대상자 테스트에서 "누가 무엇을 얼마나 했는가"는 남습니다. 일정이 촉박하면 여기까지가 최소선입니다.
+# 백엔드
+SPRING_PROFILES_ACTIVE=dev DB_HOST=localhost DB_PORT=5432 DB_NAME=mormi \
+DB_USERNAME=mormi DB_PASSWORD=mormi ./gradlew bootRun
+
+# 테스트 (Testcontainers, Docker 필요)
+./gradlew test
+```
+
+환경 변수:
+
+| 이름 | 용도 | 기본값 |
+|---|---|---|
+| `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USERNAME` / `DB_PASSWORD` | RDS 접속 | — |
+| `CORS_ALLOWED_ORIGINS` | 프런트 오리진 | `http://localhost:3000` |
+| `MORMI_DIALOGUE_BASE_URL` | Mormi-AI 주소. 비어 있으면 가르치기 500원 미지급 | 빈 값 |
+| `MORMI_DIALOGUE_SERVICE_KEY` | Mormi-AI 서비스 키 | 빈 값 |
+
+프런트는 `NEXT_PUBLIC_API_BASE_URL` 에 백엔드 주소를 넣습니다. 비어 있으면 모든 서버 호출이 꺼지고 기존 `localStorage` 동작으로 돌아갑니다.
 
 ---
 
 ## 6. 확정 필요한 사항
 
-| # | 항목 | 권장 |
+| # | 항목 | 현재 처리 |
 |---|---|---|
-| 1 | 학습자 식별 방식 | 연구코드 + Bearer 토큰. 지금은 모든 아이가 `id=1`이라 데이터가 섞임 |
-| 2 | RDS 안에서 Spring / Mormi-AI 데이터 분리 | 같은 인스턴스, 스키마 분리. Flyway가 대화 테이블을 validate하지 않도록 `search_path` 격리 |
-| 3 | 지갑 vs 카페 10,000원 | 현재 완전 분리(지갑 6000, 카페 하드코딩 10000). 분리 유지 권장 — 통합하면 잔액 부족 시 카페 진행 불가 처리가 추가로 필요 |
-| 4 | `ladder` 0~3 ↔ `L4~L0` 매핑 | 리포트와 대화 계약이 다른 척도를 씀 |
-| 5 | 별노트 저장 주체 | Mormi-AI가 이미 `star-notes` 보유. Spring은 조회만 |
-| 6 | `conversation_storage_consent` 관리 주체 | `learners`에 보관하고 대화 시작 시 전달 |
+| 1 | RDS 안에서 Spring / Mormi-AI 데이터 분리 | **미정.** Mormi-AI 는 `create_schema()` 로 직접 테이블을 만들고 Spring 은 Flyway + `ddl-auto: validate` 라 같은 스키마에 두면 충돌 위험. 스키마 또는 DB 분리 권장 |
+| 2 | 지갑 vs 카페 10,000원 | 분리 유지. 카페는 고정 실습 소지금이고 지갑에서 차감하지 않음 |
+| 3 | `ladder` 0~3 ↔ `L4~L0` 매핑 | 리포트는 0~3 그대로 저장. 대화 연동 시 확정 필요 |
+| 4 | 별노트 저장 주체 | Mormi-AI 보유. Spring 은 조회만 |
+| 5 | `conversation_storage_consent` 관리 주체 | `learners` 에 컬럼만 만들어 둠. 설정 UI·정책 미정 |
+| 6 | 참여 번호 발급 방식 | 연구자가 사전 발급해 전달하는 것으로 가정 |
