@@ -1,3 +1,22 @@
+# ===== 팀 공통 규칙 (develop) =====
+.gradle/
+build/
+out/
+
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+*.log
+.env
+.env.*
+!.env.example
+
+# 일회성 프론트 협의·회신 문서는 공식 API_SPEC에 통합한다.
+docs/FRONTEND_*.md
+
+# ===== 상세 템플릿 (java, gradle, intellij, macos, windows) =====
 # Created by https://www.toptal.com/developers/gitignore/api/java,gradle,intellij,macos,windows
 # Edit at https://www.toptal.com/developers/gitignore?templates=java,gradle,intellij,macos,windows
 
