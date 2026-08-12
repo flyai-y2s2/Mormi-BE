@@ -12,17 +12,5 @@ out/
 .env.*
 !.env.example
 
-ai-dialogue/.venv/
-ai-dialogue/.pytest_cache/
-ai-dialogue/.mypy_cache/
-ai-dialogue/.ruff_cache/
-ai-dialogue/**/__pycache__/
-ai-dialogue/**/*.py[cod]
-ai-dialogue/data/*
-!ai-dialogue/data/.gitkeep
-ai-dialogue/dist/
-ai-dialogue/build/
-ai-dialogue/*.egg-info/
-
 # 일회성 프론트 협의·회신 문서는 공식 API_SPEC에 통합한다.
-ai-dialogue/docs/FRONTEND_*.md
+docs/FRONTEND_*.md
