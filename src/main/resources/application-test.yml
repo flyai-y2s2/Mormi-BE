@@ -1,0 +1,14 @@
+spring:
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+mormi:
+  cors:
+    allowed-origins: http://localhost:3000
+  dialogue:
+    base-url: ""
+    service-key: ""
