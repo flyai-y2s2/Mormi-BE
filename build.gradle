@@ -35,6 +35,8 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 	implementation 'org.flywaydb:flyway-database-postgresql'
+	// API 명세는 손으로 쓰지 않고 컨트롤러에서 뽑는다. /swagger-ui, /v3/api-docs
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.0'
 
 	compileOnly 'org.projectlombok:lombok'
 	developmentOnly 'org.springframework.boot:spring-boot-devtools'
