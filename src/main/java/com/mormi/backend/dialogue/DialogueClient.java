@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * Spring BE 전용 Mormi-AI 클라이언트.
@@ -26,6 +27,7 @@ public class DialogueClient {
     private static final Logger log = LoggerFactory.getLogger(DialogueClient.class);
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(3);
     private static final Duration READ_TIMEOUT = Duration.ofSeconds(12);
+    private static final JsonMapper DIAGNOSTIC_JSON = JsonMapper.builder().build();
 
     private final RestClient restClient;
     private final String serviceKey;
@@ -135,6 +137,12 @@ public class DialogueClient {
         int status = error.getStatusCode().value();
         String diagnosticCode = diagnosticHeader(error, "X-Mormi-Error-Code");
         String diagnosticPath = diagnosticHeader(error, "X-Mormi-Error-Path");
+        if (diagnosticCode == null) {
+            diagnosticCode = diagnosticBodyValue(error, "code");
+        }
+        if (diagnosticPath == null) {
+            diagnosticPath = diagnosticBodyValue(error, "location");
+        }
         // FastAPI 검증 오류 본문에는 요청 입력 일부가 포함될 수 있으므로
         // 아이 원문이 운영 로그에 남지 않게 상태와 정제된 진단 헤더만 기록한다.
         log.warn(
@@ -188,6 +196,26 @@ public class DialogueClient {
             return null;
         }
         // AI가 생성한 코드·필드 경로만 허용한다. 응답 본문이나 사용자 입력은 전달하지 않는다.
+        return safeDiagnosticValue(value);
+    }
+
+    private String diagnosticBodyValue(RestClientResponseException error, String field) {
+        try {
+            JsonNode detail = DIAGNOSTIC_JSON.readTree(error.getResponseBodyAsString()).path("detail");
+            String value = "code".equals(field)
+                    ? detail.path("code").asText()
+                    : detail.path("issues").path(0).path("location").asText();
+            return safeDiagnosticValue(value);
+        } catch (Exception ignored) {
+            // 이전 AI 버전의 문자열 detail 또는 JSON이 아닌 오류 본문은 사용하지 않는다.
+            return null;
+        }
+    }
+
+    private String safeDiagnosticValue(String value) {
+        if (value == null || value.isBlank() || value.length() > 160) {
+            return null;
+        }
         return value.matches("[A-Za-z0-9_.\\[\\]-]+") ? value : null;
     }
 

@@ -53,4 +53,50 @@ class DialogueClientTest {
         assertThat(translated).isNotNull();
         assertThat(translated.getCode()).isEqualTo("dialogue_invalid_request");
     }
+
+    @Test
+    void sanitizedJsonDetailIsUsedWhenProxyDropsDiagnosticHeaders() {
+        String body = """
+                {"detail":{"code":"home_practice_result_missing","issues":[
+                  {"location":"body","type":"value_error"}
+                ]}}
+                """;
+        HttpClientErrorException upstream = HttpClientErrorException.create(
+                HttpStatus.UNPROCESSABLE_ENTITY,
+                "unprocessable",
+                new HttpHeaders(),
+                body.getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8);
+
+        DialogueClient client = new DialogueClient("", "");
+        ApiException translated = ReflectionTestUtils.invokeMethod(
+                client, "translate", upstream, "fallback");
+
+        assertThat(translated).isNotNull();
+        assertThat(translated.getCode()).isEqualTo(
+                "dialogue_invalid_request.home_practice_result_missing.body");
+    }
+
+    @Test
+    void responseBodyInputAndMessagesAreNeverUsedAsDiagnostics() {
+        String body = """
+                {"detail":{"code":"request value=아이 원문","issues":[
+                  {"location":"body[아이 원문]","type":"value_error","input":"민감 정보"}
+                ]}}
+                """;
+        HttpClientErrorException upstream = HttpClientErrorException.create(
+                HttpStatus.UNPROCESSABLE_ENTITY,
+                "unprocessable",
+                new HttpHeaders(),
+                body.getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8);
+
+        DialogueClient client = new DialogueClient("", "");
+        ApiException translated = ReflectionTestUtils.invokeMethod(
+                client, "translate", upstream, "fallback");
+
+        assertThat(translated).isNotNull();
+        assertThat(translated.getCode()).isEqualTo("dialogue_invalid_request");
+        assertThat(translated.getMessage()).doesNotContain("민감", "아이 원문");
+    }
 }
