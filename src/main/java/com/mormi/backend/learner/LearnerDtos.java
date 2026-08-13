@@ -2,6 +2,7 @@ package com.mormi.backend.learner;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.time.OffsetDateTime;
@@ -21,6 +22,12 @@ public final class LearnerDtos {
     /** 기기 교체·캐시 삭제 후 복구. 코드만으로 기존 학습자를 되찾는다. */
     public record LearnerAuthRequest(
             @NotBlank @Size(max = 40) @Pattern(regexp = "[A-Za-z0-9._-]+") String researchCode) {
+    }
+
+    /** 자유 발화 암호화 저장 동의. 동의하지 않으면 정책은 반드시 no_raw 다. */
+    public record ConversationConsentRequest(
+            @NotNull Boolean conversationStorageConsent,
+            @NotBlank @Pattern(regexp = "no_raw|30_days|90_days") String retentionPolicy) {
     }
 
     /**

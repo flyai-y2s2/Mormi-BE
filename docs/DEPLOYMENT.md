@@ -227,6 +227,8 @@ DB_PORT=5432
 DB_NAME=mormi
 DB_USERNAME=<계정>
 DB_PASSWORD=<비밀번호>
+MORMI_DIALOGUE_BASE_URL=http://<Mormi-AI-내부주소>:8000
+MORMI_DIALOGUE_SERVICE_KEY=<AI의 MORMI_SERVICE_API_KEY와 같은 값>
 EOF
 ```
 
@@ -238,6 +240,8 @@ sudo chmod 640 /etc/mormi-backend/mormi.env
 ```
 
 이 파일은 GitHub Secrets에 넣지 않는다. EC2 위에서만 존재.
+
+`MORMI_DIALOGUE_BASE_URL`과 `MORMI_DIALOGUE_SERVICE_KEY`가 없으면 일반 학습 API는 실행되지만 가르치기·카페 AI 대화를 시작할 수 없습니다. 서비스 키를 FE 또는 Vercel의 `NEXT_PUBLIC_*` 환경변수에 넣지 마세요.
 
 ### 3-4. 8080 포트 방화벽
 

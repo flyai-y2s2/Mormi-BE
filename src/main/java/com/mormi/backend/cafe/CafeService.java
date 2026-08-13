@@ -60,7 +60,6 @@ public class CafeService {
         payload.put("right_count", request.rightCount());
         payload.put("chosen_count", request.chosenCount());
         payload.put("shorter_side", request.leftCount() <= request.rightCount() ? "left" : "right");
-        payload.put("counting_answer", request.countingAnswer());
         payload.put("scaffold_used", request.scaffoldUsed());
 
         return recordStage(

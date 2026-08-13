@@ -4,6 +4,7 @@ import com.mormi.backend.auth.TokenHasher;
 import com.mormi.backend.common.ApiException;
 import com.mormi.backend.curriculum.CurriculumCatalog;
 import com.mormi.backend.learner.LearnerDtos.CreateLearnerRequest;
+import com.mormi.backend.learner.LearnerDtos.ConversationConsentRequest;
 import com.mormi.backend.learner.LearnerDtos.LearnerResponse;
 import com.mormi.backend.reward.RewardService;
 import com.mormi.backend.reward.RewardSource;
@@ -61,6 +62,14 @@ public class LearnerService {
     public LearnerResponse get(Long requestedId, Long authenticatedId) {
         requireSelf(requestedId, authenticatedId);
         return LearnerResponse.of(require(requestedId), null);
+    }
+
+    @Transactional
+    public LearnerResponse updateConversationConsent(
+            Long learnerId, ConversationConsentRequest request) {
+        Learner learner = require(learnerId);
+        learner.applyConsent(request.conversationStorageConsent(), request.retentionPolicy());
+        return LearnerResponse.of(learner, null);
     }
 
     @Transactional(readOnly = true)

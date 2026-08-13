@@ -19,6 +19,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +27,22 @@ import org.springframework.transaction.annotation.Transactional;
 public class LearningSessionService {
 
     private static final String ACTIVITY_DRILL = "drill";
+    private static final Set<String> SAFE_ANSWER_META_KEYS = Set.of(
+            "selected_choice_id",
+            "selected_choice_ids",
+            "locked_choice_ids",
+            "misconception_tag",
+            "response_category",
+            "difficulty_class",
+            "expression_level",
+            "hint_level",
+            "turn_id",
+            "input_kind",
+            "scaffold_used",
+            "selected_menu_ids",
+            "action_id");
+    private static final Pattern SAFE_META_IDENTIFIER =
+            Pattern.compile("[A-Za-z0-9._:-]{1,100}");
 
     private final LearningSessionRepository sessionRepository;
     private final AttemptRepository attemptRepository;
@@ -86,10 +103,7 @@ public class LearningSessionService {
         int wrongBefore = attemptRepository.countWrongForQuestion(
                 session.getId(), request.activity(), request.questionIndex());
 
-        Map<String, Object> answerMeta = new LinkedHashMap<>();
-        if (request.answerMeta() != null) {
-            answerMeta.putAll(request.answerMeta());
-        }
+        Map<String, Object> answerMeta = sanitizeAnswerMeta(request.answerMeta());
         // 서버가 센 오답 수를 기록해 둔다. 클라이언트 값과 어긋나도 이 값이 기준이다.
         answerMeta.put("wrong_count_before", wrongBefore);
 
@@ -124,7 +138,7 @@ public class LearningSessionService {
 
     private RecordAttemptResponse buildAttemptResponse(
             LearningSession session, Attempt attempt, boolean duplicate, int granted) {
-        int correctCount = attemptRepository.countCorrect(session.getId(), ACTIVITY_DRILL);
+        int correctCount = attemptRepository.countDistinctCorrectQuestions(session.getId(), ACTIVITY_DRILL);
         return new RecordAttemptResponse(
                 attempt.getId(),
                 duplicate,
@@ -138,7 +152,8 @@ public class LearningSessionService {
     /**
      * 세션 종료와 보상 확정을 한 트랜잭션으로 처리한다.
      *
-     * <p>가르치기 500원은 conversation_id 로 Mormi-AI 에 완료 여부를 확인한 뒤에만 지급한다.
+     * <p>가르치기 500원은 BE가 가르치기 시작 때 저장한 conversation_id 로
+     * Mormi-AI 완료 여부를 확인한 뒤에만 지급한다.
      * 프런트가 saveReport 를 두 번 호출해도 멱등키 때문에 한 번만 적립된다.
      */
     @Transactional
@@ -151,23 +166,26 @@ public class LearningSessionService {
         if (!session.isCompleted()) {
             session.setTransferSolved(request.transferSolved());
             session.setScaffoldLevel(request.scaffoldLevel());
-            session.setConversationId(request.conversationId());
             session.setElapsedSeconds(
                     request.elapsedSeconds() != null ? request.elapsedSeconds() : session.serverElapsedSeconds());
             session.setTimedOut(request.timedOut() || session.exceededTimeLimit());
-            session.setPracticeResultId("practice_" + session.getPublicId().substring("session_".length()));
+            if (session.getPracticeResultId() == null) {
+                session.setPracticeResultId(
+                        "practice_" + session.getPublicId().substring("session_".length()));
+            }
             session.setCompletedAt(OffsetDateTime.now());
         }
 
-        if (request.conversationId() != null && !request.conversationId().isBlank()) {
-            teachEligible = dialogueClient.isTeachRewardEligible(request.conversationId());
+        String trustedConversationId = session.getConversationId();
+        if (trustedConversationId != null && !trustedConversationId.isBlank()) {
+            teachEligible = dialogueClient.isTeachRewardEligible(trustedConversationId);
             if (teachEligible) {
                 rewardService.grant(
                         learnerId,
                         session.getId(),
                         RewardSource.TEACH,
                         CurriculumCatalog.TEACH_REWARD,
-                        "teach-reward:%s:%s".formatted(session.getPublicId(), request.conversationId()));
+                        "teach-reward:%s".formatted(session.getPublicId()));
             }
         }
 
@@ -205,7 +223,7 @@ public class LearningSessionService {
                 session.isTransferSolved(),
                 session.getScaffoldLevel(),
                 session.getConversationId(),
-                attemptRepository.countCorrect(session.getId(), ACTIVITY_DRILL),
+                attemptRepository.countDistinctCorrectQuestions(session.getId(), ACTIVITY_DRILL),
                 CurriculumCatalog.MASTERY_TARGET,
                 rewardService.sessionReward(session.getId(), RewardSource.DRILL),
                 attempts);
@@ -219,5 +237,35 @@ public class LearningSessionService {
             throw ApiException.forbidden("다른 학습자의 세션입니다.");
         }
         return session;
+    }
+
+    /**
+     * 일반 학습 DB에는 자유 발화 원문을 남기지 않는다. 허용된 구조 필드만 복사하고,
+     * 원문은 동의 정책을 적용하는 Mormi-AI로만 전달한다.
+     */
+    private Map<String, Object> sanitizeAnswerMeta(Map<String, Object> source) {
+        Map<String, Object> sanitized = new LinkedHashMap<>();
+        if (source == null) {
+            return sanitized;
+        }
+        for (String key : SAFE_ANSWER_META_KEYS) {
+            Object value = source.get(key);
+            if (value instanceof String text && SAFE_META_IDENTIFIER.matcher(text).matches()) {
+                sanitized.put(key, value);
+            } else if (value instanceof Number || value instanceof Boolean) {
+                sanitized.put(key, value);
+            } else if (value instanceof List<?> values) {
+                List<String> identifiers = values.stream()
+                        .limit(20)
+                        .filter(String.class::isInstance)
+                        .map(String.class::cast)
+                        .filter(item -> SAFE_META_IDENTIFIER.matcher(item).matches())
+                        .toList();
+                if (!identifiers.isEmpty()) {
+                    sanitized.put(key, identifiers);
+                }
+            }
+        }
+        return sanitized;
     }
 }

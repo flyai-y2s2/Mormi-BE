@@ -33,4 +33,14 @@ public interface AttemptRepository extends JpaRepository<Attempt, Long> {
             WHERE a.learningSessionId = :sessionId AND a.activity = :activity AND a.correct = true
             """)
     int countCorrect(@Param("sessionId") Long sessionId, @Param("activity") String activity);
+
+    /** 같은 문제를 여러 번 맞혀도 숙달 목표에는 한 문제로만 센다. */
+    @Query("""
+            SELECT COUNT(DISTINCT a.questionIndex) FROM Attempt a
+            WHERE a.learningSessionId = :sessionId
+              AND a.activity = :activity
+              AND a.correct = true
+            """)
+    int countDistinctCorrectQuestions(
+            @Param("sessionId") Long sessionId, @Param("activity") String activity);
 }

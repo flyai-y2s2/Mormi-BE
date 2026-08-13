@@ -1,18 +1,21 @@
 package com.mormi.backend.dialogue;
 
-import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
+import com.mormi.backend.common.ApiException;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
+import tools.jackson.databind.JsonNode;
 
 /**
- * Mormi-AI 대화 서비스 조회 클라이언트.
+ * Spring BE 전용 Mormi-AI 클라이언트.
  *
- * <p>가르치기 500원은 프런트가 사다리 단계나 별노트 유무로 추론하지 않고,
- * 대화 서비스가 완료로 판정한 경우에만 지급한다. 그 판정을 여기서 확인한다.
+ * <p>브라우저는 AI 서비스 키와 learner_id 를 직접 다루지 않는다. 인증된 학습자와
+ * 대화의 소유권은 Spring BE가 확인하고, 이 클라이언트만 서비스 키로 FastAPI를 호출한다.
  */
 @Component
 public class DialogueClient {
@@ -27,55 +30,111 @@ public class DialogueClient {
             @Value("${mormi.dialogue.base-url:}") String baseUrl,
             @Value("${mormi.dialogue.service-key:}") String serviceKey) {
         this.enabled = baseUrl != null && !baseUrl.isBlank();
-        this.serviceKey = serviceKey;
+        this.serviceKey = serviceKey == null ? "" : serviceKey;
         this.restClient = enabled ? RestClient.builder().baseUrl(baseUrl).build() : null;
     }
 
-    /**
-     * 대화가 완료되었고 보상 대상인지 확인한다.
-     * 대화 서비스 주소가 설정되지 않았거나 조회에 실패하면 지급하지 않는다
-     * (없는 보상을 주는 것보다 안전한 쪽으로 실패한다).
-     */
+    public JsonNode createConversation(Map<String, Object> request) {
+        requireConfigured();
+        try {
+            return restClient.post()
+                    .uri("/v1/conversations")
+                    .header("X-Mormi-Service-Key", serviceKey)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(JsonNode.class);
+        } catch (RestClientResponseException error) {
+            throw translate(error, "대화를 시작하지 못했습니다.");
+        } catch (Exception error) {
+            throw unavailable("대화 시작", error);
+        }
+    }
+
+    public JsonNode respond(String conversationId, JsonNode request) {
+        requireConfigured();
+        try {
+            return restClient.post()
+                    .uri("/v1/conversations/{id}/responses", conversationId)
+                    .header("X-Mormi-Service-Key", serviceKey)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(JsonNode.class);
+        } catch (RestClientResponseException error) {
+            throw translate(error, "아이의 말을 처리하지 못했습니다.");
+        } catch (Exception error) {
+            throw unavailable("대화 응답", error);
+        }
+    }
+
+    public JsonNode getConversation(String conversationId) {
+        requireConfigured();
+        try {
+            return restClient.get()
+                    .uri("/v1/conversations/{id}", conversationId)
+                    .header("X-Mormi-Service-Key", serviceKey)
+                    .retrieve()
+                    .body(JsonNode.class);
+        } catch (RestClientResponseException error) {
+            throw translate(error, "대화를 불러오지 못했습니다.");
+        } catch (Exception error) {
+            throw unavailable("대화 조회", error);
+        }
+    }
+
+    /** BE가 소유권을 확인해 저장한 대화만 보상 판정에 사용한다. */
     public boolean isTeachRewardEligible(String conversationId) {
         if (!enabled || conversationId == null || conversationId.isBlank()) {
             return false;
         }
         try {
-            SessionEnvelope envelope = restClient.get()
-                    .uri("/v1/conversations/{id}", conversationId)
-                    .header("X-Mormi-Service-Key", serviceKey)
-                    .retrieve()
-                    .body(SessionEnvelope.class);
-
-            if (envelope == null || envelope.turn() == null) {
+            JsonNode envelope = getConversation(conversationId);
+            if (envelope == null) {
                 return false;
             }
-            Turn turn = envelope.turn();
-            Completion completion = turn.completion();
-            return "completed".equals(turn.status())
-                    && completion != null
-                    && completion.teachRewardEligible();
-        } catch (Exception error) {
+            JsonNode turn = envelope.path("turn");
+            return "completed".equals(turn.path("status").asText())
+                    && turn.path("completion").path("teach_reward_eligible").asBoolean(false);
+        } catch (ApiException error) {
             log.warn("대화 완료 확인 실패 conversationId={} : {}", conversationId, error.getMessage());
             return false;
         }
     }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    record SessionEnvelope(@JsonProperty("conversation_id") String conversationId, Turn turn) {
+    private void requireConfigured() {
+        if (!enabled) {
+            throw ApiException.serviceUnavailable(
+                    "dialogue_not_configured", "대화 서버 주소가 아직 설정되지 않았습니다.");
+        }
+        if (serviceKey.isBlank()) {
+            throw ApiException.serviceUnavailable(
+                    "dialogue_key_not_configured", "대화 서버 인증키가 아직 설정되지 않았습니다.");
+        }
     }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    record Turn(
-            @JsonProperty("turn_id") String turnId,
-            String status,
-            @JsonProperty("state_version") Integer stateVersion,
-            Completion completion) {
+    private ApiException translate(RestClientResponseException error, String fallback) {
+        int status = error.getStatusCode().value();
+        // FastAPI 검증 오류 본문에는 요청 입력 일부가 포함될 수 있으므로
+        // 아이 원문이 운영 로그에 남지 않게 상태 코드만 기록한다.
+        log.warn("Mormi-AI 호출 실패 status={}", status);
+        if (status == 404) {
+            return ApiException.notFound("대화를 찾을 수 없습니다.");
+        }
+        if (status == 409) {
+            return ApiException.conflict(
+                    "dialogue_turn_conflict", "이미 처리된 응답이거나 이전 질문에 대한 응답입니다. 최신 대화를 불러와 주세요.");
+        }
+        if (status == 400 || status == 422) {
+            return ApiException.badRequest("dialogue_invalid_request", fallback);
+        }
+        return ApiException.serviceUnavailable("dialogue_upstream_error", fallback);
     }
 
-    @JsonIgnoreProperties(ignoreUnknown = true)
-    record Completion(
-            String outcome,
-            @JsonProperty("teach_reward_eligible") boolean teachRewardEligible) {
+    private ApiException unavailable(String action, Exception error) {
+        log.warn("Mormi-AI {} 실패: {}", action, error.getMessage());
+        return ApiException.serviceUnavailable(
+                "dialogue_unavailable", "모르미가 잠시 대답을 준비하지 못했습니다. 다시 시도해 주세요.");
     }
+
 }

@@ -17,13 +17,12 @@ public final class CafeDtos {
     /**
      * 줄 서기. 좌우 인원은 화면이 방문마다 새로 뽑으므로 문제 자체를 함께 보낸다.
      * chosenCount 는 아이가 답한 "더 짧은 줄의 인원수"이고, 정오는 서버가 판정한다.
-     * countingAnswer 는 그 전 단계에서 좌우를 세어 적은 원문이며 판정에는 쓰지 않는다.
+     * 자유 발화 원문은 이 학습 DB 계약으로 받지 않고, 소유권 검증 뒤 AI로만 전달한다.
      */
     public record QueueRequest(
             @NotNull @Min(1) @Max(9) Integer leftCount,
             @NotNull @Min(1) @Max(9) Integer rightCount,
             @NotNull @Min(0) @Max(99) Integer chosenCount,
-            @Size(max = 40) String countingAnswer,
             boolean scaffoldUsed,
             @Min(1) int attemptNo,
             @Min(0) @Max(600000) Integer elapsedMs) {
