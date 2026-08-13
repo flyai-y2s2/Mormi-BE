@@ -118,6 +118,26 @@ class DialogueClientTest {
     }
 
     @Test
+    void modelFailureKeepsOnlyTheSafeProviderCode() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.add("X-Mormi-Error-Code", "structured_schema_too_complex");
+        HttpClientErrorException upstream = HttpClientErrorException.create(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                "unavailable",
+                headers,
+                new byte[0],
+                StandardCharsets.UTF_8);
+
+        DialogueClient client = new DialogueClient("", "");
+        ApiException translated = ReflectionTestUtils.invokeMethod(
+                client, "translate", upstream, "fallback");
+
+        assertThat(translated).isNotNull();
+        assertThat(translated.getCode()).isEqualTo(
+                "dialogue_ai_error.structured_schema_too_complex");
+    }
+
+    @Test
     void responseBodyInputAndMessagesAreNeverUsedAsDiagnostics() {
         String body = """
                 {"detail":{"code":"request value=아이 원문","issues":[

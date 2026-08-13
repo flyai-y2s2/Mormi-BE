@@ -186,8 +186,12 @@ public class DialogueClient {
                     "모르미가 다른 말을 정리하고 있어요. 잠시 후 다시 시도해 주세요.");
         }
         if (status >= 500) {
+            String errorCode = "dialogue_ai_error";
+            if (diagnosticCode != null) {
+                errorCode += "." + diagnosticCode;
+            }
             return ApiException.serviceUnavailable(
-                    "dialogue_ai_error",
+                    errorCode,
                     "모르미 대화 서버에서 문제가 생겼어요. 잠시 후 다시 시도해 주세요.");
         }
         return ApiException.serviceUnavailable("dialogue_upstream_error", fallback);
