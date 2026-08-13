@@ -133,9 +133,15 @@ public class DialogueClient {
 
     private ApiException translate(RestClientResponseException error, String fallback) {
         int status = error.getStatusCode().value();
+        String diagnosticCode = diagnosticHeader(error, "X-Mormi-Error-Code");
+        String diagnosticPath = diagnosticHeader(error, "X-Mormi-Error-Path");
         // FastAPI 검증 오류 본문에는 요청 입력 일부가 포함될 수 있으므로
-        // 아이 원문이 운영 로그에 남지 않게 상태 코드만 기록한다.
-        log.warn("Mormi-AI 호출 실패 status={}", status);
+        // 아이 원문이 운영 로그에 남지 않게 상태와 정제된 진단 헤더만 기록한다.
+        log.warn(
+                "Mormi-AI 호출 실패 status={} diagnosticCode={} diagnosticPath={}",
+                status,
+                diagnosticCode,
+                diagnosticPath);
         if (status == 401 || status == 403) {
             return ApiException.serviceUnavailable(
                     "dialogue_auth_failed",
@@ -149,8 +155,15 @@ public class DialogueClient {
                     "dialogue_turn_conflict", "이미 처리된 응답이거나 이전 질문에 대한 응답입니다. 최신 대화를 불러와 주세요.");
         }
         if (status == 400 || status == 422) {
+            String errorCode = "dialogue_invalid_request";
+            if (diagnosticCode != null) {
+                errorCode += "." + diagnosticCode;
+            }
+            if (diagnosticPath != null) {
+                errorCode += "." + diagnosticPath;
+            }
             return ApiException.badRequest(
-                    "dialogue_invalid_request",
+                    errorCode,
                     "반복 학습 기록과 가르치기 정보를 다시 확인해 주세요.");
         }
         if (status == 429) {
@@ -164,6 +177,18 @@ public class DialogueClient {
                     "모르미 대화 서버에서 문제가 생겼어요. 잠시 후 다시 시도해 주세요.");
         }
         return ApiException.serviceUnavailable("dialogue_upstream_error", fallback);
+    }
+
+    private String diagnosticHeader(RestClientResponseException error, String name) {
+        if (error.getResponseHeaders() == null) {
+            return null;
+        }
+        String value = error.getResponseHeaders().getFirst(name);
+        if (value == null || value.isBlank() || value.length() > 160) {
+            return null;
+        }
+        // AI가 생성한 코드·필드 경로만 허용한다. 응답 본문이나 사용자 입력은 전달하지 않는다.
+        return value.matches("[A-Za-z0-9_.\\[\\]-]+") ? value : null;
     }
 
     private ApiException unavailable(String action, Exception error) {
