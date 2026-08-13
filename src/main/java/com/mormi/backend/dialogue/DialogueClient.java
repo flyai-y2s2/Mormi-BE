@@ -25,7 +25,6 @@ public class DialogueClient {
 
     private static final Logger log = LoggerFactory.getLogger(DialogueClient.class);
     private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(3);
-    private static final Duration READ_TIMEOUT = Duration.ofSeconds(12);
     private static final JsonMapper DIAGNOSTIC_JSON = JsonMapper.builder().build();
 
     private final RestClient restClient;
@@ -34,19 +33,21 @@ public class DialogueClient {
 
     public DialogueClient(
             @Value("${mormi.dialogue.base-url:}") String baseUrl,
-            @Value("${mormi.dialogue.service-key:}") String serviceKey) {
+            @Value("${mormi.dialogue.service-key:}") String serviceKey,
+            @Value("${mormi.dialogue.read-timeout-seconds:45}") long readTimeoutSeconds) {
         this.enabled = baseUrl != null && !baseUrl.isBlank();
         this.serviceKey = serviceKey == null ? "" : serviceKey;
-        this.restClient = enabled ? buildClient(baseUrl) : null;
+        Duration readTimeout = Duration.ofSeconds(Math.max(15, Math.min(readTimeoutSeconds, 120)));
+        this.restClient = enabled ? buildClient(baseUrl, readTimeout) : null;
     }
 
-    private RestClient buildClient(String baseUrl) {
+    private RestClient buildClient(String baseUrl, Duration readTimeout) {
         // AI 컨테이너의 HTTP/1.1 서버와 통신할 때 h2c 업그레이드나
         // chunked 재전송 여지를 없애기 위해 단순 HTTP/1.1 팩토리를 쓴다.
         SimpleClientHttpRequestFactory requestFactory =
                 new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(CONNECT_TIMEOUT);
-        requestFactory.setReadTimeout(READ_TIMEOUT);
+        requestFactory.setReadTimeout(readTimeout);
         return RestClient.builder()
                 .baseUrl(baseUrl)
                 .requestFactory(requestFactory)

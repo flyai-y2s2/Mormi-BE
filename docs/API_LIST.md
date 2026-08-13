@@ -237,7 +237,9 @@
 | `GET` | `/v1/learners/{learner_id}/star-notes` |
 | `GET` | `/v1/conversations/{conversation_id}/transcript` |
 
-`response_id` 멱등, 409 + `state_version`, 503 시 상태 불변까지 구현돼 있습니다.
+`response_id` 멱등과 409 + `state_version` 복구가 구현돼 있습니다. 네트워크 타임아웃은
+AI에서 처리가 끝났지만 응답만 유실된 경우도 있으므로, FE는 같은 답을 같은
+`response_id`로 재전송하고 먼저 최신 턴을 조회합니다.
 
 ---
 

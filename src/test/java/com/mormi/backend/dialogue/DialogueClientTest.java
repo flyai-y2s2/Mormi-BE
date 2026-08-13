@@ -35,7 +35,7 @@ class DialogueClientTest {
 
         try {
             DialogueClient client = new DialogueClient(
-                    "http://127.0.0.1:" + server.getAddress().getPort(), "test-key");
+                    "http://127.0.0.1:" + server.getAddress().getPort(), "test-key", 45);
 
             client.createConversation(Map.of(
                     "learner_id", 1L,
@@ -62,7 +62,7 @@ class DialogueClientTest {
                 "sensitive body must not be forwarded".getBytes(StandardCharsets.UTF_8),
                 StandardCharsets.UTF_8);
 
-        DialogueClient client = new DialogueClient("", "");
+        DialogueClient client = new DialogueClient("", "", 45);
         ApiException translated = ReflectionTestUtils.invokeMethod(
                 client, "translate", upstream, "fallback");
 
@@ -84,7 +84,7 @@ class DialogueClientTest {
                 new byte[0],
                 StandardCharsets.UTF_8);
 
-        DialogueClient client = new DialogueClient("", "");
+        DialogueClient client = new DialogueClient("", "", 45);
         ApiException translated = ReflectionTestUtils.invokeMethod(
                 client, "translate", upstream, "fallback");
 
@@ -107,7 +107,7 @@ class DialogueClientTest {
                 body.getBytes(StandardCharsets.UTF_8),
                 StandardCharsets.UTF_8);
 
-        DialogueClient client = new DialogueClient("", "");
+        DialogueClient client = new DialogueClient("", "", 45);
         ApiException translated = ReflectionTestUtils.invokeMethod(
                 client, "translate", upstream, "fallback");
 
@@ -128,7 +128,7 @@ class DialogueClientTest {
                 new byte[0],
                 StandardCharsets.UTF_8);
 
-        DialogueClient client = new DialogueClient("", "");
+        DialogueClient client = new DialogueClient("", "", 45);
         ApiException translated = ReflectionTestUtils.invokeMethod(
                 client, "translate", upstream, "fallback");
 
@@ -151,7 +151,7 @@ class DialogueClientTest {
                 body.getBytes(StandardCharsets.UTF_8),
                 StandardCharsets.UTF_8);
 
-        DialogueClient client = new DialogueClient("", "");
+        DialogueClient client = new DialogueClient("", "", 45);
         ApiException translated = ReflectionTestUtils.invokeMethod(
                 client, "translate", upstream, "fallback");
 

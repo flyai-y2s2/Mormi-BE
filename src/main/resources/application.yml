@@ -26,3 +26,5 @@ mormi:
     # 비어 있으면 가르치기 500원을 지급하지 않는다.
     base-url: ${MORMI_DIALOGUE_BASE_URL:}
     service-key: ${MORMI_DIALOGUE_SERVICE_KEY:}
+    # 자유 발화는 분류기와 모르미 화자를 순차 호출하므로 12초보다 길 수 있다.
+    read-timeout-seconds: ${MORMI_DIALOGUE_READ_TIMEOUT_SECONDS:45}

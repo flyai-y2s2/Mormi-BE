@@ -52,6 +52,7 @@ MORMI_DIALOGUE_SERVICE_KEY=change-me \
 | `CORS_ALLOWED_ORIGINS` | 허용할 FE 오리진 목록 |
 | `MORMI_DIALOGUE_BASE_URL` | 배포된 Mormi-AI FastAPI 주소 |
 | `MORMI_DIALOGUE_SERVICE_KEY` | AI의 `MORMI_SERVICE_API_KEY`와 같은 값 |
+| `MORMI_DIALOGUE_READ_TIMEOUT_SECONDS` | 분류기+화자 응답 대기 시간. 기본 45초 |
 
 운영에서는 두 대화 환경 변수가 모두 필요합니다. 키는 FE/Vercel 공개 환경변수에 넣지 않습니다.
 

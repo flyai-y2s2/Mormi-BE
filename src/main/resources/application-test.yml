@@ -10,5 +10,6 @@ mormi:
   cors:
     allowed-origins: http://localhost:3000
   dialogue:
+    read-timeout-seconds: 45
     base-url: ""
     service-key: ""
