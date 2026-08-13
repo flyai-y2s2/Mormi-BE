@@ -138,10 +138,22 @@ jobs:
 
           docker rm -f mormi-backend 2>/dev/null || true
 
+          # AI와 BE가 같은 EC2에 있다면 컨테이너 이름으로 직접 통신한다.
+          # 서로 다른 EC2라면 mormi.env의 MORMI_DIALOGUE_BASE_URL을 그대로 쓴다.
+          docker network create mormi-services 2>/dev/null || true
+          dialogue_args=()
+          if docker ps --format '{{.Names}}' | grep -q '^mormi-ai$'; then
+            docker network connect mormi-services mormi-ai 2>/dev/null || true
+            dialogue_args=(-e MORMI_DIALOGUE_BASE_URL=http://mormi-ai:8000)
+            echo "using local mormi-ai container through mormi-services network"
+          fi
+
           docker run -d \
             --name mormi-backend \
             --restart unless-stopped \
+            --network mormi-services \
             --env-file /etc/mormi-backend/mormi.env \
+            "${dialogue_args[@]}" \
             -p 8080:8080 \
             --log-opt max-size=10m \
             --log-opt max-file=5 \
@@ -162,6 +174,22 @@ jobs:
 
             sleep 2
           done
+
+          # BE 컨테이너와 같은 네트워크 위치에서 실제 AI health를 확인한다.
+          dialogue_url="$(docker inspect mormi-backend \
+            --format '{{range .Config.Env}}{{println .}}{{end}}' \
+            | awk -F= '$1 == "MORMI_DIALOGUE_BASE_URL" {sub(/^[^=]*=/, ""); print; exit}')"
+          if [ -z "${dialogue_url}" ]; then
+            echo "MORMI_DIALOGUE_BASE_URL is not configured"
+            exit 1
+          fi
+          if ! docker run --rm --network container:mormi-backend \
+              curlimages/curl:8.10.1 \
+              --connect-timeout 3 --max-time 12 -fsS \
+              "${dialogue_url%/}/health"; then
+            echo "Mormi-AI is unreachable from the backend container"
+            exit 1
+          fi
 
           docker image prune -f >/dev/null
           docker ps --filter name=mormi-backend

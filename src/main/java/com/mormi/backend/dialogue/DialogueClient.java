@@ -1,11 +1,14 @@
 package com.mormi.backend.dialogue;
 
 import com.mormi.backend.common.ApiException;
+import java.net.http.HttpClient;
+import java.time.Duration;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
@@ -21,6 +24,8 @@ import tools.jackson.databind.JsonNode;
 public class DialogueClient {
 
     private static final Logger log = LoggerFactory.getLogger(DialogueClient.class);
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(3);
+    private static final Duration READ_TIMEOUT = Duration.ofSeconds(12);
 
     private final RestClient restClient;
     private final String serviceKey;
@@ -31,7 +36,20 @@ public class DialogueClient {
             @Value("${mormi.dialogue.service-key:}") String serviceKey) {
         this.enabled = baseUrl != null && !baseUrl.isBlank();
         this.serviceKey = serviceKey == null ? "" : serviceKey;
-        this.restClient = enabled ? RestClient.builder().baseUrl(baseUrl).build() : null;
+        this.restClient = enabled ? buildClient(baseUrl) : null;
+    }
+
+    private RestClient buildClient(String baseUrl) {
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(CONNECT_TIMEOUT)
+                .build();
+        JdkClientHttpRequestFactory requestFactory =
+                new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(READ_TIMEOUT);
+        return RestClient.builder()
+                .baseUrl(baseUrl)
+                .requestFactory(requestFactory)
+                .build();
     }
 
     public JsonNode createConversation(Map<String, Object> request) {
