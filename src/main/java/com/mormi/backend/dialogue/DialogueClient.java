@@ -136,6 +136,11 @@ public class DialogueClient {
         // FastAPI 검증 오류 본문에는 요청 입력 일부가 포함될 수 있으므로
         // 아이 원문이 운영 로그에 남지 않게 상태 코드만 기록한다.
         log.warn("Mormi-AI 호출 실패 status={}", status);
+        if (status == 401 || status == 403) {
+            return ApiException.serviceUnavailable(
+                    "dialogue_auth_failed",
+                    "모르미 연결 인증을 확인하고 있어요. 잠시 후 다시 시도해 주세요.");
+        }
         if (status == 404) {
             return ApiException.notFound("대화를 찾을 수 없습니다.");
         }
@@ -144,7 +149,19 @@ public class DialogueClient {
                     "dialogue_turn_conflict", "이미 처리된 응답이거나 이전 질문에 대한 응답입니다. 최신 대화를 불러와 주세요.");
         }
         if (status == 400 || status == 422) {
-            return ApiException.badRequest("dialogue_invalid_request", fallback);
+            return ApiException.badRequest(
+                    "dialogue_invalid_request",
+                    "반복 학습 기록과 가르치기 정보를 다시 확인해 주세요.");
+        }
+        if (status == 429) {
+            return ApiException.serviceUnavailable(
+                    "dialogue_rate_limited",
+                    "모르미가 다른 말을 정리하고 있어요. 잠시 후 다시 시도해 주세요.");
+        }
+        if (status >= 500) {
+            return ApiException.serviceUnavailable(
+                    "dialogue_ai_error",
+                    "모르미 대화 서버에서 문제가 생겼어요. 잠시 후 다시 시도해 주세요.");
         }
         return ApiException.serviceUnavailable("dialogue_upstream_error", fallback);
     }
