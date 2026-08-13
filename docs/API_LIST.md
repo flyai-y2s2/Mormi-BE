@@ -64,7 +64,7 @@
   "wallet_balance": 7850,
   "level": 1, "stars": 6,
   "cafe_unlocked": false,
-  "cafe_required_session_ids": ["money-count","money-price","money-budget","money-mission"],
+  "cafe_required_session_ids": ["number-count","number-compare","money-count","money-price","money-budget"],
   "active_learning_session_id": null,
   "active_cafe_visit_id": null
 }
@@ -136,27 +136,40 @@
 |---|---|---|
 | `POST` | `/v1/cafe-visits` | 방문 시작 (해금 검증, 진행 중 방문 있으면 이어받음) |
 | `GET` | `/v1/cafe-visits/{id}` | 진행 복구 (시도 전체 포함) |
-| `POST` | `/v1/cafe-visits/{id}/queue` | 줄 서기 |
-| `POST` | `/v1/cafe-visits/{id}/menu` | 메뉴 2개 |
-| `POST` | `/v1/cafe-visits/{id}/payments` | 결제 |
+| `POST` | `/v1/cafe-visits/{id}/queue` | 줄 서기 (짧은 줄 인원수) |
+| `POST` | `/v1/cafe-visits/{id}/menu` | 메뉴 2개 (예산 안) |
+| `POST` | `/v1/cafe-visits/{id}/payments` | 메뉴값 계산 (두 메뉴 합계) |
 | `POST` | `/v1/cafe-visits/{id}/change` | 거스름돈 |
 | `POST` | `/v1/cafe-visits/{id}/complete` | 완료 |
 
 `stage = queue | menu | calculate | change | complete`. 다음 돌다리 해금은 서버가 판정합니다. 해금 전 방문은 403.
 
+세 단계(줄 서기·메뉴·계산·거스름돈)의 **문제는 화면이 방문마다 새로 뽑습니다**. 좌우 인원, 예산,
+계산·거스름돈에 쓰이는 메뉴가 매번 달라지므로 요청에 문제를 함께 싣고, 정오는 서버가 판정합니다.
+
 ```jsonc
-// POST .../payments
-{ "counts": { "5000": 1, "1000": 4 }, "attempt_no": 1 }
+// POST .../queue   정답은 min(left,right)
+{ "left_count": 4, "right_count": 2, "chosen_count": 4,
+  "counting_answer": "4, 2", "scaffold_used": false, "attempt_no": 1 }
+
+// POST .../menu    budget 은 8000 | 9000 | 10000 만 허용
+{ "menu_ids": ["americano", "cookie"], "budget": 8000, "attempt_no": 1 }
+
+// POST .../payments   두 메뉴값의 합을 아이가 적어 낸다
+{ "menu_ids": ["strawberry-cake", "sandwich"], "answer_amount": 9000, "attempt_no": 1 }
 // 200
 { "stage": "calculate", "is_correct": false,
   "next_stage": "calculate", "next_stage_unlocked": false,
-  "attempts": 1, "expected_amount": 10000, "submitted_amount": 9000,
-  "difference": -1000, "feedback_code": "payment_short" }
+  "attempts": 1, "expected_amount": 9500, "submitted_amount": 9000,
+  "difference": -500, "feedback_code": "payment_short" }
+
+// POST .../change   기대값 = 10,000 − menu_id 가격
+{ "menu_id": "americano", "counts": { "1000": 6, "500": 2 }, "attempt_no": 1 }
 ```
 
-- 메뉴 합계는 클라이언트 값이 아니라 **서버 가격표**로 계산합니다.
+- 메뉴 합계는 클라이언트 값이 아니라 **서버 가격표**로 계산합니다. 가격표는 `CafeJourney.tsx` 와 같아야 합니다.
 - 화폐별 최종 구성만 저장하고 −/＋ 버튼 클릭 로그는 저장하지 않습니다.
-- 결제는 10,000원 정확히 일치, 거스름돈은 `낸 돈 − 메뉴값` 일치해야 통과.
+- 예산 초과 주문도 **오답으로 기록**합니다(`menu_over_budget`). 다음 단계는 열리지 않습니다.
 
 ### E. 리포트
 

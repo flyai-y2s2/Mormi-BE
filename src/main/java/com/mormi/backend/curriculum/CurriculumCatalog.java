@@ -25,23 +25,26 @@ public final class CurriculumCatalog {
     /** 모르미 가르치기 성공 고정 보상. */
     public static final int TEACH_REWARD = 500;
 
-    /** 카페 실습용 고정 소지금. 지갑과 분리된 별도 화폐다. */
+    /** 카페 실습용 고정 소지금. 지갑과 분리된 별도 화폐이며 거스름돈 기준액이다. */
     public static final int CAFE_TARGET_AMOUNT = 10000;
 
-    /** 카페 해금에 필요한 4개 세션. journey-config.ts 의 cafeRequiredSessionIds 와 같다. */
+    /** 메뉴 고르기 예산. 프런트가 방문마다 이 중 하나를 뽑아 보내고, 서버는 목록에 있는 값만 받는다. */
+    public static final Set<Integer> CAFE_MENU_BUDGETS = Set.of(8000, 9000, 10000);
+
+    /** 카페 해금에 필요한 5개 세션. journey-config.ts 의 cafeRequiredSessionIds 와 같다. */
     public static final List<String> CAFE_REQUIRED_SESSION_IDS =
-            List.of("money-count", "money-price", "money-budget", "money-mission");
+            List.of("number-count", "number-compare", "money-count", "money-price", "money-budget");
 
     public static final String THEME_CAFE = "cafe";
 
-    /** 카페 메뉴 고정 6종. */
+    /** 카페 메뉴 고정 6종. CafeJourney.tsx 의 menu 와 가격이 같아야 한다. */
     public static final Map<String, Integer> CAFE_MENU_PRICES = Map.of(
             "americano", 3000,
             "milk", 2000,
             "strawberry-juice", 4000,
             "cookie", 2000,
-            "strawberry-cake", 3000,
-            "sandwich", 4000);
+            "strawberry-cake", 4500,
+            "sandwich", 5000);
 
     public static final int CAFE_MENU_PICK_COUNT = 2;
 
@@ -51,8 +54,15 @@ public final class CurriculumCatalog {
     /** 거스름돈 구성에 쓸 수 있는 화폐. */
     public static final Set<Integer> CHANGE_DENOMINATIONS = Set.of(500, 1000);
 
-    /** 줄 서기 정답은 사람이 적은 오른쪽. */
-    public static final String QUEUE_CORRECT_CHOICE = "right";
+    /**
+     * 줄 서기 정답은 "사람이 더 적은 줄의 인원수".
+     *
+     * <p>좌우 인원은 프런트가 방문마다 새로 뽑으므로 정답 방향이 고정되지 않는다.
+     * 아이가 고르는 값도 방향이 아니라 인원수라, 좌우 인원을 함께 받아 여기서 판정한다.
+     */
+    public static int queueCorrectCount(int leftCount, int rightCount) {
+        return Math.min(leftCount, rightCount);
+    }
 
     /**
      * 정답 전 오답 수에 따른 문제별 보상. 0개 200원 / 1개 150원 / 2개 100원 / 3개 이상 50원.

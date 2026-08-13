@@ -37,7 +37,8 @@ public class CafeService {
     @Transactional
     public CafeVisitView start(Long learnerId) {
         if (!themeProgressService.isCafeUnlocked(learnerId)) {
-            throw ApiException.forbidden("아직 카페가 열리지 않았습니다. 집에서 필수 학습 4개를 먼저 마쳐 주세요.");
+            throw ApiException.forbidden("아직 카페가 열리지 않았습니다. 집에서 필수 학습 %d개를 먼저 마쳐 주세요."
+                    .formatted(CurriculumCatalog.CAFE_REQUIRED_SESSION_IDS.size()));
         }
         CafeVisit visit = visitRepository
                 .findFirstByLearnerIdAndCompletedAtIsNullOrderByIdDesc(learnerId)
@@ -45,20 +46,26 @@ public class CafeService {
         return view(learnerId, visit.getPublicId());
     }
 
-    /** 줄 서기: 사람이 적은 쪽을 골라야 통과. */
+    /** 줄 서기: 더 짧은 줄의 인원수를 맞혀야 통과. */
     @Transactional
     public StageResultResponse submitQueue(Long learnerId, String publicId, QueueRequest request) {
         CafeVisit visit = requireOwned(learnerId, publicId);
         requireStageReached(visit, CafeStage.QUEUE);
 
-        boolean correct = CurriculumCatalog.QUEUE_CORRECT_CHOICE.equals(request.choiceId());
+        int expected = CurriculumCatalog.queueCorrectCount(request.leftCount(), request.rightCount());
+        boolean correct = expected == request.chosenCount();
+
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("choice_id", request.choiceId());
+        payload.put("left_count", request.leftCount());
+        payload.put("right_count", request.rightCount());
+        payload.put("chosen_count", request.chosenCount());
+        payload.put("shorter_side", request.leftCount() <= request.rightCount() ? "left" : "right");
+        payload.put("counting_answer", request.countingAnswer());
         payload.put("scaffold_used", request.scaffoldUsed());
 
         return recordStage(
                 visit, CafeStage.QUEUE, request.attemptNo(), correct, request.elapsedMs(), payload,
-                null, null, correct ? "queue_correct" : "queue_longer_line");
+                expected, request.chosenCount(), correct ? "queue_correct" : "queue_longer_line");
     }
 
     /** 메뉴: 정확히 2개, 합계가 소지금 이내여야 통과. 합계는 서버 가격표로 계산한다. */
@@ -71,47 +78,47 @@ public class CafeService {
         if (menuIds.size() != CurriculumCatalog.CAFE_MENU_PICK_COUNT) {
             throw ApiException.badRequest("menu_count", "메뉴는 두 개를 골라야 합니다.");
         }
+        int budget = requireKnownBudget(request.budget());
         int orderTotal = CurriculumCatalog.orderTotal(menuIds);
-        boolean withinBudget = orderTotal <= visit.getTargetAmount();
+        boolean withinBudget = orderTotal <= budget;
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("menu_ids", menuIds);
         payload.put("order_total", orderTotal);
+        payload.put("budget", budget);
 
         if (withinBudget) {
             visit.setOrderTotal(orderTotal);
         }
         return recordStage(
                 visit, CafeStage.MENU, request.attemptNo(), withinBudget, request.elapsedMs(), payload,
-                visit.getTargetAmount(), orderTotal,
+                budget, orderTotal,
                 withinBudget ? "menu_selected" : "menu_over_budget");
     }
 
-    /** 계산: 소지금과 정확히 일치해야 통과. */
+    /** 계산: 이 단계에서 뽑힌 두 메뉴값의 합을 맞혀야 통과. */
     @Transactional
     public StageResultResponse submitPayment(Long learnerId, String publicId, PaymentRequest request) {
         CafeVisit visit = requireOwned(learnerId, publicId);
         requireStageReached(visit, CafeStage.CALCULATE);
-        if (visit.getOrderTotal() == null) {
-            throw ApiException.conflict("menu_required", "메뉴를 먼저 골라야 합니다.");
-        }
 
-        int paid = totalOf(request.counts(), CurriculumCatalog.PAYMENT_DENOMINATIONS);
-        boolean correct = paid == visit.getTargetAmount();
+        List<String> menuIds = request.menuIds();
+        int expected = CurriculumCatalog.orderTotal(menuIds);
+        int answer = request.answerAmount();
+        boolean correct = answer == expected;
 
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("counts", normalizeCounts(request.counts()));
-        payload.put("paid_amount", paid);
-        payload.put("target_amount", visit.getTargetAmount());
-        payload.put("order_total", visit.getOrderTotal());
+        payload.put("menu_ids", menuIds);
+        payload.put("answer_amount", answer);
+        payload.put("expected_total", expected);
 
         if (correct) {
-            visit.setPaidAmount(paid);
+            visit.setPaidAmount(expected);
         }
         return recordStage(
                 visit, CafeStage.CALCULATE, request.attemptNo(), correct, request.elapsedMs(), payload,
-                visit.getTargetAmount(), paid,
-                correct ? "payment_exact" : (paid < visit.getTargetAmount() ? "payment_short" : "payment_over"));
+                expected, answer,
+                correct ? "payment_exact" : (answer < expected ? "payment_short" : "payment_over"));
     }
 
     /** 거스름돈: 낸 돈 − 메뉴값과 일치해야 통과. 500·1,000원으로만 구성한다. */
@@ -119,15 +126,15 @@ public class CafeService {
     public StageResultResponse submitChange(Long learnerId, String publicId, ChangeRequest request) {
         CafeVisit visit = requireOwned(learnerId, publicId);
         requireStageReached(visit, CafeStage.CHANGE);
-        if (visit.getPaidAmount() == null) {
-            throw ApiException.conflict("payment_required", "결제를 먼저 마쳐야 합니다.");
-        }
 
-        int expected = visit.getPaidAmount() - visit.getOrderTotal();
+        int menuPrice = CurriculumCatalog.orderTotal(List.of(request.menuId()));
+        int expected = visit.getTargetAmount() - menuPrice;
         int submitted = totalOf(request.counts(), CurriculumCatalog.CHANGE_DENOMINATIONS);
         boolean correct = submitted == expected;
 
         Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("menu_id", request.menuId());
+        payload.put("menu_price", menuPrice);
         payload.put("counts", normalizeCounts(request.counts()));
         payload.put("change_amount", submitted);
         payload.put("expected_change", expected);
@@ -213,6 +220,14 @@ public class CafeService {
                 submittedAmount,
                 expectedAmount == null || submittedAmount == null ? null : submittedAmount - expectedAmount,
                 feedbackCode);
+    }
+
+    /** 예산은 화면이 뽑아 보내지만, 서버는 허용 목록에 있는 값만 인정한다. */
+    private int requireKnownBudget(Integer budget) {
+        if (budget == null || !CurriculumCatalog.CAFE_MENU_BUDGETS.contains(budget)) {
+            throw ApiException.badRequest("budget", "사용할 수 없는 예산입니다: " + budget);
+        }
+        return budget;
     }
 
     private int totalOf(Map<Integer, Integer> counts, Set<Integer> allowed) {

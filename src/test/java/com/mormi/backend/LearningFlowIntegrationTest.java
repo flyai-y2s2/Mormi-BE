@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.mormi.backend.curriculum.CurriculumCatalog;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -178,19 +179,19 @@ class LearningFlowIntegrationTest {
     }
 
     @Test
-    void 필수_4개를_마쳐야_카페가_열리고_해금_전에는_방문이_막힌다() throws Exception {
+    void 필수_5개를_마쳐야_카페가_열리고_해금_전에는_방문이_막힌다() throws Exception {
         String token = "Bearer " + createLearner("나윤", "MORMI-C01").get("access_token").asText();
 
         mockMvc.perform(post("/v1/cafe-visits").header("Authorization", token))
                 .andExpect(status().isForbidden());
 
-        for (String sessionKey : List.of("money-count", "money-price", "money-budget", "money-mission")) {
+        for (String sessionKey : CurriculumCatalog.CAFE_REQUIRED_SESSION_IDS) {
             completeSession(token, sessionKey);
         }
 
         mockMvc.perform(get("/v1/progress").header("Authorization", token))
                 .andExpect(jsonPath("$.cafe_unlocked").value(true))
-                .andExpect(jsonPath("$.completed_session_ids.length()").value(4));
+                .andExpect(jsonPath("$.completed_session_ids.length()").value(5));
 
         mockMvc.perform(post("/v1/cafe-visits").header("Authorization", token))
                 .andExpect(status().isCreated())
@@ -200,7 +201,7 @@ class LearningFlowIntegrationTest {
     @Test
     void 카페_진행과_결제_기록이_모두_남는다() throws Exception {
         String token = "Bearer " + createLearner("도윤", "MORMI-C02").get("access_token").asText();
-        for (String sessionKey : List.of("money-count", "money-price", "money-budget", "money-mission")) {
+        for (String sessionKey : CurriculumCatalog.CAFE_REQUIRED_SESSION_IDS) {
             completeSession(token, sessionKey);
         }
 
@@ -209,57 +210,76 @@ class LearningFlowIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
         String visitId = objectMapper.readTree(visitBody).get("cafe_visit_id").asText();
 
-        // 줄 서기: 먼저 틀리고, 그 다음 맞힌다. 틀린 시도도 남아야 한다.
+        // 줄 서기: 왼쪽 4명, 오른쪽 2명이면 정답은 "2". 먼저 틀리고 그 다음 맞힌다.
         mockMvc.perform(post("/v1/cafe-visits/{id}/queue", visitId)
                         .header("Authorization", token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                Map.of("choice_id", "left", "scaffold_used", false, "attempt_no", 1))))
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "left_count", 4, "right_count", 2, "chosen_count", 4,
+                                "counting_answer", "4, 2", "scaffold_used", false, "attempt_no", 1))))
                 .andExpect(jsonPath("$.is_correct").value(false))
+                .andExpect(jsonPath("$.expected_amount").value(2))
                 .andExpect(jsonPath("$.next_stage").value("queue"));
 
         mockMvc.perform(post("/v1/cafe-visits/{id}/queue", visitId)
                         .header("Authorization", token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                Map.of("choice_id", "right", "scaffold_used", true, "attempt_no", 2))))
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "left_count", 4, "right_count", 2, "chosen_count", 2,
+                                "counting_answer", "4, 2", "scaffold_used", true, "attempt_no", 2))))
                 .andExpect(jsonPath("$.is_correct").value(true))
                 .andExpect(jsonPath("$.next_stage").value("menu"));
 
-        // 메뉴 2개: 아메리카노 3000 + 쿠키 2000 = 5000
+        // 메뉴 2개: 예산 8,000원에 케이크 4,500 + 샌드위치 5,000 = 9,500 은 초과.
         mockMvc.perform(post("/v1/cafe-visits/{id}/menu", visitId)
                         .header("Authorization", token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                Map.of("menu_ids", List.of("americano", "cookie"), "attempt_no", 1))))
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "menu_ids", List.of("strawberry-cake", "sandwich"),
+                                "budget", 8000, "attempt_no", 1))))
+                .andExpect(jsonPath("$.is_correct").value(false))
+                .andExpect(jsonPath("$.feedback_code").value("menu_over_budget"))
+                .andExpect(jsonPath("$.next_stage").value("menu"));
+
+        // 아메리카노 3,000 + 쿠키 2,000 = 5,000 은 예산 안.
+        mockMvc.perform(post("/v1/cafe-visits/{id}/menu", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "menu_ids", List.of("americano", "cookie"),
+                                "budget", 8000, "attempt_no", 2))))
                 .andExpect(jsonPath("$.is_correct").value(true))
                 .andExpect(jsonPath("$.submitted_amount").value(5000))
                 .andExpect(jsonPath("$.next_stage").value("calculate"));
 
-        // 결제: 9,000원은 부족, 10,000원이면 통과
+        // 계산: 이 단계 메뉴는 다시 뽑힌다. 케이크 4,500 + 샌드위치 5,000 = 9,500.
         mockMvc.perform(post("/v1/cafe-visits/{id}/payments", visitId)
                         .header("Authorization", token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                Map.of("counts", Map.of("5000", 1, "1000", 4), "attempt_no", 1))))
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "menu_ids", List.of("strawberry-cake", "sandwich"),
+                                "answer_amount", 9000, "attempt_no", 1))))
                 .andExpect(jsonPath("$.is_correct").value(false))
-                .andExpect(jsonPath("$.difference").value(-1000));
+                .andExpect(jsonPath("$.difference").value(-500));
 
         mockMvc.perform(post("/v1/cafe-visits/{id}/payments", visitId)
                         .header("Authorization", token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                Map.of("counts", Map.of("5000", 1, "1000", 5), "attempt_no", 2))))
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "menu_ids", List.of("strawberry-cake", "sandwich"),
+                                "answer_amount", 9500, "attempt_no", 2))))
                 .andExpect(jsonPath("$.is_correct").value(true))
                 .andExpect(jsonPath("$.next_stage").value("change"));
 
-        // 거스름돈: 10,000 − 5,000 = 5,000
+        // 거스름돈: 이 단계 메뉴도 따로 뽑힌다. 10,000 − 아메리카노 3,000 = 7,000.
         mockMvc.perform(post("/v1/cafe-visits/{id}/change", visitId)
                         .header("Authorization", token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                Map.of("counts", Map.of("1000", 5), "attempt_no", 1))))
-                .andExpect(jsonPath("$.is_correct").value(true));
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "menu_id", "americano",
+                                "counts", Map.of("1000", 6, "500", 2), "attempt_no", 1))))
+                .andExpect(jsonPath("$.is_correct").value(true))
+                .andExpect(jsonPath("$.expected_amount").value(7000));
 
         mockMvc.perform(post("/v1/cafe-visits/{id}/complete", visitId).header("Authorization", token))
                 .andExpect(status().isOk())
@@ -268,11 +288,13 @@ class LearningFlowIntegrationTest {
         // 새로고침해도 복구되고, 틀린 시도까지 전부 남아 있다.
         mockMvc.perform(get("/v1/cafe-visits/{id}", visitId).header("Authorization", token))
                 .andExpect(jsonPath("$.order_total").value(5000))
-                .andExpect(jsonPath("$.paid_amount").value(10000))
-                .andExpect(jsonPath("$.change_amount").value(5000))
-                .andExpect(jsonPath("$.attempts.length()").value(6))
+                .andExpect(jsonPath("$.paid_amount").value(9500))
+                .andExpect(jsonPath("$.change_amount").value(7000))
+                .andExpect(jsonPath("$.attempts.length()").value(7))
                 .andExpect(jsonPath("$.attempts[0].is_correct").value(false))
-                .andExpect(jsonPath("$.attempts[3].payload.counts['1000']").value(4));
+                .andExpect(jsonPath("$.attempts[0].payload.chosen_count").value(4))
+                .andExpect(jsonPath("$.attempts[2].payload.budget").value(8000))
+                .andExpect(jsonPath("$.attempts[4].payload.answer_amount").value(9000));
     }
 
     @Test
