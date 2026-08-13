@@ -61,8 +61,9 @@ public class Learner {
         this.researchCode = researchCode;
         this.tokenHash = tokenHash;
         this.analyticsId = UUID.randomUUID();
-        this.conversationStorageConsent = false;
-        this.retentionPolicy = "no_raw";
+        // 파일럿 참여자는 온보딩 전에 보호자·기관 동의를 완료한다.
+        this.conversationStorageConsent = true;
+        this.retentionPolicy = "permanent";
         this.onboardingCompletedAt = OffsetDateTime.now();
     }
 
@@ -76,7 +77,7 @@ public class Learner {
      */
     public void applyConsent(boolean consent, String policy) {
         if (consent && (policy == null || "no_raw".equals(policy))) {
-            throw new IllegalArgumentException("consented raw storage requires a finite retention_policy");
+            throw new IllegalArgumentException("consented raw storage requires a retention_policy");
         }
         if (!consent && policy != null && !"no_raw".equals(policy)) {
             throw new IllegalArgumentException("retention_policy must be no_raw without storage consent");

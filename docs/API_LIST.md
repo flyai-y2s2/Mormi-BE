@@ -40,7 +40,7 @@
 {
   "id": 1, "display_name": "민준", "research_code": "MORMI-A03",
   "analytics_id": "4fc04095-...",   // PostHog identify 전용 가명 ID
-  "conversation_storage_consent": false, "retention_policy": "no_raw",
+  "conversation_storage_consent": true, "retention_policy": "permanent",
   "access_token": "KMw_gyMdWRtm..."
 }
 ```

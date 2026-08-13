@@ -62,6 +62,8 @@ class LearningFlowIntegrationTest {
         assertThat(first.get("id").asLong()).isNotEqualTo(second.get("id").asLong());
         assertThat(first.get("access_token").asText()).isNotEqualTo(second.get("access_token").asText());
         assertThat(first.get("analytics_id").asText()).isNotEqualTo(second.get("analytics_id").asText());
+        assertThat(first.get("conversation_storage_consent").asBoolean()).isTrue();
+        assertThat(first.get("retention_policy").asText()).isEqualTo("permanent");
 
         // 각자 지갑은 6,000원에서 시작하고 서로 섞이지 않는다.
         mockMvc.perform(get("/v1/progress").header("Authorization", "Bearer " + first.get("access_token").asText()))

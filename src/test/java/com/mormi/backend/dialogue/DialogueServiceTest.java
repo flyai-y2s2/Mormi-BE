@@ -227,6 +227,8 @@ class DialogueServiceTest {
                 .containsEntry("learner_id", 7L)
                 .containsEntry("scene", "home_teach")
                 .containsEntry("scenario_id", "home_teach")
+                .containsEntry("conversation_storage_consent", true)
+                .containsEntry("retention_policy", "permanent")
                 .doesNotContainKeys("display_name", "child_text", "raw_response");
 
         @SuppressWarnings("unchecked")

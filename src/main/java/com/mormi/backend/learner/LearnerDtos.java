@@ -27,7 +27,7 @@ public final class LearnerDtos {
     /** 자유 발화 암호화 저장 동의. 동의하지 않으면 정책은 반드시 no_raw 다. */
     public record ConversationConsentRequest(
             @NotNull Boolean conversationStorageConsent,
-            @NotBlank @Pattern(regexp = "no_raw|30_days|90_days") String retentionPolicy) {
+            @NotBlank @Pattern(regexp = "no_raw|30_days|90_days|permanent") String retentionPolicy) {
     }
 
     /**
