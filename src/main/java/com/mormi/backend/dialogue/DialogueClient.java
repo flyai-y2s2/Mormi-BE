@@ -61,7 +61,9 @@ public class DialogueClient {
                     .uri("/v1/conversations")
                     .header("X-Mormi-Service-Key", serviceKey)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(request)
+                    // 운영 컨테이너 사이 호출에서 자동 message converter가 빈 본문을
+                    // 보낸 사례가 있어 JSON을 명시적으로 직렬화한다.
+                    .body(jsonBody(request))
                     .retrieve()
                     .body(JsonNode.class);
         } catch (RestClientResponseException error) {
@@ -78,7 +80,7 @@ public class DialogueClient {
                     .uri("/v1/conversations/{id}/responses", conversationId)
                     .header("X-Mormi-Service-Key", serviceKey)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(request)
+                    .body(jsonBody(request))
                     .retrieve()
                     .body(JsonNode.class);
         } catch (RestClientResponseException error) {
@@ -131,6 +133,10 @@ public class DialogueClient {
             throw ApiException.serviceUnavailable(
                     "dialogue_key_not_configured", "대화 서버 인증키가 아직 설정되지 않았습니다.");
         }
+    }
+
+    private String jsonBody(Object request) throws Exception {
+        return DIAGNOSTIC_JSON.writeValueAsString(request);
     }
 
     private ApiException translate(RestClientResponseException error, String fallback) {

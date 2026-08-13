@@ -3,7 +3,11 @@ package com.mormi.backend.dialogue;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.mormi.backend.common.ApiException;
+import com.sun.net.httpserver.HttpServer;
+import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -11,6 +15,40 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.HttpClientErrorException;
 
 class DialogueClientTest {
+
+    @Test
+    void createConversationSendsJsonRequestBody() throws Exception {
+        AtomicReference<String> capturedBody = new AtomicReference<>();
+        AtomicReference<String> capturedContentType = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/conversations", exchange -> {
+            capturedBody.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            capturedContentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
+            byte[] response = "{\"conversation_id\":\"test\",\"turn\":{}}"
+                    .getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+
+        try {
+            DialogueClient client = new DialogueClient(
+                    "http://127.0.0.1:" + server.getAddress().getPort(), "test-key");
+
+            client.createConversation(Map.of(
+                    "learner_id", 1L,
+                    "scene", "home_teach",
+                    "scenario_id", "home_teach"));
+
+            assertThat(capturedContentType.get()).startsWith("application/json");
+            assertThat(capturedBody.get()).contains("\"learner_id\":1");
+            assertThat(capturedBody.get()).contains("\"scenario_id\":\"home_teach\"");
+        } finally {
+            server.stop(0);
+        }
+    }
 
     @Test
     void validationFailureKeepsOnlySanitizedDiagnosticHeaders() {
