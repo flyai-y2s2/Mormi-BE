@@ -163,7 +163,8 @@ public class DialogueClient {
                     "dialogue_turn_conflict", "이미 처리된 응답이거나 이전 질문에 대한 응답입니다. 최신 대화를 불러와 주세요.");
         }
         if (status == 400 || status == 422) {
-            String errorCode = "dialogue_invalid_request";
+            String errorCode = "dialogue_invalid_request.upstream_" + status;
+            errorCode += "." + diagnosticBodyShape(error);
             if (diagnosticCode != null) {
                 errorCode += "." + diagnosticCode;
             }
@@ -209,6 +210,27 @@ public class DialogueClient {
         } catch (Exception ignored) {
             // 이전 AI 버전의 문자열 detail 또는 JSON이 아닌 오류 본문은 사용하지 않는다.
             return null;
+        }
+    }
+
+    private String diagnosticBodyShape(RestClientResponseException error) {
+        if (error.getResponseBodyAsByteArray().length == 0) {
+            return "empty_body";
+        }
+        try {
+            JsonNode detail = DIAGNOSTIC_JSON.readTree(error.getResponseBodyAsString()).path("detail");
+            if (detail.isObject()) {
+                return "detail_object";
+            }
+            if (detail.isArray()) {
+                return "detail_array";
+            }
+            if (detail.isTextual()) {
+                return "detail_text";
+            }
+            return "detail_missing";
+        } catch (Exception ignored) {
+            return "non_json_body";
         }
     }
 

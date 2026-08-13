@@ -30,7 +30,7 @@ class DialogueClientTest {
 
         assertThat(translated).isNotNull();
         assertThat(translated.getCode()).isEqualTo(
-                "dialogue_invalid_request.request_validation_failed."
+                "dialogue_invalid_request.upstream_422.non_json_body.request_validation_failed."
                         + "body.practice_summary.attempts.0.latency_ms");
         assertThat(translated.getMessage()).doesNotContain("sensitive");
     }
@@ -51,7 +51,8 @@ class DialogueClientTest {
                 client, "translate", upstream, "fallback");
 
         assertThat(translated).isNotNull();
-        assertThat(translated.getCode()).isEqualTo("dialogue_invalid_request");
+        assertThat(translated.getCode()).isEqualTo(
+                "dialogue_invalid_request.upstream_422.empty_body");
     }
 
     @Test
@@ -74,7 +75,8 @@ class DialogueClientTest {
 
         assertThat(translated).isNotNull();
         assertThat(translated.getCode()).isEqualTo(
-                "dialogue_invalid_request.home_practice_result_missing.body");
+                "dialogue_invalid_request.upstream_422.detail_object."
+                        + "home_practice_result_missing.body");
     }
 
     @Test
@@ -96,7 +98,8 @@ class DialogueClientTest {
                 client, "translate", upstream, "fallback");
 
         assertThat(translated).isNotNull();
-        assertThat(translated.getCode()).isEqualTo("dialogue_invalid_request");
+        assertThat(translated.getCode()).isEqualTo(
+                "dialogue_invalid_request.upstream_422.detail_object");
         assertThat(translated.getMessage()).doesNotContain("민감", "아이 원문");
     }
 }
