@@ -204,6 +204,24 @@ jobs:
             exit 1
           fi
 
+          # 공개 health만 통과하면 포트 오타는 잡아도 서비스 키 불일치는 놓친다.
+          # BE에 실제 주입된 키로 인증 health까지 통과해야 배포 성공으로 본다.
+          dialogue_service_key="$(docker inspect mormi-backend \
+            --format '{{range .Config.Env}}{{println .}}{{end}}' \
+            | awk -F= '$1 == "MORMI_DIALOGUE_SERVICE_KEY" {sub(/^[^=]*=/, ""); print; exit}')"
+          if [ -z "${dialogue_service_key}" ]; then
+            echo "MORMI_DIALOGUE_SERVICE_KEY is not configured"
+            exit 1
+          fi
+          if ! docker run --rm --network container:mormi-backend \
+              curlimages/curl:8.10.1 \
+              --connect-timeout 3 --max-time 12 -fsS \
+              -H "X-Mormi-Service-Key: ${dialogue_service_key}" \
+              "${dialogue_url%/}/health/authenticated"; then
+            echo "Mormi-AI service key does not match the backend configuration"
+            exit 1
+          fi
+
           docker image prune -f >/dev/null
           docker ps --filter name=mormi-backend
 
