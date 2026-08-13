@@ -146,6 +146,16 @@ jobs:
             docker network connect mormi-services mormi-ai 2>/dev/null || true
             dialogue_args=(-e MORMI_DIALOGUE_BASE_URL=http://mormi-ai:8000)
             echo "using local mormi-ai container through mormi-services network"
+          else
+            configured_dialogue_url="$(awk -F= \
+              '$1 == "MORMI_DIALOGUE_BASE_URL" {sub(/^[^=]*=/, ""); print; exit}' \
+              /etc/mormi-backend/mormi.env)"
+            # 기존 서버 설정의 :800 오타를 안전하게 보정한다.
+            if [[ "${configured_dialogue_url%/}" == *:800 ]]; then
+              corrected_dialogue_url="${configured_dialogue_url%/}0"
+              dialogue_args=(-e MORMI_DIALOGUE_BASE_URL="${corrected_dialogue_url}")
+              echo "corrected legacy MORMI_DIALOGUE_BASE_URL port 800 to 8000"
+            fi
           fi
 
           docker run -d \
