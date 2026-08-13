@@ -141,33 +141,36 @@ jobs:
           # AI와 BE가 같은 EC2에 있다면 컨테이너 이름으로 직접 통신한다.
           # 서로 다른 EC2라면 mormi.env의 MORMI_DIALOGUE_BASE_URL을 그대로 쓴다.
           docker network create mormi-services 2>/dev/null || true
-          dialogue_args=()
+          configured_dialogue_url="$(awk -F= \
+            '$1 == "MORMI_DIALOGUE_BASE_URL" {sub(/^[^=]*=/, ""); print; exit}' \
+            /etc/mormi-backend/mormi.env)"
+          runtime_dialogue_url="${configured_dialogue_url}"
           if docker ps --format '{{.Names}}' | grep -q '^mormi-ai$'; then
             docker network connect mormi-services mormi-ai 2>/dev/null || true
-            dialogue_args=(-e MORMI_DIALOGUE_BASE_URL=http://mormi-ai:8000)
+            runtime_dialogue_url="http://mormi-ai:8000"
             echo "using local mormi-ai container through mormi-services network"
-          else
-            configured_dialogue_url="$(awk -F= \
-              '$1 == "MORMI_DIALOGUE_BASE_URL" {sub(/^[^=]*=/, ""); print; exit}' \
-              /etc/mormi-backend/mormi.env)"
+          elif [[ "${configured_dialogue_url%/}" == *:800 ]]; then
             # 기존 서버 설정의 :800 오타를 안전하게 보정한다.
-            if [[ "${configured_dialogue_url%/}" == *:800 ]]; then
-              corrected_dialogue_url="${configured_dialogue_url%/}0"
-              dialogue_args=(-e MORMI_DIALOGUE_BASE_URL="${corrected_dialogue_url}")
-              echo "corrected legacy MORMI_DIALOGUE_BASE_URL port 800 to 8000"
-            fi
+            runtime_dialogue_url="${configured_dialogue_url%/}0"
+            echo "corrected legacy MORMI_DIALOGUE_BASE_URL port 800 to 8000"
           fi
+
+          # 같은 이름의 환경변수를 두 번 넣으면 JVM이 원본 값을 고를 수 있다.
+          # 비밀값은 유지하되 AI 주소 한 줄만 제외한 임시 env를 사용한다.
+          runtime_env="$(mktemp)"
+          grep -v '^MORMI_DIALOGUE_BASE_URL=' /etc/mormi-backend/mormi.env > "${runtime_env}"
 
           docker run -d \
             --name mormi-backend \
             --restart unless-stopped \
             --network mormi-services \
-            --env-file /etc/mormi-backend/mormi.env \
-            "${dialogue_args[@]}" \
+            --env-file "${runtime_env}" \
+            -e MORMI_DIALOGUE_BASE_URL="${runtime_dialogue_url}" \
             -p 8080:8080 \
             --log-opt max-size=10m \
             --log-opt max-file=5 \
             "${IMAGE_URI}"
+          rm -f "${runtime_env}"
 
           for i in $(seq 1 30); do
             if curl -fsS -o /dev/null http://localhost:8080/actuator/health 2>/dev/null \
