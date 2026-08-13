@@ -1,14 +1,13 @@
 package com.mormi.backend.dialogue;
 
 import com.mormi.backend.common.ApiException;
-import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
@@ -42,11 +41,11 @@ public class DialogueClient {
     }
 
     private RestClient buildClient(String baseUrl) {
-        HttpClient httpClient = HttpClient.newBuilder()
-                .connectTimeout(CONNECT_TIMEOUT)
-                .build();
-        JdkClientHttpRequestFactory requestFactory =
-                new JdkClientHttpRequestFactory(httpClient);
+        // AI 컨테이너의 HTTP/1.1 서버와 통신할 때 h2c 업그레이드나
+        // chunked 재전송 여지를 없애기 위해 단순 HTTP/1.1 팩토리를 쓴다.
+        SimpleClientHttpRequestFactory requestFactory =
+                new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(CONNECT_TIMEOUT);
         requestFactory.setReadTimeout(READ_TIMEOUT);
         return RestClient.builder()
                 .baseUrl(baseUrl)
