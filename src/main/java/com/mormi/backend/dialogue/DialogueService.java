@@ -117,27 +117,27 @@ public class DialogueService {
     public Map<String, Object> startCafeDialogue(
             Long learnerId, String publicVisitId, StartCafeDialogueRequest request) {
         CafeVisit visit = requireCafeOwned(learnerId, publicVisitId);
-        DialogueConversation existing = dialogueRepository
-                .findByCafeVisitIdAndScenarioId(visit.getId(), request.scenarioId())
+        DialogueConversation latest = dialogueRepository
+                .findFirstByCafeVisitIdAndScenarioIdOrderByRoundDesc(visit.getId(), request.scenarioId())
                 .orElse(null);
-        if (existing != null) {
+        // 다시 연습이 아니면 새로고침 복구로 보고 마지막 회차를 그대로 이어 준다.
+        if (latest != null && !request.restart()) {
             return envelopeWithContext(
-                    existing, dialogueClient.getConversation(existing.getConversationId()));
+                    latest, dialogueClient.getConversation(latest.getConversationId()));
         }
 
         // 단계 제출(CafeService.requireStageReached)과 같은 기준으로 연다. 이미 통과한
         // 돌다리를 다시 눌러도 대화가 열려야 하고, 첫 시도 때 AI 대화 생성이 실패해
         // 저장된 대화가 없는 단계도 뒤늦게 다시 열 수 있어야 한다. 막을 것은 아직
-        // 도달하지 않은 앞선 단계뿐이다.
+        // 도달하지 않은 앞선 단계뿐이다. 완료된 방문은 네 단계를 모두 지났으므로
+        // 어느 단계든 다시 연습할 수 있다.
         CafeStage requestedStage = stageForScenario(request.scenarioId());
-        if (visit.isCompleted() || visit.stage() == CafeStage.COMPLETE) {
-            throw ApiException.conflict("cafe_visit_completed", "이미 완료된 카페 방문입니다.");
-        }
-        if (!requestedStage.isReachedBy(visit.stage())) {
+        if (!visit.isCompleted() && !requestedStage.isReachedBy(visit.stage())) {
             throw ApiException.conflict(
                     "dialogue_stage_locked",
                     "아직 열리지 않은 카페 단계입니다. 현재 단계: " + visit.getStage());
         }
+        int round = latest == null ? 1 : latest.getRound() + 1;
 
         Learner learner = learnerService.require(learnerId);
         Map<String, Object> body = baseRequest(learner, "cafe", request.scenarioId());
@@ -159,7 +159,7 @@ public class DialogueService {
         JsonNode envelope = requireEnvelope(dialogueClient.createConversation(body));
         String conversationId = envelope.path("conversation_id").asText();
         DialogueConversation dialogue = DialogueConversation.forCafeVisit(
-                conversationId, learnerId, visit.getId(), request.scenarioId(), scenarioContext);
+                conversationId, learnerId, visit.getId(), request.scenarioId(), round, scenarioContext);
         dialogueRepository.save(dialogue);
         return envelopeWithContext(dialogue, envelope);
     }
@@ -270,7 +270,10 @@ public class DialogueService {
         CafeVisit visit = cafeVisitRepository.findById(dialogue.getCafeVisitId())
                 .orElseThrow(() -> ApiException.notFound("카페 방문을 찾을 수 없습니다."));
 
-        if (expectedStage.next().isReachedBy(visit.stage())) {
+        // 통과 여부는 방문 진행도가 아니라 "이 회차가 통과했는지"로 본다.
+        // 방문 진행도로 판정하면 이미 지난 단계를 다시 연습할 때 대화 검증 없이
+        // 무조건 통과가 되어 버린다(줄 서기는 결정적 제출 API를 쓰지 않아 특히 그렇다).
+        if (dialogue.getClearedAt() != null) {
             return stageProgress(expectedStage, visit.stage(), true, "stage_attempt");
         }
 
@@ -290,7 +293,11 @@ public class DialogueService {
                     "대화 완료 사실을 확인하지 못했습니다. 잠시 뒤 다시 시도해 주세요.");
         }
 
-        int attemptNo = 900_000 + Math.max(1, turn.path("state_version").asInt(1));
+        // 회차마다 1,000칸씩 떨어진 대역을 쓴다. 회차가 달라도 대화 안의 state_version 은
+        // 다시 1부터 시작하므로, 대역을 나누지 않으면 이전 회차 기록의 멱등키에 걸려
+        // 새 답이 저장되지 않는다. 1회차는 예전 계산식과 같은 값을 유지한다.
+        int stateVersion = Math.min(Math.max(1, turn.path("state_version").asInt(1)), 999);
+        int attemptNo = 900_000 + (dialogue.getRound() - 1) * 1_000 + stateVersion;
         StageResultResponse result = switch (expectedStage) {
             case QUEUE -> syncQueue(dialogue, facts, attemptNo);
             case MENU -> syncMenu(dialogue, facts, attemptNo);
@@ -299,6 +306,9 @@ public class DialogueService {
             case COMPLETE -> throw ApiException.conflict(
                     "cafe_visit_completed", "이미 완료된 카페 방문입니다.");
         };
+        if (result.isCorrect()) {
+            dialogue.markCleared();
+        }
         CafeStage nextStage = CafeStage.from(result.nextStage());
         return stageProgress(expectedStage, nextStage, result.isCorrect(), "dialogue_verified_facts");
     }

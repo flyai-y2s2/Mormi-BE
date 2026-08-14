@@ -63,6 +63,7 @@ class DialogueServiceTest {
                 7L,
                 21L,
                 "cafe_queue",
+                1,
                 Map.of("queue_context", Map.of("left_count", 2, "right_count", 5)));
         JsonNode childResponse = new ObjectMapper().readTree("{\"turn_id\":\"turn-1\"}");
         JsonNode envelope = new ObjectMapper().readTree("""
@@ -131,7 +132,7 @@ class DialogueServiceTest {
         Map<String, Object> storedContext = Map.of(
                 "queue_context", Map.of("left_count", 2, "right_count", 5));
         DialogueConversation stored = DialogueConversation.forCafeVisit(
-                "conversation-queue-1", 7L, 21L, "cafe_queue", storedContext);
+                "conversation-queue-1", 7L, 21L, "cafe_queue", 1, storedContext);
 
         JsonNode envelope = new ObjectMapper().readTree("""
                 {
@@ -142,7 +143,7 @@ class DialogueServiceTest {
 
         when(cafeVisitRepository.findByPublicId(visit.getPublicId())).thenReturn(Optional.of(visit));
         when(cafeVisitRepository.findById(21L)).thenReturn(Optional.of(visit));
-        when(dialogueRepository.findByCafeVisitIdAndScenarioId(21L, "cafe_queue"))
+        when(dialogueRepository.findFirstByCafeVisitIdAndScenarioIdOrderByRoundDesc(21L, "cafe_queue"))
                 .thenReturn(Optional.of(stored));
         when(dialogueClient.getConversation("conversation-queue-1")).thenReturn(envelope);
 
@@ -152,7 +153,8 @@ class DialogueServiceTest {
                 new StartCafeDialogueRequest(
                         "cafe_queue",
                         Map.of("left_count", 4, "right_count", 1),
-                        null));
+                        null,
+                        false));
 
         assertThat(result.get("conversation_id")).isEqualTo("conversation-queue-1");
         assertThat(result.get("scenario_context")).isEqualTo(storedContext);
@@ -191,7 +193,7 @@ class DialogueServiceTest {
 
         when(cafeVisitRepository.findByPublicId(visit.getPublicId())).thenReturn(Optional.of(visit));
         when(cafeVisitRepository.findById(21L)).thenReturn(Optional.of(visit));
-        when(dialogueRepository.findByCafeVisitIdAndScenarioId(21L, "cafe_queue"))
+        when(dialogueRepository.findFirstByCafeVisitIdAndScenarioIdOrderByRoundDesc(21L, "cafe_queue"))
                 .thenReturn(Optional.empty());
         when(learnerService.require(7L)).thenReturn(learner);
         when(dialogueClient.createConversation(any())).thenReturn(envelope);
@@ -200,7 +202,7 @@ class DialogueServiceTest {
                 7L,
                 visit.getPublicId(),
                 new StartCafeDialogueRequest(
-                        "cafe_queue", Map.of("left_count", 4, "right_count", 1), null));
+                        "cafe_queue", Map.of("left_count", 4, "right_count", 1), null, false));
 
         assertThat(result.get("conversation_id")).isEqualTo("conversation-queue-2");
         verify(dialogueRepository).save(any(DialogueConversation.class));
@@ -225,16 +227,148 @@ class DialogueServiceTest {
         ReflectionTestUtils.setField(visit, "id", 21L);
 
         when(cafeVisitRepository.findByPublicId(visit.getPublicId())).thenReturn(Optional.of(visit));
-        when(dialogueRepository.findByCafeVisitIdAndScenarioId(21L, "cafe_change"))
+        when(dialogueRepository.findFirstByCafeVisitIdAndScenarioIdOrderByRoundDesc(21L, "cafe_change"))
                 .thenReturn(Optional.empty());
 
         StartCafeDialogueRequest request = new StartCafeDialogueRequest(
-                "cafe_change", null, Map.of("mormi_menu_id", "americano"));
+                "cafe_change", null, Map.of("mormi_menu_id", "americano"), false);
 
         assertThatThrownBy(() -> service.startCafeDialogue(7L, visit.getPublicId(), request))
                 .isInstanceOf(ApiException.class)
                 .hasMessageContaining("아직 열리지 않은 카페 단계");
         verify(dialogueClient, never()).createConversation(any());
+    }
+
+    @Test
+    void restartOpensANewRoundWithTheFreshProblem() throws Exception {
+        DialogueClient dialogueClient = mock(DialogueClient.class);
+        DialogueConversationRepository dialogueRepository = mock(DialogueConversationRepository.class);
+        CafeVisitRepository cafeVisitRepository = mock(CafeVisitRepository.class);
+        LearnerService learnerService = mock(LearnerService.class);
+        DialogueService service = new DialogueService(
+                dialogueClient,
+                dialogueRepository,
+                mock(LearningSessionRepository.class),
+                mock(AttemptRepository.class),
+                cafeVisitRepository,
+                mock(CafeService.class),
+                learnerService,
+                mock(RewardService.class));
+
+        // 카페를 끝낸 방문. 네 단계가 모두 열린 연습 모드라 줄 서기를 다시 열 수 있어야 한다.
+        CafeVisit visit = CafeVisit.start(7L);
+        ReflectionTestUtils.setField(visit, "id", 21L);
+        visit.advanceTo(CafeStage.COMPLETE);
+        Learner learner = Learner.create("표시 이름", "R-007", "hash");
+        ReflectionTestUtils.setField(learner, "id", 7L);
+
+        DialogueConversation firstRound = DialogueConversation.forCafeVisit(
+                "conversation-queue-1",
+                7L,
+                21L,
+                "cafe_queue",
+                1,
+                Map.of("queue_context", Map.of("left_count", 2, "right_count", 5)));
+        firstRound.markCleared();
+
+        JsonNode envelope = new ObjectMapper().readTree("""
+                {
+                  "conversation_id": "conversation-queue-2",
+                  "turn": {"status": "active", "completion": null}
+                }
+                """);
+
+        when(cafeVisitRepository.findByPublicId(visit.getPublicId())).thenReturn(Optional.of(visit));
+        when(cafeVisitRepository.findById(21L)).thenReturn(Optional.of(visit));
+        when(dialogueRepository.findFirstByCafeVisitIdAndScenarioIdOrderByRoundDesc(21L, "cafe_queue"))
+                .thenReturn(Optional.of(firstRound));
+        when(learnerService.require(7L)).thenReturn(learner);
+        when(dialogueClient.createConversation(any())).thenReturn(envelope);
+
+        Map<String, Object> result = service.startCafeDialogue(
+                7L,
+                visit.getPublicId(),
+                new StartCafeDialogueRequest(
+                        "cafe_queue", Map.of("left_count", 4, "right_count", 1), null, true));
+
+        assertThat(result.get("conversation_id")).isEqualTo("conversation-queue-2");
+        // 1회차의 옛 문제가 아니라 화면이 방금 뽑은 새 문제가 저장되어야 한다.
+        assertThat(result.get("scenario_context"))
+                .isEqualTo(Map.of("queue_context", Map.of("left_count", 4, "right_count", 1)));
+
+        ArgumentCaptor<DialogueConversation> saved =
+                ArgumentCaptor.forClass(DialogueConversation.class);
+        verify(dialogueRepository).save(saved.capture());
+        assertThat(saved.getValue().getRound()).isEqualTo(2);
+        assertThat(saved.getValue().getClearedAt()).isNull();
+
+        // 새 회차는 아직 통과하지 않았으므로 대화 검증 없이 완료로 단락되면 안 된다.
+        @SuppressWarnings("unchecked")
+        Map<String, Object> progress = (Map<String, Object>) result.get("stage_progress");
+        assertThat(progress)
+                .containsEntry("completed", false)
+                .containsEntry("source", "pending");
+    }
+
+    @Test
+    void replayRoundRecordsItsOwnAttemptBand() throws Exception {
+        DialogueClient dialogueClient = mock(DialogueClient.class);
+        DialogueConversationRepository dialogueRepository = mock(DialogueConversationRepository.class);
+        CafeVisitRepository cafeVisitRepository = mock(CafeVisitRepository.class);
+        CafeService cafeService = mock(CafeService.class);
+        DialogueService service = new DialogueService(
+                dialogueClient,
+                dialogueRepository,
+                mock(LearningSessionRepository.class),
+                mock(AttemptRepository.class),
+                cafeVisitRepository,
+                cafeService,
+                mock(LearnerService.class),
+                mock(RewardService.class));
+
+        CafeVisit visit = CafeVisit.start(7L);
+        ReflectionTestUtils.setField(visit, "id", 21L);
+        visit.advanceTo(CafeStage.COMPLETE);
+        DialogueConversation secondRound = DialogueConversation.forCafeVisit(
+                "conversation-queue-2",
+                7L,
+                21L,
+                "cafe_queue",
+                2,
+                Map.of("queue_context", Map.of("left_count", 4, "right_count", 1)));
+
+        JsonNode childResponse = new ObjectMapper().readTree("{\"turn_id\":\"turn-1\"}");
+        JsonNode envelope = new ObjectMapper().readTree("""
+                {
+                  "conversation_id": "conversation-queue-2",
+                  "turn": {
+                    "status": "completed",
+                    "state_version": 3,
+                    "completion": {
+                      "outcome": "supported",
+                      "teach_reward_eligible": true,
+                      "verified_facts": {"left_count": 4, "right_count": 1}
+                    }
+                  }
+                }
+                """);
+
+        when(dialogueRepository.findByConversationId("conversation-queue-2"))
+                .thenReturn(Optional.of(secondRound));
+        when(cafeVisitRepository.findById(21L)).thenReturn(Optional.of(visit));
+        when(dialogueClient.respond("conversation-queue-2", childResponse)).thenReturn(envelope);
+        when(cafeService.submitQueue(any(), any(), any())).thenReturn(
+                new StageResultResponse(
+                        visit.getPublicId(), "queue", true, "menu", true, 3, 1, 1, 0, "queue_correct"));
+
+        service.respond(7L, "conversation-queue-2", childResponse);
+
+        // 방문이 이미 COMPLETE 라도 재연습 회차는 대화 검증을 거쳐야 하고,
+        // 시도 번호는 1회차(900,001~)와 겹치지 않는 2회차 대역에 저장된다.
+        ArgumentCaptor<QueueRequest> request = ArgumentCaptor.forClass(QueueRequest.class);
+        verify(cafeService).submitQueue(any(), any(), request.capture());
+        assertThat(request.getValue().attemptNo()).isEqualTo(901_003);
+        assertThat(secondRound.getClearedAt()).isNotNull();
     }
 
     @Test

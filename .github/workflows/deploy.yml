@@ -134,6 +134,29 @@ jobs:
           aws ecr get-login-password --region "${AWS_REGION}" \
             | docker login --username AWS --password-stdin "${REGISTRY}"
 
+          # 새 이미지를 받을 자리를 먼저 만든다.
+          #
+          # 배포마다 커밋 SHA 태그가 붙은 이미지가 새로 쌓인다. 태그가 있으면 dangling 이
+          # 아니라서 배포 끝의 `docker image prune -f` 로는 지워지지 않는다. 그대로 두면
+          # 몇 번 배포 뒤 pull 이 "no space left on device" 로 죽는데, 그때는 배포 끝의
+          # 정리에 도달하지도 못한다. 그래서 pull 앞에서도 한 번 치운다.
+          #
+          # 실행 중인 컨테이너가 참조하는 이미지는 docker 가 삭제를 거부하므로,
+          # 지금 서비스 중인 컨테이너는 이 정리에 영향을 받지 않는다.
+          docker container prune -f >/dev/null || true
+          docker image prune -af --filter "until=72h" >/dev/null || true
+
+          # 하루에 여러 번 배포한 날은 위 필터가 아무것도 지우지 못한다(전부 72시간 이내).
+          # 여유가 모자라면 필터를 빼고 미사용 이미지를 전부 지운다. 지워진 이미지는
+          # ECR 에 남아 있어 롤백할 때 다시 받으면 된다.
+          avail_mb="$(df -Pm / | awk 'NR==2 {print $4}')"
+          if [ "${avail_mb}" -lt 2048 ]; then
+            echo "free space ${avail_mb}MB is low; pruning all unused images"
+            docker image prune -af >/dev/null || true
+            avail_mb="$(df -Pm / | awk 'NR==2 {print $4}')"
+          fi
+          echo "free space before pull: ${avail_mb}MB"
+
           docker pull "${IMAGE_URI}"
 
           docker rm -f mormi-backend 2>/dev/null || true
@@ -222,7 +245,10 @@ jobs:
             exit 1
           fi
 
-          docker image prune -f >/dev/null
+          # 새 컨테이너가 정상 기동한 뒤이므로, 직전 버전을 포함해 안 쓰는 이미지는 모두 정리한다.
+          # -f 만 쓰면 태그 없는 이미지만 지워져 SHA 태그가 붙은 예전 배포본이 계속 쌓인다.
+          docker image prune -af >/dev/null || true
+          df -h / | tail -1
           docker ps --filter name=mormi-backend
 
           REMOTE

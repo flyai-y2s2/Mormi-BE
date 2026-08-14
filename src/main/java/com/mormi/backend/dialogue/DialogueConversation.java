@@ -41,10 +41,21 @@ public class DialogueConversation {
     @Column(name = "scenario_id", nullable = false, length = 100, updatable = false)
     private String scenarioId;
 
+    /**
+     * 같은 (방문, 시나리오)를 다시 연습한 회차. 1부터 시작한다.
+     * 회차마다 대화가 따로 생겨야 이미 끝낸 스테이지를 새 문제로 다시 풀 수 있다.
+     */
+    @Column(name = "round", nullable = false, updatable = false)
+    private int round = 1;
+
     /** 새로고침 뒤에도 화면 문제와 AI가 기억하는 문제를 같게 복구하는 구조 데이터. */
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "scenario_context", nullable = false, columnDefinition = "jsonb", updatable = false)
     private Map<String, Object> scenarioContext = new LinkedHashMap<>();
+
+    /** 이 회차가 스테이지를 통과시킨 시각. 같은 회차를 다시 읽을 때 재검증을 건너뛰는 기준. */
+    @Column(name = "cleared_at")
+    private OffsetDateTime clearedAt;
 
     @Column(name = "created_at", nullable = false, updatable = false, insertable = false)
     private OffsetDateTime createdAt;
@@ -55,12 +66,14 @@ public class DialogueConversation {
             Long learningSessionId,
             Long cafeVisitId,
             String scenarioId,
+            int round,
             Map<String, Object> scenarioContext) {
         this.conversationId = conversationId;
         this.learnerId = learnerId;
         this.learningSessionId = learningSessionId;
         this.cafeVisitId = cafeVisitId;
         this.scenarioId = scenarioId;
+        this.round = round;
         this.scenarioContext = scenarioContext == null
                 ? new LinkedHashMap<>()
                 : new LinkedHashMap<>(scenarioContext);
@@ -69,7 +82,7 @@ public class DialogueConversation {
     public static DialogueConversation forLearningSession(
             String conversationId, Long learnerId, Long learningSessionId) {
         return new DialogueConversation(
-                conversationId, learnerId, learningSessionId, null, "home_teach", Map.of());
+                conversationId, learnerId, learningSessionId, null, "home_teach", 1, Map.of());
     }
 
     public static DialogueConversation forCafeVisit(
@@ -77,8 +90,16 @@ public class DialogueConversation {
             Long learnerId,
             Long cafeVisitId,
             String scenarioId,
+            int round,
             Map<String, Object> scenarioContext) {
         return new DialogueConversation(
-                conversationId, learnerId, null, cafeVisitId, scenarioId, scenarioContext);
+                conversationId, learnerId, null, cafeVisitId, scenarioId, round, scenarioContext);
+    }
+
+    /** 이 회차가 스테이지를 통과시켰음을 한 번만 기록한다. */
+    public void markCleared() {
+        if (clearedAt == null) {
+            clearedAt = OffsetDateTime.now();
+        }
     }
 }

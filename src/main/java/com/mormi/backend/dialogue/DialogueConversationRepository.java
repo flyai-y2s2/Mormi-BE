@@ -9,5 +9,7 @@ public interface DialogueConversationRepository extends JpaRepository<DialogueCo
 
     Optional<DialogueConversation> findByLearningSessionId(Long learningSessionId);
 
-    Optional<DialogueConversation> findByCafeVisitIdAndScenarioId(Long cafeVisitId, String scenarioId);
+    /** 재연습 회차가 쌓이므로 가장 최근 회차를 본다. */
+    Optional<DialogueConversation> findFirstByCafeVisitIdAndScenarioIdOrderByRoundDesc(
+            Long cafeVisitId, String scenarioId);
 }
