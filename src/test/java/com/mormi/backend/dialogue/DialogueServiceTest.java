@@ -1,6 +1,7 @@
 package com.mormi.backend.dialogue;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -10,8 +11,10 @@ import static org.mockito.Mockito.when;
 import com.mormi.backend.cafe.CafeVisitRepository;
 import com.mormi.backend.cafe.CafeVisit;
 import com.mormi.backend.cafe.CafeService;
+import com.mormi.backend.cafe.CafeStage;
 import com.mormi.backend.cafe.CafeDtos.QueueRequest;
 import com.mormi.backend.cafe.CafeDtos.StageResultResponse;
+import com.mormi.backend.common.ApiException;
 import com.mormi.backend.dialogue.DialogueDtos.StartCafeDialogueRequest;
 import com.mormi.backend.learner.Learner;
 import com.mormi.backend.learner.LearnerService;
@@ -153,6 +156,84 @@ class DialogueServiceTest {
 
         assertThat(result.get("conversation_id")).isEqualTo("conversation-queue-1");
         assertThat(result.get("scenario_context")).isEqualTo(storedContext);
+        verify(dialogueClient, never()).createConversation(any());
+    }
+
+    @Test
+    void alreadyPassedCafeStageCanOpenANewDialogue() throws Exception {
+        DialogueClient dialogueClient = mock(DialogueClient.class);
+        DialogueConversationRepository dialogueRepository = mock(DialogueConversationRepository.class);
+        CafeVisitRepository cafeVisitRepository = mock(CafeVisitRepository.class);
+        LearnerService learnerService = mock(LearnerService.class);
+        DialogueService service = new DialogueService(
+                dialogueClient,
+                dialogueRepository,
+                mock(LearningSessionRepository.class),
+                mock(AttemptRepository.class),
+                cafeVisitRepository,
+                mock(CafeService.class),
+                learnerService,
+                mock(RewardService.class));
+
+        // 줄 서기·메뉴·계산을 마쳐 거스름돈까지 온 방문. 앞 돌다리를 다시 눌러도
+        // (또는 그때 AI 대화 생성이 실패해 저장된 대화가 없어도) 대화는 열려야 한다.
+        CafeVisit visit = CafeVisit.start(7L);
+        ReflectionTestUtils.setField(visit, "id", 21L);
+        visit.advanceTo(CafeStage.CHANGE);
+        Learner learner = Learner.create("표시 이름", "R-007", "hash");
+        ReflectionTestUtils.setField(learner, "id", 7L);
+        JsonNode envelope = new ObjectMapper().readTree("""
+                {
+                  "conversation_id": "conversation-queue-2",
+                  "turn": {"status": "active", "completion": null}
+                }
+                """);
+
+        when(cafeVisitRepository.findByPublicId(visit.getPublicId())).thenReturn(Optional.of(visit));
+        when(cafeVisitRepository.findById(21L)).thenReturn(Optional.of(visit));
+        when(dialogueRepository.findByCafeVisitIdAndScenarioId(21L, "cafe_queue"))
+                .thenReturn(Optional.empty());
+        when(learnerService.require(7L)).thenReturn(learner);
+        when(dialogueClient.createConversation(any())).thenReturn(envelope);
+
+        Map<String, Object> result = service.startCafeDialogue(
+                7L,
+                visit.getPublicId(),
+                new StartCafeDialogueRequest(
+                        "cafe_queue", Map.of("left_count", 4, "right_count", 1), null));
+
+        assertThat(result.get("conversation_id")).isEqualTo("conversation-queue-2");
+        verify(dialogueRepository).save(any(DialogueConversation.class));
+    }
+
+    @Test
+    void notYetReachedCafeStageCannotOpenADialogue() {
+        DialogueClient dialogueClient = mock(DialogueClient.class);
+        CafeVisitRepository cafeVisitRepository = mock(CafeVisitRepository.class);
+        DialogueConversationRepository dialogueRepository = mock(DialogueConversationRepository.class);
+        DialogueService service = new DialogueService(
+                dialogueClient,
+                dialogueRepository,
+                mock(LearningSessionRepository.class),
+                mock(AttemptRepository.class),
+                cafeVisitRepository,
+                mock(CafeService.class),
+                mock(LearnerService.class),
+                mock(RewardService.class));
+
+        CafeVisit visit = CafeVisit.start(7L);
+        ReflectionTestUtils.setField(visit, "id", 21L);
+
+        when(cafeVisitRepository.findByPublicId(visit.getPublicId())).thenReturn(Optional.of(visit));
+        when(dialogueRepository.findByCafeVisitIdAndScenarioId(21L, "cafe_change"))
+                .thenReturn(Optional.empty());
+
+        StartCafeDialogueRequest request = new StartCafeDialogueRequest(
+                "cafe_change", null, Map.of("mormi_menu_id", "americano"));
+
+        assertThatThrownBy(() -> service.startCafeDialogue(7L, visit.getPublicId(), request))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("아직 열리지 않은 카페 단계");
         verify(dialogueClient, never()).createConversation(any());
     }
 

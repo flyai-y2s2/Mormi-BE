@@ -112,7 +112,7 @@ public class DialogueService {
         return envelope;
     }
 
-    /** 카페 화면에 고정된 문제 사실만 받아 현재 BE 단계에 맞는 AI 대화를 시작한다. */
+    /** 카페 화면에 고정된 문제 사실만 받아, BE가 이미 열어 준 단계의 AI 대화를 시작한다. */
     @Transactional
     public Map<String, Object> startCafeDialogue(
             Long learnerId, String publicVisitId, StartCafeDialogueRequest request) {
@@ -125,11 +125,18 @@ public class DialogueService {
                     existing, dialogueClient.getConversation(existing.getConversationId()));
         }
 
-        String expectedScenario = scenarioFor(visit.stage());
-        if (!expectedScenario.equals(request.scenarioId())) {
+        // 단계 제출(CafeService.requireStageReached)과 같은 기준으로 연다. 이미 통과한
+        // 돌다리를 다시 눌러도 대화가 열려야 하고, 첫 시도 때 AI 대화 생성이 실패해
+        // 저장된 대화가 없는 단계도 뒤늦게 다시 열 수 있어야 한다. 막을 것은 아직
+        // 도달하지 않은 앞선 단계뿐이다.
+        CafeStage requestedStage = stageForScenario(request.scenarioId());
+        if (visit.isCompleted() || visit.stage() == CafeStage.COMPLETE) {
+            throw ApiException.conflict("cafe_visit_completed", "이미 완료된 카페 방문입니다.");
+        }
+        if (!requestedStage.isReachedBy(visit.stage())) {
             throw ApiException.conflict(
-                    "dialogue_stage_mismatch",
-                    "현재 카페 단계와 대화 시나리오가 맞지 않습니다. 현재 단계: " + visit.getStage());
+                    "dialogue_stage_locked",
+                    "아직 열리지 않은 카페 단계입니다. 현재 단계: " + visit.getStage());
         }
 
         Learner learner = learnerService.require(learnerId);
@@ -434,17 +441,6 @@ public class DialogueService {
             return null;
         }
         return text.length() <= 80 ? text : text.substring(0, 80);
-    }
-
-    private String scenarioFor(CafeStage stage) {
-        return switch (stage) {
-            case QUEUE -> "cafe_queue";
-            case MENU -> "cafe_budget_menu";
-            case CALCULATE -> "cafe_menu_total";
-            case CHANGE -> "cafe_change";
-            case COMPLETE -> throw ApiException.conflict(
-                    "cafe_visit_completed", "이미 완료된 카페 방문입니다.");
-        };
     }
 
     private CafeStage stageForScenario(String scenarioId) {
