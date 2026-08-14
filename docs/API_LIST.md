@@ -139,7 +139,7 @@
 
 | Method | Path | 설명 |
 |---|---|---|
-| `POST` | `/v1/cafe-visits` | 방문 시작 (해금 검증, 진행 중 방문 있으면 이어받음) |
+| `POST` | `/v1/cafe-visits` | 방문 시작 (해금 검증, 기존 방문 있으면 이어받음) |
 | `GET` | `/v1/cafe-visits/{id}` | 진행 복구 (시도 전체 포함) |
 | `POST` | `/v1/cafe-visits/{id}/queue` | 줄 서기 (짧은 줄 인원수) |
 | `POST` | `/v1/cafe-visits/{id}/menu` | 메뉴 2개 (예산 안) |
@@ -152,9 +152,15 @@
 
 네 단계(줄 서기·메뉴·계산·거스름돈)의 **문제는 화면이 방문마다 새로 뽑습니다**. 좌우 인원, 예산,
 계산·거스름돈에 쓰이는 메뉴가 매번 달라지므로 요청에 문제를 함께 싣고, 정오는 서버가 판정합니다.
-최초 대화의 구조 맥락은 `dialogue_conversations.scenario_context`에 저장합니다. 같은 스테이지를
-다시 열면 BE가 최초 맥락을 `scenario_context`로 돌려주므로, 새로고침 뒤 화면 숫자와 AI가
+대화의 구조 맥락은 `dialogue_conversations.scenario_context`에 저장합니다. 같은 스테이지를
+다시 열면 BE가 저장된 맥락을 `scenario_context`로 돌려주므로, 새로고침 뒤 화면 숫자와 AI가
 기억하는 숫자가 달라지지 않습니다.
+
+**재연습**: 한 번 통과한 스테이지도 몇 번이든 다시 풀 수 있습니다. `POST .../dialogues` 에
+`"restart": true` 를 실으면 BE가 새 회차(`dialogue_conversations.round`) 대화를 열고, 그때
+화면이 뽑은 새 문제를 그 회차의 `scenario_context` 로 저장합니다. `restart` 를 빼면(기본 false)
+새로고침 복구로 보고 마지막 회차를 그대로 돌려줍니다. 방문이 `complete` 여도 네 단계 모두
+제출·대화가 열립니다. 진행도는 전진 전용이라 재연습이 `stage` 를 되돌리지는 않습니다.
 
 ```jsonc
 // POST .../queue   정답은 min(left,right)
@@ -190,8 +196,10 @@
 운영 호출 경로는 `FE → Spring BE → Mormi-AI`입니다. FE는 `learner_id`, 저장 동의, 보존기간, AI 서비스 키를 보내지 않습니다. Spring BE가 인증된 학습자 레코드에서 채웁니다.
 카페 대화 응답에는 AI의 `conversation_id`, `turn`과 함께 BE가 보관한
 `scenario_context`, 현재 단계 동기화 결과인 `stage_progress`가 포함됩니다.
-`stage_progress.completed=true`는 기존 정답 시도가 이미 저장됐거나, AI 대화 완료의
+`stage_progress.completed=true`는 **그 회차가** 이미 통과 기록을 남겼거나, AI 대화 완료의
 `completion.verified_facts`를 Spring이 다시 검증해 카페 시도로 기록했다는 뜻입니다.
+판정 기준은 방문 진행도가 아니라 회차입니다. 방문 진행도로 판정하면 이미 지난 단계를
+다시 연습할 때 대화 검증 없이 무조건 통과가 되어 버립니다.
 아이 원문이나 모르미 대사만으로는 단계를 진행시키지 않습니다.
 
 ```json

@@ -297,6 +297,39 @@ class LearningFlowIntegrationTest {
                 .andExpect(jsonPath("$.attempts[0].payload.chosen_count").value(4))
                 .andExpect(jsonPath("$.attempts[2].payload.budget").value(8000))
                 .andExpect(jsonPath("$.attempts[4].payload.answer_amount").value(9000));
+
+        // 카페를 끝낸 뒤에도 방문은 그대로 남아 네 단계를 다시 연습할 수 있다.
+        mockMvc.perform(post("/v1/cafe-visits").header("Authorization", token))
+                .andExpect(jsonPath("$.cafe_visit_id").value(visitId))
+                .andExpect(jsonPath("$.stage").value("complete"));
+
+        // 줄 서기를 새 시도 번호로 다시 풀어도 409 가 아니라 정상 채점된다.
+        mockMvc.perform(post("/v1/cafe-visits/{id}/queue", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "left_count", 1, "right_count", 4, "chosen_count", 4,
+                                "scaffold_used", false, "attempt_no", 3))))
+                .andExpect(jsonPath("$.is_correct").value(false));
+
+        mockMvc.perform(post("/v1/cafe-visits/{id}/queue", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "left_count", 1, "right_count", 4, "chosen_count", 1,
+                                "scaffold_used", false, "attempt_no", 4))))
+                .andExpect(jsonPath("$.is_correct").value(true));
+
+        // 재연습 기록이 쌓이고, 진행도는 complete 에서 되돌아가지 않는다.
+        mockMvc.perform(get("/v1/cafe-visits/{id}", visitId).header("Authorization", token))
+                .andExpect(jsonPath("$.stage").value("complete"))
+                .andExpect(jsonPath("$.completed_at").isNotEmpty())
+                .andExpect(jsonPath("$.attempts.length()").value(9));
+
+        // 완료 재호출은 멱등이다.
+        mockMvc.perform(post("/v1/cafe-visits/{id}/complete", visitId).header("Authorization", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.stage").value("complete"));
     }
 
     @Test
