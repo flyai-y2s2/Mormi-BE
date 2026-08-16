@@ -103,6 +103,68 @@ class DiagnosticMetricsTest {
     }
 
     @Test
+    void analyzeUsesPersistedMisconceptionTagOnlyWhenItRepeatsAcrossRecentHomeSessions() {
+        var repeated = List.of(
+                homeWithAttempt("session-1", false, Map.of("misconception_tag", "skip-count"), 0),
+                homeWithAttempt("session-2", false, Map.of("misconception_tag", "skip-count"), 1),
+                homeWithAttempt("session-3", false, Map.of("misconception_tag", "skip-count"), 2));
+        var mixed = List.of(
+                homeWithAttempt("session-1", false, Map.of("misconception_tag", "skip-count"), 0),
+                homeWithAttempt("session-2", false, Map.of("misconception_tag", "amount-order"), 1),
+                homeWithAttempt("session-3", false, Map.of(), 2));
+
+        assertThat(DiagnosticMetrics.analyze(repeated, List.of(), List.of()).domainStatuses())
+                .extracting(DiagnosticReportDtos.DomainStatus::status)
+                .containsExactly(SUPPORT_NEEDED);
+        assertThat(DiagnosticMetrics.analyze(mixed, List.of(), List.of()).domainStatuses())
+                .extracting(DiagnosticReportDtos.DomainStatus::status)
+                .containsExactly(OBSERVING);
+    }
+
+    @Test
+    void teachScoresRequireARealVerifiedConceptSlotRatherThanOnlyMetadata() {
+        var teach = List.of(
+                new DiagnosticReportDtos.TeachEvidence(
+                        "conversation-1",
+                        "money-count",
+                        "explain",
+                        "taught",
+                        "H0",
+                        "L2",
+                        Map.of("misconception_tag", "skip-count"),
+                        START),
+                new DiagnosticReportDtos.TeachEvidence(
+                        "conversation-2",
+                        "money-count",
+                        "explain",
+                        "taught",
+                        "H0",
+                        "L2",
+                        Map.of("quantity", "five"),
+                        START.plusDays(1)));
+
+        var trend = DiagnosticMetrics.analyze(List.of(), teach, List.of()).teachTrends().getFirst();
+
+        assertThat(trend.points()).extracting(TrendPoint::independentScore).containsExactly(0.0, 100.0);
+        assertThat(trend.points()).extracting(TrendPoint::supportedScore).containsExactly(0.0, 100.0);
+    }
+
+    @Test
+    void lifeFactDisplaysHalfUpRoundedRecentIndependentPercentage() {
+        var life = List.of(
+                life("visit-1", "calculate", 1, true, false, 0, Map.of()),
+                life("visit-2", "calculate", 1, true, false, 1, Map.of()),
+                life("visit-3", "calculate", 1, true, true, 2, Map.of()));
+
+        var fact = DiagnosticMetrics.analyze(List.of(), List.of(), life).facts().stream()
+                .filter(candidate -> candidate.evidenceId().equals("life:calculate"))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(fact.statement()).contains("66.7%");
+    }
+
+    @Test
     void directionUsesTheSignOfRawRecentAndHistoricalAverages() {
         assertThat(DiagnosticMetrics.direction(points(50, 50, 50.1, 50.1, 50.1, 50.1, 50.1)))
                 .isEqualTo("IMPROVING");
@@ -225,6 +287,26 @@ class DiagnosticMetricsTest {
                         Map.of()))
                 .toList();
         return new DiagnosticReportDtos.HomeEvidence(sessionId, "money-count", completedAt, attempts);
+    }
+
+    private static DiagnosticReportDtos.HomeEvidence homeWithAttempt(
+            String sessionId,
+            boolean correct,
+            Map<String, Object> answerMeta,
+            int dayOffset) {
+        return new DiagnosticReportDtos.HomeEvidence(
+                sessionId,
+                "money-count",
+                START.plusDays(dayOffset),
+                List.of(new AttemptEvidence(
+                        "money-count",
+                        "money-count:0",
+                        0,
+                        1,
+                        correct,
+                        1000,
+                        START.plusDays(dayOffset),
+                        answerMeta)));
     }
 
     private static List<TrendPoint> points(double... scores) {

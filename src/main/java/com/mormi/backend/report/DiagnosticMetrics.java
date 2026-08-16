@@ -43,11 +43,11 @@ final class DiagnosticMetrics {
     private static final double DEVELOPING_THRESHOLD = 50.0;
 
     /**
-     * Existing normalized metadata keys accepted as explicit bottleneck evidence. No value is derived
-     * from an answer, response, score, or free-text field when these keys are absent.
+     * The existing persisted {@code answer_meta.misconception_tag} key accepted as explicit bottleneck
+     * evidence. No value is derived from an answer, response, score, or free-text field when it is absent.
      */
     private static final List<String> BOTTLENECK_METADATA_KEYS =
-            List.of("bottleneck", "bottleneck_key", "misconception", "misconception_key");
+            List.of("misconception_tag");
 
     private DiagnosticMetrics() {
     }
@@ -424,14 +424,19 @@ final class DiagnosticMetrics {
     }
 
     private static double independentTeachScore(TeachEvidence evidence) {
-        return "H0".equalsIgnoreCase(evidence.maxHint()) && !safeMap(evidence.verifiedSlots()).isEmpty() ? 100.0 : 0.0;
+        return "H0".equalsIgnoreCase(evidence.maxHint()) && hasVerifiedConceptSlot(evidence.verifiedSlots()) ? 100.0 : 0.0;
     }
 
     private static double supportedTeachScore(TeachEvidence evidence) {
         return ("taught".equalsIgnoreCase(evidence.outcome()) || "supported".equalsIgnoreCase(evidence.outcome()))
-                        && !safeMap(evidence.verifiedSlots()).isEmpty()
+                        && hasVerifiedConceptSlot(evidence.verifiedSlots())
                 ? 100.0
                 : 0.0;
+    }
+
+    private static boolean hasVerifiedConceptSlot(Map<String, Object> verifiedSlots) {
+        return safeMap(verifiedSlots).entrySet().stream()
+                .anyMatch(entry -> !BOTTLENECK_METADATA_KEYS.contains(entry.getKey()) && entry.getValue() != null);
     }
 
     private static List<TrendPoint> recentPoints(List<TrendPoint> chronological) {
@@ -478,7 +483,7 @@ final class DiagnosticMetrics {
     }
 
     private static String display(double value) {
-        return BigDecimal.valueOf(value).stripTrailingZeros().toPlainString();
+        return BigDecimal.valueOf(round(value)).stripTrailingZeros().toPlainString();
     }
 
     private static double round(double value) {
