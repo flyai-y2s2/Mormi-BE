@@ -75,6 +75,8 @@ public class DiagnosticReportService {
     private static final Set<String> COMPLETION_OUTCOMES = Set.of("taught", "supported", "bright_exit");
     private static final Set<String> VERIFIED_RESPONSE_CATEGORIES =
             Set.of("correct_full", "correct_partial", "self_correction");
+    private static final List<String> REQUIRED_LIFE_STAGES =
+            List.of("queue", "menu", "calculate", "change");
     private static final Map<String, String> HOME_LABELS = Map.of(
             "number-count", "수 세기",
             "number-compare", "수 비교",
@@ -145,10 +147,16 @@ public class DiagnosticReportService {
         List<DomainStatus> statuses = presentStatuses(analysis.domainStatuses());
         List<ReportFact> facts = presentationFacts(analysis, records, aiEvidence.orElse(null));
 
-        NarrativeResult narrative = narrative(learner.getDisplayName(), facts);
+        NarrativeResult narrative = narrative(learner.getAnalyticsId().toString(), facts);
         List<OffsetDateTime> occurrences = new ArrayList<>();
-        records.home().stream().map(HomeEvidence::completedAt).filter(Objects::nonNull).forEach(occurrences::add);
-        records.analyzableVisits().stream().map(CafeVisit::getCompletedAt).filter(Objects::nonNull).forEach(occurrences::add);
+        records.sessions().values().stream()
+                .map(LearningSession::getCompletedAt)
+                .filter(Objects::nonNull)
+                .forEach(occurrences::add);
+        records.visits().values().stream()
+                .map(CafeVisit::getCompletedAt)
+                .filter(Objects::nonNull)
+                .forEach(occurrences::add);
         occurrences.sort(Comparator.naturalOrder());
 
         int speechSamples = aiEvidence.map(evidence -> speechCandidates(records, evidence, null).size()).orElse(0);
@@ -157,18 +165,18 @@ public class DiagnosticReportService {
                 new DataRange(
                         occurrences.isEmpty() ? null : occurrences.getFirst(),
                         occurrences.isEmpty() ? null : occurrences.getLast(),
-                        records.home().size(),
-                        records.analyzableVisits().size()),
+                        records.sessions().size(),
+                        records.visits().size()),
                 narrative.currentSummary(),
                 List.of(new ModeReport(HOME, List.copyOf(homeTrends)), new ModeReport(LIFE, lifeTrends)),
                 statuses,
                 narrative.improvedPoint(),
                 narrative.observePoint(),
                 new EvidenceCounts(
-                        records.home().size(),
+                        records.sessions().size(),
                         records.home().stream().mapToInt(home -> home.attempts().size()).sum(),
                         teach.size(),
-                        records.analyzableVisits().size(),
+                        records.visits().size(),
                         speechSamples),
                 narrative.fallback());
     }
@@ -265,7 +273,7 @@ public class DiagnosticReportService {
         List<CafeVisitStage> stageRows = loadMetricRows && !visitIds.isEmpty()
                 ? dedupeStages(cafeVisitStageRepository.findByCafeVisitIdInOrderByCreatedAtAscIdAsc(visitIds))
                 : List.of();
-        List<LifeEvidence> life = stageRows.stream()
+        List<LifeEvidence> life = new ArrayList<>(stageRows.stream()
                 .filter(stage -> visits.containsKey(stage.getCafeVisitId()))
                 .filter(stage -> LIFE_LABELS.containsKey(stage.getStage()))
                 .map(stage -> new LifeEvidence(
@@ -273,18 +281,15 @@ public class DiagnosticReportService {
                         stage.getStage(),
                         stage.getAttemptNo(),
                         stage.isCorrect(),
-                        Boolean.TRUE.equals(safeMap(stage.getPayload()).get("scaffold_used")),
+                        scaffoldUsed(stage),
                         stage.getCreatedAt(),
                         safeMap(stage.getPayload())))
-                .toList();
-        Set<Long> analyzableVisitIds = stageRows.stream()
-                .filter(stage -> visits.containsKey(stage.getCafeVisitId()))
-                .filter(stage -> LIFE_LABELS.containsKey(stage.getStage()))
-                .map(CafeVisitStage::getCafeVisitId)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
-        List<CafeVisit> analyzableVisits = loadMetricRows
-                ? analyzableVisitIds.stream().map(visits::get).filter(Objects::nonNull).toList()
-                : List.copyOf(visits.values());
+                .toList());
+        if (loadMetricRows) {
+            for (CafeVisit visit : visits.values()) {
+                life.add(completionEvidence(visit, stageRows));
+            }
+        }
 
         Map<String, DialogueConversation> dialogues = safeList(
                         dialogueRepository.findByLearnerIdOrderByCreatedAtAsc(learnerId))
@@ -298,7 +303,39 @@ public class DiagnosticReportService {
                         Function.identity(),
                         (first, ignored) -> first,
                         LinkedHashMap::new));
-        return new RecordContext(sessions, visits, dialogues, List.copyOf(home), life, analyzableVisits);
+        return new RecordContext(sessions, visits, dialogues, List.copyOf(home), List.copyOf(life));
+    }
+
+    private boolean scaffoldUsed(CafeVisitStage stage) {
+        return stage.getAttemptNo() >= 900_000
+                || Boolean.TRUE.equals(safeMap(stage.getPayload()).get("scaffold_used"));
+    }
+
+    private LifeEvidence completionEvidence(CafeVisit visit, List<CafeVisitStage> stageRows) {
+        Map<String, CafeVisitStage> firstByStage = safeList(stageRows).stream()
+                .filter(Objects::nonNull)
+                .filter(stage -> Objects.equals(stage.getCafeVisitId(), visit.getId()))
+                .filter(stage -> REQUIRED_LIFE_STAGES.contains(stage.getStage()))
+                .sorted(Comparator
+                        .comparing(CafeVisitStage::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparingInt(CafeVisitStage::getAttemptNo)
+                        .thenComparing(CafeVisitStage::getId, Comparator.nullsLast(Comparator.naturalOrder())))
+                .collect(Collectors.toMap(
+                        CafeVisitStage::getStage,
+                        Function.identity(),
+                        (first, ignored) -> first,
+                        LinkedHashMap::new));
+        boolean independent = REQUIRED_LIFE_STAGES.stream()
+                .map(firstByStage::get)
+                .allMatch(stage -> stage != null && stage.isCorrect() && !scaffoldUsed(stage));
+        return new LifeEvidence(
+                visit.getPublicId(),
+                "complete",
+                1,
+                true,
+                !independent,
+                visit.getCompletedAt(),
+                Map.of());
     }
 
     private boolean dialogueOwnedBySelectedRecord(
@@ -324,6 +361,9 @@ public class DiagnosticReportService {
         for (Map.Entry<String, AiConversationEvidence> entry : unique.entrySet()) {
             DialogueConversation owner = records.dialogues().get(entry.getKey());
             AiConversationEvidence conversation = entry.getValue();
+            if (owner == null || owner.getLearningSessionId() == null || owner.getCafeVisitId() != null) {
+                continue;
+            }
             String domainId = ownedDomain(records, owner, conversation);
             if (domainId == null || !completedEvidence(conversation)) {
                 continue;
@@ -437,12 +477,17 @@ public class DiagnosticReportService {
                     || !completedEvidence(conversation)) {
                 continue;
             }
-            Set<String> conversationSlots = verifiedSlotIds(conversation.verifiedSlots());
             Set<String> seenTurnIds = new HashSet<>();
-            for (AiTurnEvidence turn : safeList(conversation.turns())) {
+            List<AiTurnEvidence> orderedTurns = safeList(conversation.turns()).stream()
+                    .filter(Objects::nonNull)
+                    .filter(turn -> turn.turnId() != null && seenTurnIds.add(turn.turnId()))
+                    .sorted(Comparator
+                            .comparing(AiTurnEvidence::createdAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                            .thenComparing(AiTurnEvidence::turnId))
+                    .toList();
+            for (int index = 0; index + 1 < orderedTurns.size(); index++) {
+                AiTurnEvidence turn = orderedTurns.get(index);
                 if (turn == null
-                        || turn.turnId() == null
-                        || !seenTurnIds.add(turn.turnId())
                         || turn.taskId() == null
                         || turn.taskId().isBlank()
                         || turn.response() == null
@@ -451,13 +496,19 @@ public class DiagnosticReportService {
                         || !VERIFIED_RESPONSE_CATEGORIES.contains(normalize(turn.responseCategory()))) {
                     continue;
                 }
-                Set<String> turnSlots = verifiedTurnSlotIds(turn);
-                if (turnSlots.isEmpty()) {
-                    turnSlots = conversationSlots;
-                } else {
-                    turnSlots.retainAll(conversationSlots);
+                Optional<Map<String, Object>> preResponse = verifiedTurnSlots(turn);
+                Optional<Map<String, Object>> postResponse = verifiedTurnSlots(orderedTurns.get(index + 1));
+                if (preResponse.isEmpty() || postResponse.isEmpty()) {
+                    continue;
                 }
-                if (turnSlots.isEmpty()) {
+                Set<String> newlyVerified = postResponse.orElseThrow().entrySet().stream()
+                        .filter(entry -> entry.getKey() != null
+                                && !entry.getKey().isBlank()
+                                && entry.getValue() != null
+                                && !preResponse.orElseThrow().containsKey(entry.getKey()))
+                        .map(Map.Entry::getKey)
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+                if (newlyVerified.isEmpty()) {
                     continue;
                 }
                 candidates.add(new SpeechCandidate(
@@ -469,11 +520,11 @@ public class DiagnosticReportService {
                                 turn.hintLevel(),
                                 turn.expressionLevel(),
                                 turn.createdAt()),
-                        Set.copyOf(turnSlots)));
+                        Set.copyOf(newlyVerified)));
             }
         }
         return candidates.stream()
-                .sorted(Comparator.comparing(candidate -> candidate.sample().occurredAt()))
+                .sorted(speechCandidateOrder())
                 .toList();
     }
 
@@ -481,10 +532,12 @@ public class DiagnosticReportService {
         List<SpeechPair> pairs = new ArrayList<>();
         safeList(candidates).stream()
                 .collect(Collectors.groupingBy(SpeechCandidate::taskId, LinkedHashMap::new, Collectors.toList()))
-                .values()
+                .entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(Map.Entry::getValue)
                 .forEach(group -> {
                     List<SpeechCandidate> ordered = group.stream()
-                            .sorted(Comparator.comparing(candidate -> candidate.sample().occurredAt()))
+                            .sorted(speechCandidateOrder())
                             .toList();
                     for (int recentIndex = ordered.size() - 1; recentIndex > 0; recentIndex--) {
                         SpeechCandidate recent = ordered.get(recentIndex);
@@ -504,28 +557,29 @@ public class DiagnosticReportService {
                 });
         return pairs.stream().max(Comparator
                 .comparing((SpeechPair pair) -> pair.recent().sample().occurredAt())
-                .thenComparing(pair -> pair.past().sample().occurredAt(), Comparator.reverseOrder()));
+                .thenComparing(pair -> pair.recent().sample().evidenceId())
+                .thenComparing(pair -> pair.past().sample().occurredAt(), Comparator.reverseOrder())
+                .thenComparing(pair -> pair.past().sample().evidenceId(), Comparator.reverseOrder()));
     }
 
-    private Set<String> verifiedTurnSlotIds(AiTurnEvidence turn) {
+    private Comparator<SpeechCandidate> speechCandidateOrder() {
+        return Comparator
+                .comparing((SpeechCandidate candidate) -> candidate.sample().occurredAt())
+                .thenComparing(candidate -> candidate.sample().evidenceId());
+    }
+
+    private Optional<Map<String, Object>> verifiedTurnSlots(AiTurnEvidence turn) {
         Object raw = safeMap(turn.pedagogy()).get("verified_slots");
         if (!(raw instanceof Map<?, ?> slots)) {
-            return new LinkedHashSet<>();
+            return Optional.empty();
         }
-        Set<String> result = new LinkedHashSet<>();
+        Map<String, Object> result = new LinkedHashMap<>();
         slots.forEach((key, value) -> {
             if (key != null && value != null && !String.valueOf(key).isBlank()) {
-                result.add(String.valueOf(key));
+                result.put(String.valueOf(key), value);
             }
         });
-        return result;
-    }
-
-    private Set<String> verifiedSlotIds(Map<String, Object> slots) {
-        return safeMap(slots).entrySet().stream()
-                .filter(entry -> entry.getKey() != null && !entry.getKey().isBlank() && entry.getValue() != null)
-                .map(Map.Entry::getKey)
-                .collect(Collectors.toCollection(LinkedHashSet::new));
+        return Optional.of(Map.copyOf(result));
     }
 
     private List<DomainTrend> presentTrends(List<DomainTrend> trends, String kind) {
@@ -688,22 +742,22 @@ public class DiagnosticReportService {
         if (summary == null) {
             return false;
         }
-        Map<String, String> statements = facts.stream().collect(Collectors.toMap(
+        Map<String, ReportFact> exactFacts = facts.stream().collect(Collectors.toMap(
                 ReportFact::evidenceId,
-                ReportFact::statement,
+                Function.identity(),
                 (first, ignored) -> first,
                 LinkedHashMap::new));
-        return List.of(
-                        summary.conceptPerformance(),
-                        summary.explanationChange(),
-                        summary.lifeTransfer(),
-                        summary.improvedPoint(),
-                        summary.observePoint())
-                .stream()
-                .allMatch(narrative -> exactNarrative(narrative, statements));
+        return exactNarrative(summary.conceptPerformance(), exactFacts, CONCEPT)
+                && exactNarrative(summary.explanationChange(), exactFacts, EXPLANATION)
+                && exactNarrative(summary.lifeTransfer(), exactFacts, FactCategory.LIFE)
+                && exactNarrative(summary.improvedPoint(), exactFacts, IMPROVED)
+                && exactNarrative(summary.observePoint(), exactFacts, OBSERVE);
     }
 
-    private boolean exactNarrative(AiNarrative narrative, Map<String, String> facts) {
+    private boolean exactNarrative(
+            AiNarrative narrative,
+            Map<String, ReportFact> facts,
+            FactCategory expectedCategory) {
         if (narrative == null
                 || narrative.text() == null
                 || narrative.text().isBlank()
@@ -711,10 +765,16 @@ public class DiagnosticReportService {
                 || narrative.evidenceRefs().isEmpty()
                 || narrative.evidenceRefs().size() > 5
                 || new HashSet<>(narrative.evidenceRefs()).size() != narrative.evidenceRefs().size()
-                || narrative.evidenceRefs().stream().anyMatch(ref -> !facts.containsKey(ref))) {
+                || narrative.evidenceRefs().stream().anyMatch(ref -> !facts.containsKey(ref))
+                || narrative.evidenceRefs().stream()
+                        .map(facts::get)
+                        .anyMatch(fact -> fact.category() != expectedCategory)) {
             return false;
         }
-        List<String> referenced = narrative.evidenceRefs().stream().map(facts::get).toList();
+        List<String> referenced = narrative.evidenceRefs().stream()
+                .map(facts::get)
+                .map(ReportFact::statement)
+                .toList();
         return referenced.contains(narrative.text()) || narrative.text().equals(String.join(" ", referenced));
     }
 
@@ -842,8 +902,7 @@ public class DiagnosticReportService {
             Map<Long, CafeVisit> visits,
             Map<String, DialogueConversation> dialogues,
             List<HomeEvidence> home,
-            List<LifeEvidence> life,
-            List<CafeVisit> analyzableVisits) {
+            List<LifeEvidence> life) {
     }
 
     private record NarrativeResult(

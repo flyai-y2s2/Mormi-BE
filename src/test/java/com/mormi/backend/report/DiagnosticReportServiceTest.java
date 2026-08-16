@@ -25,6 +25,8 @@ import com.mormi.backend.report.DiagnosticReportDtos.AiReportEvidence;
 import com.mormi.backend.report.DiagnosticReportDtos.AiSummary;
 import com.mormi.backend.report.DiagnosticReportDtos.AiTurnEvidence;
 import com.mormi.backend.report.DiagnosticReportDtos.DiagnosticReport;
+import com.mormi.backend.report.DiagnosticReportDtos.DomainTrend;
+import com.mormi.backend.report.DiagnosticReportDtos.FactCategory;
 import com.mormi.backend.report.DiagnosticReportDtos.ModeReport;
 import com.mormi.backend.report.DiagnosticReportDtos.ReportFact;
 import com.mormi.backend.report.DiagnosticReportDtos.SpeechEvidence;
@@ -124,6 +126,25 @@ class DiagnosticReportServiceTest {
     }
 
     @Test
+    void currentCountsCompletedTeachOnlyHomeSessionWithoutFabricatingDrillEvidence() {
+        LearningSession teachOnly = session(11L, LEARNER_ID, "money-count", JANUARY);
+        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+                .thenReturn(List.of(teachOnly));
+        when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(List.of(11L)))
+                .thenReturn(List.of());
+
+        DiagnosticReport report = service.current(LEARNER_ID);
+
+        assertThat(report.dataRange().firstAt()).isEqualTo(JANUARY);
+        assertThat(report.dataRange().lastAt()).isEqualTo(JANUARY);
+        assertThat(report.dataRange().totalHomeSessions()).isEqualTo(1);
+        assertThat(report.evidenceCounts().homeSessions()).isEqualTo(1);
+        assertThat(report.evidenceCounts().drillAttempts()).isZero();
+        assertThat(report.modes().getFirst().domains())
+                .noneMatch(domain -> domain.label().contains("반복학습"));
+    }
+
+    @Test
     void currentKeepsDeterministicMetricsWhenAiIsUnavailable() {
         LearningSession moneySession = session(11L, LEARNER_ID, "money-count", JANUARY);
         when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
@@ -203,18 +224,42 @@ class DiagnosticReportServiceTest {
     }
 
     @Test
+    void currentDoesNotTreatCompletedCafeDialogueAsHomeTeachEvidence() {
+        CafeVisit cafeVisit = visit(21L, LEARNER_ID, FEBRUARY);
+        DialogueConversation cafeDialogue = DialogueConversation.forCafeVisit(
+                "conversation-cafe", LEARNER_ID, 21L, "cafe_menu_total", 1, Map.of());
+        when(cafeVisitRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtAsc(LEARNER_ID))
+                .thenReturn(List.of(cafeVisit));
+        when(cafeVisitStageRepository.findByCafeVisitIdInOrderByCreatedAtAscIdAsc(List.of(21L)))
+                .thenReturn(List.of());
+        when(dialogueRepository.findByLearnerIdOrderByCreatedAtAsc(LEARNER_ID))
+                .thenReturn(List.of(cafeDialogue));
+        when(aiClient.evidence(LEARNER_ID, true)).thenReturn(Optional.of(new AiReportEvidence(
+                LEARNER_ID,
+                List.of(completedCafeConversation(
+                        "conversation-cafe", "cafe_menu_total", "카페 계산", "합계를 설명했어", FEBRUARY)),
+                List.of(),
+                List.of())));
+
+        DiagnosticReport report = service.current(LEARNER_ID);
+
+        assertThat(report.evidenceCounts().teachConversations()).isZero();
+        assertThat(report.modes().getFirst().domains())
+                .noneMatch(domain -> domain.label().contains("설명 독립성"));
+    }
+
+    @Test
     void currentAcceptsOnlyExactAiSelectionsOfDeterministicFacts() {
         LearningSession moneySession = session(11L, LEARNER_ID, "money-count", JANUARY);
         when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
                 .thenReturn(List.of(moneySession));
         when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(List.of(11L)))
                 .thenReturn(List.of(attempt(101L, 11L, 1, true, JANUARY)));
+        givenTeachAndLifeEvidence(moneySession);
         when(aiClient.summarize(anyString(), anyList())).thenAnswer(invocation -> {
             @SuppressWarnings("unchecked")
             List<com.mormi.backend.report.DiagnosticReportDtos.ReportFact> facts = invocation.getArgument(1);
-            var selected = facts.getFirst();
-            AiNarrative exact = new AiNarrative(selected.statement(), List.of(selected.evidenceId()));
-            return Optional.of(new AiSummary(exact, exact, exact, exact, exact));
+            return Optional.of(exactSummary(facts));
         });
 
         DiagnosticReport report = service.current(LEARNER_ID);
@@ -222,6 +267,70 @@ class DiagnosticReportServiceTest {
         assertThat(report.narrativeFallback()).isFalse();
         assertThat(report.currentSummary().conceptPerformance().text())
                 .isEqualTo("돈 세기 반복학습의 최근 독립 수행률은 100%이며 상태는 관찰 중입니다.");
+    }
+
+    @Test
+    void currentRejectsExactFactWhenAiUsesItInTheWrongNarrativeCategory() {
+        LearningSession moneySession = session(11L, LEARNER_ID, "money-count", JANUARY);
+        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+                .thenReturn(List.of(moneySession));
+        when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(List.of(11L)))
+                .thenReturn(List.of(attempt(101L, 11L, 1, true, JANUARY)));
+        givenTeachAndLifeEvidence(moneySession);
+        when(aiClient.summarize(anyString(), anyList())).thenAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            List<ReportFact> facts = invocation.getArgument(1);
+            AiSummary exact = exactSummary(facts);
+            return Optional.of(new AiSummary(
+                    exact.improvedPoint(),
+                    exact.explanationChange(),
+                    exact.lifeTransfer(),
+                    exact.improvedPoint(),
+                    exact.observePoint()));
+        });
+
+        DiagnosticReport report = service.current(LEARNER_ID);
+
+        assertThat(report.narrativeFallback()).isTrue();
+    }
+
+    @Test
+    void currentUsesAnalyticsIdForAiAndKeepsDisplayNameOnlyInLocalHeader() {
+        DiagnosticReport report = service.current(LEARNER_ID);
+
+        verify(aiClient).summarize(org.mockito.ArgumentMatchers.eq(learner.getAnalyticsId().toString()), anyList());
+        assertThat(report.learner().displayName()).isEqualTo("민서");
+    }
+
+    @Test
+    void currentClassifiesAiAssistedCafeStagesAsScaffoldedAndAddsVisitCompletionEvidence() {
+        CafeVisit directVisit = visit(21L, LEARNER_ID, JANUARY);
+        CafeVisit aiVisit = visit(22L, LEARNER_ID, FEBRUARY);
+        when(cafeVisitRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtAsc(LEARNER_ID))
+                .thenReturn(List.of(directVisit, aiVisit));
+        when(cafeVisitStageRepository.findByCafeVisitIdInOrderByCreatedAtAscIdAsc(List.of(21L, 22L)))
+                .thenReturn(List.of(
+                        cafeStage(201L, 21L, CafeStage.QUEUE, 1, true, JANUARY),
+                        cafeStage(202L, 21L, CafeStage.MENU, 1, true, JANUARY.plusMinutes(1)),
+                        cafeStage(203L, 21L, CafeStage.CALCULATE, 1, true, JANUARY.plusMinutes(2)),
+                        cafeStage(204L, 21L, CafeStage.CHANGE, 1, true, JANUARY.plusMinutes(3)),
+                        cafeStage(205L, 22L, CafeStage.QUEUE, 900_001, true, FEBRUARY),
+                        cafeStage(206L, 22L, CafeStage.MENU, 900_002, true, FEBRUARY.plusMinutes(1)),
+                        cafeStage(207L, 22L, CafeStage.CALCULATE, 900_003, true, FEBRUARY.plusMinutes(2)),
+                        cafeStage(208L, 22L, CafeStage.CHANGE, 900_004, true, FEBRUARY.plusMinutes(3))));
+
+        DiagnosticReport report = service.current(LEARNER_ID);
+
+        DomainTrend menu = lifeTrend(report, "menu");
+        DomainTrend calculate = lifeTrend(report, "calculate");
+        DomainTrend change = lifeTrend(report, "change");
+        DomainTrend complete = lifeTrend(report, "complete");
+        assertThat(menu.points()).extracting(point -> point.independentScore()).containsExactly(100.0, 0.0);
+        assertThat(calculate.points()).extracting(point -> point.independentScore()).containsExactly(100.0, 0.0);
+        assertThat(change.points()).extracting(point -> point.independentScore()).containsExactly(100.0, 0.0);
+        assertThat(complete.points()).extracting(point -> point.independentScore()).containsExactly(100.0, 0.0);
+        assertThat(complete.points()).extracting(point -> point.supportedScore()).containsExactly(100.0, 100.0);
+        assertThat(complete.points()).extracting(point -> point.occurredAt()).containsExactly(JANUARY, FEBRUARY);
     }
 
     @Test
@@ -292,6 +401,58 @@ class DiagnosticReportServiceTest {
     }
 
     @Test
+    void speechEvidenceDoesNotUseConversationFinalSlotsWithoutAdjacentTurnSnapshots() {
+        LearningSession pastSession = session(11L, LEARNER_ID, "money-count", JANUARY);
+        LearningSession recentSession = session(12L, LEARNER_ID, "money-count", FEBRUARY);
+        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+                .thenReturn(List.of(recentSession, pastSession));
+        when(dialogueRepository.findByLearnerIdOrderByCreatedAtAsc(LEARNER_ID))
+                .thenReturn(List.of(
+                        DialogueConversation.forLearningSession("conversation-past", LEARNER_ID, 11L),
+                        DialogueConversation.forLearningSession("conversation-recent", LEARNER_ID, 12L)));
+        when(aiClient.evidence(LEARNER_ID, true)).thenReturn(Optional.of(new AiReportEvidence(
+                LEARNER_ID,
+                List.of(
+                        completedConversationWithoutSnapshots(
+                                "conversation-past", pastSession.getPublicId(), "같은 과제", "과거 발화", "H2", JANUARY),
+                        completedConversationWithoutSnapshots(
+                                "conversation-recent", recentSession.getPublicId(), "같은 과제", "최근 발화", "H0", FEBRUARY)),
+                List.of(),
+                List.of())));
+
+        SpeechEvidence evidence = service.speechEvidence(LEARNER_ID, "money-count");
+
+        assertThat(evidence.available()).isFalse();
+        assertThat(evidence.message()).isEqualTo("비교 가능한 발화 근거가 부족합니다.");
+    }
+
+    @Test
+    void speechEvidenceUsesEvidenceIdAsTieBreakerWhenComparableTurnsShareATimestamp() {
+        LearningSession firstSession = session(11L, LEARNER_ID, "money-count", JANUARY);
+        LearningSession secondSession = session(12L, LEARNER_ID, "money-count", JANUARY.plusMinutes(1));
+        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+                .thenReturn(List.of(secondSession, firstSession));
+        when(dialogueRepository.findByLearnerIdOrderByCreatedAtAsc(LEARNER_ID))
+                .thenReturn(List.of(
+                        DialogueConversation.forLearningSession("conversation-z", LEARNER_ID, 12L),
+                        DialogueConversation.forLearningSession("conversation-a", LEARNER_ID, 11L)));
+        when(aiClient.evidence(LEARNER_ID, true)).thenReturn(Optional.of(new AiReportEvidence(
+                LEARNER_ID,
+                List.of(
+                        completedConversation(
+                                "conversation-z", secondSession.getPublicId(), "같은 과제", "증거 ID가 뒤인 발화", "H0", JANUARY),
+                        completedConversation(
+                                "conversation-a", firstSession.getPublicId(), "같은 과제", "증거 ID가 앞인 발화", "H1", JANUARY)),
+                List.of(),
+                List.of())));
+
+        SpeechEvidence evidence = service.speechEvidence(LEARNER_ID, "money-count");
+
+        assertThat(evidence.past().utterance()).isEqualTo("증거 ID가 앞인 발화");
+        assertThat(evidence.recent().utterance()).isEqualTo("증거 ID가 뒤인 발화");
+    }
+
+    @Test
     void currentOffersAiOnlyPresentationReadyFactsIncludingComparableSpeech() {
         LearningSession pastSession = session(11L, LEARNER_ID, "money-count", JANUARY);
         LearningSession recentSession = session(12L, LEARNER_ID, "money-count", FEBRUARY);
@@ -319,7 +480,8 @@ class DiagnosticReportServiceTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<ReportFact>> facts = ArgumentCaptor.forClass(List.class);
-        verify(aiClient).summarize(org.mockito.ArgumentMatchers.eq("민서"), facts.capture());
+        verify(aiClient).summarize(
+                org.mockito.ArgumentMatchers.eq(learner.getAnalyticsId().toString()), facts.capture());
         assertThat(facts.getValue())
                 .filteredOn(fact -> fact.evidenceId().equals("speech:money-count"))
                 .extracting(ReportFact::statement)
@@ -359,6 +521,49 @@ class DiagnosticReportServiceTest {
 
     private AiReportEvidence emptyAiEvidence() {
         return new AiReportEvidence(LEARNER_ID, List.of(), List.of(), List.of());
+    }
+
+    private void givenTeachAndLifeEvidence(LearningSession moneySession) {
+        CafeVisit cafeVisit = visit(21L, LEARNER_ID, FEBRUARY);
+        when(cafeVisitRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtAsc(LEARNER_ID))
+                .thenReturn(List.of(cafeVisit));
+        when(cafeVisitStageRepository.findByCafeVisitIdInOrderByCreatedAtAscIdAsc(List.of(21L)))
+                .thenReturn(List.of(cafeStage(201L, 21L, CafeStage.CALCULATE, 1, true, FEBRUARY)));
+        when(dialogueRepository.findByLearnerIdOrderByCreatedAtAsc(LEARNER_ID))
+                .thenReturn(List.of(DialogueConversation.forLearningSession(
+                        "conversation-owned", LEARNER_ID, 11L)));
+        when(aiClient.evidence(LEARNER_ID, true)).thenReturn(Optional.of(new AiReportEvidence(
+                LEARNER_ID,
+                List.of(completedConversation(
+                        "conversation-owned", moneySession.getPublicId(), "같은 과제", "설명했어", "H0", JANUARY)),
+                List.of(),
+                List.of())));
+    }
+
+    private DomainTrend lifeTrend(DiagnosticReport report, String domainId) {
+        return report.modes().stream()
+                .filter(mode -> mode.mode() == LIFE)
+                .flatMap(mode -> mode.domains().stream())
+                .filter(domain -> domain.domainId().equals(domainId))
+                .findFirst()
+                .orElseThrow();
+    }
+
+    private AiSummary exactSummary(List<ReportFact> facts) {
+        return new AiSummary(
+                exactFact(facts, FactCategory.CONCEPT),
+                exactFact(facts, FactCategory.EXPLANATION),
+                exactFact(facts, FactCategory.LIFE),
+                exactFact(facts, FactCategory.IMPROVED),
+                exactFact(facts, FactCategory.OBSERVE));
+    }
+
+    private AiNarrative exactFact(List<ReportFact> facts, FactCategory category) {
+        return facts.stream()
+                .filter(fact -> fact.category() == category)
+                .findFirst()
+                .map(fact -> new AiNarrative(fact.statement(), List.of(fact.evidenceId())))
+                .orElseGet(() -> new AiNarrative("근거 없음", List.of("missing:" + category.name().toLowerCase())));
     }
 
     private LearningSession session(long id, long learnerId, String domainId, OffsetDateTime completedAt) {
@@ -414,6 +619,48 @@ class DiagnosticReportServiceTest {
             String response,
             String hintLevel,
             OffsetDateTime occurredAt) {
+        AiTurnEvidence responseTurn = new AiTurnEvidence(
+                "turn-" + conversationId,
+                taskId,
+                response,
+                "text",
+                "correct_full",
+                "L3",
+                hintLevel,
+                Map.of("verified_slots", Map.of()),
+                occurredAt);
+        AiTurnEvidence postResponseSnapshot = new AiTurnEvidence(
+                "turn-" + conversationId + "-post",
+                taskId,
+                null,
+                "text",
+                null,
+                "L3",
+                hintLevel,
+                Map.of("verified_slots", Map.of("amount", 600)),
+                occurredAt.plusSeconds(1));
+        return new AiConversationEvidence(
+                conversationId,
+                learningSessionId,
+                "home_teach",
+                "home_teach",
+                "completed",
+                "taught",
+                true,
+                Map.of("amount", 600),
+                hintLevel,
+                List.of(responseTurn, postResponseSnapshot),
+                occurredAt.minusMinutes(5),
+                occurredAt.plusSeconds(1));
+    }
+
+    private AiConversationEvidence completedConversationWithoutSnapshots(
+            String conversationId,
+            String learningSessionId,
+            String taskId,
+            String response,
+            String hintLevel,
+            OffsetDateTime occurredAt) {
         AiTurnEvidence turn = new AiTurnEvidence(
                 "turn-" + conversationId,
                 taskId,
@@ -422,7 +669,7 @@ class DiagnosticReportServiceTest {
                 "correct_full",
                 "L3",
                 hintLevel,
-                Map.of("verified_slots", Map.of("amount", 600)),
+                Map.of(),
                 occurredAt);
         return new AiConversationEvidence(
                 conversationId,
@@ -437,5 +684,28 @@ class DiagnosticReportServiceTest {
                 List.of(turn),
                 occurredAt.minusMinutes(5),
                 occurredAt);
+    }
+
+    private AiConversationEvidence completedCafeConversation(
+            String conversationId,
+            String scenarioId,
+            String taskId,
+            String response,
+            OffsetDateTime occurredAt) {
+        AiConversationEvidence base = completedConversation(
+                conversationId, null, taskId, response, "H0", occurredAt);
+        return new AiConversationEvidence(
+                base.conversationId(),
+                null,
+                "cafe",
+                scenarioId,
+                base.status(),
+                base.completionOutcome(),
+                base.teachRewardEligible(),
+                base.verifiedSlots(),
+                base.taskMaxHint(),
+                base.turns(),
+                base.createdAt(),
+                base.updatedAt());
     }
 }
