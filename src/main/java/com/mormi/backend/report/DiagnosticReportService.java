@@ -633,6 +633,7 @@ public class DiagnosticReportService {
 
         Optional<DomainStatus> improving = safeList(analysis.domainStatuses()).stream()
                 .filter(status -> "IMPROVING".equals(status.direction()))
+                .sorted(evidenceStrengthOrder())
                 .findFirst();
         facts.add(improving
                 .map(status -> new ReportFact(
@@ -646,6 +647,7 @@ public class DiagnosticReportService {
 
         Optional<DomainStatus> observe = safeList(analysis.domainStatuses()).stream()
                 .filter(status -> status.status() != StatusLabel.STABLE)
+                .sorted(statusSalienceOrder())
                 .findFirst();
         facts.add(observe
                 .map(status -> new ReportFact(
@@ -694,12 +696,16 @@ public class DiagnosticReportService {
             Map<String, DomainStatus> statuses,
             String kind,
             FactCategory category) {
-        for (DomainTrend trend : safeList(trends)) {
+        List<DomainTrend> salientTrends = safeList(trends).stream()
+                .filter(trend -> labelFor(trend.domainId()) != null)
+                .filter(trend -> statuses.containsKey(kind + ":" + trend.domainId()))
+                .sorted((left, right) -> statusSalienceOrder().compare(
+                        statuses.get(kind + ":" + left.domainId()),
+                        statuses.get(kind + ":" + right.domainId())))
+                .toList();
+        for (DomainTrend trend : salientTrends) {
             String label = labelFor(trend.domainId());
             DomainStatus status = statuses.get(kind + ":" + trend.domainId());
-            if (label == null || status == null) {
-                continue;
-            }
             double recentAverage = trend.points().stream()
                     .filter(TrendPoint::recent)
                     .mapToDouble(TrendPoint::independentScore)
@@ -716,6 +722,36 @@ public class DiagnosticReportService {
                     subject + "의 최근 독립 수행률은 " + display(recentAverage)
                             + "%이며 상태는 " + koreanStatus(status.status()) + "입니다."));
         }
+    }
+
+    private Comparator<DomainStatus> statusSalienceOrder() {
+        return Comparator.comparingInt((DomainStatus status) -> statusPriority(status.status()))
+                .thenComparingInt(status -> directionPriority(status.direction()))
+                .thenComparing(Comparator.comparingInt(DomainStatus::recentCount).reversed())
+                .thenComparing(Comparator.comparingInt(DomainStatus::totalCount).reversed())
+                .thenComparing(DomainStatus::domainId, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(DomainStatus::label, Comparator.nullsLast(Comparator.naturalOrder()));
+    }
+
+    private Comparator<DomainStatus> evidenceStrengthOrder() {
+        return Comparator.comparingInt(DomainStatus::recentCount)
+                .reversed()
+                .thenComparing(Comparator.comparingInt(DomainStatus::totalCount).reversed())
+                .thenComparing(DomainStatus::domainId, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(DomainStatus::label, Comparator.nullsLast(Comparator.naturalOrder()));
+    }
+
+    private int statusPriority(StatusLabel status) {
+        return switch (status) {
+            case SUPPORT_NEEDED -> 0;
+            case DEVELOPING -> 1;
+            case STABLE -> 2;
+            case OBSERVING -> 3;
+        };
+    }
+
+    private int directionPriority(String direction) {
+        return "DECLINING".equals(direction) ? 0 : 1;
     }
 
     private NarrativeResult narrative(String learnerLabel, List<ReportFact> facts) {

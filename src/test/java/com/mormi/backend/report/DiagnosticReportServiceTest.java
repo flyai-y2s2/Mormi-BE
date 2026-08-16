@@ -163,6 +163,43 @@ class DiagnosticReportServiceTest {
     }
 
     @Test
+    void currentRanksDecliningDevelopingConceptAboveSingleObservingConceptInFactsAndFallback() {
+        givenObservingBudgetAndDecliningCountEvidence();
+
+        DiagnosticReport report = service.current(LEARNER_ID);
+
+        assertThat(report.currentSummary().conceptPerformance().text())
+                .isEqualTo("돈 세기 반복학습의 최근 독립 수행률은 60%이며 상태는 발달 중입니다.");
+        assertThat(report.currentSummary().conceptPerformance().evidenceRefs())
+                .containsExactly("drill:money-count");
+        assertThat(report.observePoint().text())
+                .isEqualTo("돈 세기의 현재 상태는 발달 중이므로 계속 관찰합니다.");
+        assertThat(report.observePoint().evidenceRefs())
+                .containsExactly("observe:drill:money-count");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ReportFact>> facts = ArgumentCaptor.forClass(List.class);
+        verify(aiClient).summarize(
+                org.mockito.ArgumentMatchers.eq(learner.getAnalyticsId().toString()), facts.capture());
+        assertThat(facts.getValue().stream()
+                        .filter(fact -> fact.category() == FactCategory.CONCEPT)
+                        .map(ReportFact::evidenceId))
+                .containsExactly("drill:money-count", "drill:money-budget");
+    }
+
+    @Test
+    void currentChoosesImprovingFactWithStrongestRecentAndTotalEvidence() {
+        givenTwoImprovingDomainsWithDifferentEvidenceStrength();
+
+        DiagnosticReport report = service.current(LEARNER_ID);
+
+        assertThat(report.improvedPoint().text())
+                .isEqualTo("돈 세기의 최근 독립 수행은 이전 기록보다 향상되었습니다.");
+        assertThat(report.improvedPoint().evidenceRefs())
+                .containsExactly("improved:drill:money-count");
+    }
+
+    @Test
     void currentRequestsRawEvidenceOnlyWhenStoredConsentAndRetentionPermitIt() {
         learner.applyConsent(false, null);
 
@@ -521,6 +558,53 @@ class DiagnosticReportServiceTest {
 
     private AiReportEvidence emptyAiEvidence() {
         return new AiReportEvidence(LEARNER_ID, List.of(), List.of(), List.of());
+    }
+
+    private void givenObservingBudgetAndDecliningCountEvidence() {
+        List<LearningSession> sessions = new java.util.ArrayList<>();
+        List<Attempt> attempts = new java.util.ArrayList<>();
+        sessions.add(session(11L, LEARNER_ID, "money-budget", JANUARY));
+        attempts.add(attempt(101L, 11L, 1, true, JANUARY));
+        boolean[] countCorrect = {true, true, true, true, true, true, true, false, false};
+        for (int index = 0; index < countCorrect.length; index++) {
+            long sessionId = 12L + index;
+            OffsetDateTime completedAt = JANUARY.plusDays(index + 1L);
+            sessions.add(session(sessionId, LEARNER_ID, "money-count", completedAt));
+            attempts.add(attempt(102L + index, sessionId, 1, countCorrect[index], completedAt));
+        }
+        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+                .thenReturn(sessions.reversed());
+        when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(
+                        java.util.stream.LongStream.rangeClosed(11L, 20L).boxed().toList()))
+                .thenReturn(attempts);
+    }
+
+    private void givenTwoImprovingDomainsWithDifferentEvidenceStrength() {
+        List<LearningSession> sessions = new java.util.ArrayList<>();
+        List<Attempt> attempts = new java.util.ArrayList<>();
+        boolean[] countCorrect = {false, false, false, false, true, true, true, true, true};
+        boolean[] budgetCorrect = {false, false, true, true, true, true, true};
+        long sessionId = 11L;
+        long attemptId = 101L;
+        for (int index = 0; index < countCorrect.length; index++) {
+            OffsetDateTime completedAt = JANUARY.plusDays(index);
+            sessions.add(session(sessionId, LEARNER_ID, "money-count", completedAt));
+            attempts.add(attempt(attemptId, sessionId, 1, countCorrect[index], completedAt));
+            sessionId++;
+            attemptId++;
+        }
+        for (int index = 0; index < budgetCorrect.length; index++) {
+            OffsetDateTime completedAt = JANUARY.plusDays(10L + index);
+            sessions.add(session(sessionId, LEARNER_ID, "money-budget", completedAt));
+            attempts.add(attempt(attemptId, sessionId, 1, budgetCorrect[index], completedAt));
+            sessionId++;
+            attemptId++;
+        }
+        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+                .thenReturn(sessions.reversed());
+        when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(
+                        java.util.stream.LongStream.rangeClosed(11L, 26L).boxed().toList()))
+                .thenReturn(attempts);
     }
 
     private void givenTeachAndLifeEvidence(LearningSession moneySession) {
