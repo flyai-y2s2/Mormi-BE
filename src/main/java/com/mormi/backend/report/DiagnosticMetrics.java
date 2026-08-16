@@ -24,10 +24,12 @@ import java.math.RoundingMode;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -39,8 +41,13 @@ final class DiagnosticMetrics {
     private static final int MIN_HISTORICAL_RECORDS = 2;
     private static final double STABLE_THRESHOLD = 80.0;
     private static final double DEVELOPING_THRESHOLD = 50.0;
-    private static final double CONFLICT_RANGE = 50.0;
-    private static final double DIRECTION_DELTA = 10.0;
+
+    /**
+     * Existing normalized metadata keys accepted as explicit bottleneck evidence. No value is derived
+     * from an answer, response, score, or free-text field when these keys are absent.
+     */
+    private static final List<String> BOTTLENECK_METADATA_KEYS =
+            List.of("bottleneck", "bottleneck_key", "misconception", "misconception_key");
 
     private DiagnosticMetrics() {
     }
@@ -109,19 +116,23 @@ final class DiagnosticMetrics {
     }
 
     static StatusLabel status(List<TrendPoint> chronological) {
+        return status(chronological, Map.of());
+    }
+
+    static StatusLabel status(List<TrendPoint> chronological, Map<String, String> bottleneckByEvidenceId) {
         List<TrendPoint> recent = recentPoints(chronological);
-        if (recent.size() < MIN_RECENT_RECORDS || outcomesConflict(recent) || recentlyDeclining(recent)) {
+        if (recent.size() < MIN_RECENT_RECORDS) {
             return OBSERVING;
         }
 
-        double independentAverage = averageScores(recent, TrendPoint::independentScore);
+        double independentAverage = rawAverage(recent, TrendPoint::independentScore);
         if (independentAverage >= STABLE_THRESHOLD) {
             return STABLE;
         }
         if (independentAverage >= DEVELOPING_THRESHOLD) {
             return DEVELOPING;
         }
-        return SUPPORT_NEEDED;
+        return hasRepeatedBottleneck(recent, bottleneckByEvidenceId) ? SUPPORT_NEEDED : OBSERVING;
     }
 
     static String direction(List<TrendPoint> chronological) {
@@ -131,12 +142,12 @@ final class DiagnosticMetrics {
             return "INSUFFICIENT_HISTORY";
         }
 
-        double recentAverage = averageScores(recent, TrendPoint::independentScore);
-        double pastAverage = averageScores(chronological.subList(0, pastEnd), TrendPoint::independentScore);
-        if (recentAverage - pastAverage >= DIRECTION_DELTA) {
+        double recentAverage = rawAverage(recent, TrendPoint::independentScore);
+        double pastAverage = rawAverage(chronological.subList(0, pastEnd), TrendPoint::independentScore);
+        if (recentAverage > pastAverage) {
             return "IMPROVING";
         }
-        if (pastAverage - recentAverage >= DIRECTION_DELTA) {
+        if (recentAverage < pastAverage) {
             return "DECLINING";
         }
         return "MAINTAINING";
@@ -151,22 +162,11 @@ final class DiagnosticMetrics {
         List<DomainTrend> lifeTrends = lifeTrends(life);
         List<DomainStatus> statuses = new ArrayList<>();
         List<ReportFact> facts = new ArrayList<>();
-        appendStatusesAndFacts(homeTrends, CONCEPT, statuses, facts);
-        appendStatusesAndFacts(teachTrends, EXPLANATION, statuses, facts);
-        appendStatusesAndFacts(lifeTrends, LIFE, statuses, facts);
+        appendStatusesAndFacts(homeTrends, CONCEPT, homeBottlenecks(home), statuses, facts);
+        appendStatusesAndFacts(teachTrends, EXPLANATION, teachBottlenecks(teach), statuses, facts);
+        appendStatusesAndFacts(lifeTrends, LIFE, lifeBottlenecks(life), statuses, facts);
 
-        Map<String, DrillMetric> drillMetrics = home.stream()
-                .filter(Objects::nonNull)
-                .collect(Collectors.groupingBy(
-                        HomeEvidence::domainId,
-                        LinkedHashMap::new,
-                        Collectors.flatMapping(
-                                evidence -> safeList(evidence.attempts()).stream(),
-                                Collectors.toList())))
-                .entrySet().stream()
-                .sorted(Map.Entry.comparingByKey())
-                .collect(Collectors.toMap(Map.Entry::getKey, entry -> drill(entry.getValue()), (left, right) -> left,
-                        LinkedHashMap::new));
+        Map<String, DrillMetric> drillMetrics = cumulativeHomeDrillMetrics(home);
 
         return new DiagnosticAnalysis(
                 homeTrends,
@@ -207,17 +207,21 @@ final class DiagnosticMetrics {
     }
 
     private static List<DomainTrend> lifeTrends(List<LifeEvidence> life) {
-        return groupedTrends(
-                life,
-                LifeEvidence::domainId,
-                "life",
-                evidence -> new TrendPoint(
-                        evidence.visitPublicId(),
+        return safeList(life).stream()
+                .filter(Objects::nonNull)
+                .collect(Collectors.groupingBy(LifeEvidence::domainId, LinkedHashMap::new, Collectors.toList()))
+                .entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(entry -> trend(
+                        entry.getKey(),
                         "life",
-                        evidence.occurredAt(),
-                        evidence.correct() && !evidence.scaffoldUsed() ? 100.0 : 0.0,
-                        evidence.correct() ? 100.0 : 0.0,
-                        false));
+                        entry.getValue().stream()
+                                .collect(Collectors.groupingBy(
+                                        LifeEvidence::visitPublicId, LinkedHashMap::new, Collectors.toList()))
+                                .values().stream()
+                                .map(DiagnosticMetrics::lifePoint)
+                                .toList()))
+                .toList();
     }
 
     private static <T> List<DomainTrend> groupedTrends(
@@ -235,13 +239,159 @@ final class DiagnosticMetrics {
     }
 
     private static TrendPoint homePoint(HomeEvidence evidence, DrillMetric metric) {
+        double rawFirstTryAccuracy = rawPercent(metric.firstTryCorrectCount(), metric.questionCount());
+        double rawSupportedCompletion = 100.0 - rawPercent(metric.incorrectAttemptCount(), metric.attemptCount());
         return new TrendPoint(
                 evidence.sessionPublicId(),
                 "drill",
                 evidence.completedAt(),
-                metric.firstTryAccuracy(),
-                100.0 - metric.attemptErrorRate(),
+                rawFirstTryAccuracy,
+                rawSupportedCompletion,
                 false);
+    }
+
+    private static TrendPoint lifePoint(List<LifeEvidence> visitAttempts) {
+        List<LifeEvidence> ordered = visitAttempts.stream()
+                .sorted(Comparator.comparing(LifeEvidence::occurredAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparingInt(LifeEvidence::attemptNo))
+                .toList();
+        LifeEvidence first = ordered.getFirst();
+        boolean completed = ordered.stream().anyMatch(LifeEvidence::correct);
+        return new TrendPoint(
+                first.visitPublicId(),
+                "life",
+                first.occurredAt(),
+                first.correct() && !first.scaffoldUsed() ? 100.0 : 0.0,
+                completed ? 100.0 : 0.0,
+                false);
+    }
+
+    private static Map<String, DrillMetric> cumulativeHomeDrillMetrics(List<HomeEvidence> home) {
+        return safeList(home).stream()
+                .filter(Objects::nonNull)
+                .collect(Collectors.groupingBy(HomeEvidence::domainId, LinkedHashMap::new, Collectors.toList()))
+                .entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        entry -> cumulativeDrillMetric(entry.getValue()),
+                        (left, right) -> left,
+                        LinkedHashMap::new));
+    }
+
+    private static DrillMetric cumulativeDrillMetric(List<HomeEvidence> sessions) {
+        List<DrillMetric> perSession = sessions.stream()
+                .map(session -> drill(safeList(session.attempts())))
+                .toList();
+        int questionCount = perSession.stream().mapToInt(DrillMetric::questionCount).sum();
+        int attemptCount = perSession.stream().mapToInt(DrillMetric::attemptCount).sum();
+        int firstTryCorrectCount = perSession.stream().mapToInt(DrillMetric::firstTryCorrectCount).sum();
+        int incorrectAttemptCount = perSession.stream().mapToInt(DrillMetric::incorrectAttemptCount).sum();
+        int correctedQuestionCount = perSession.stream().mapToInt(DrillMetric::correctedQuestionCount).sum();
+        int incorrectQuestionCount = perSession.stream().mapToInt(DrillMetric::incorrectQuestionCount).sum();
+        List<Integer> elapsed = sessions.stream()
+                .flatMap(session -> safeList(session.attempts()).stream())
+                .map(AttemptEvidence::elapsedMs)
+                .filter(Objects::nonNull)
+                .sorted()
+                .toList();
+        return new DrillMetric(
+                questionCount,
+                attemptCount,
+                firstTryCorrectCount,
+                incorrectAttemptCount,
+                correctedQuestionCount,
+                incorrectQuestionCount,
+                percent(firstTryCorrectCount, questionCount),
+                percent(incorrectAttemptCount, attemptCount),
+                percent(correctedQuestionCount, incorrectQuestionCount),
+                average(elapsed),
+                median(elapsed));
+    }
+
+    private static Map<String, String> homeBottlenecks(List<HomeEvidence> home) {
+        Map<String, String> bottlenecks = new LinkedHashMap<>();
+        for (HomeEvidence evidence : safeList(home)) {
+            if (evidence == null) {
+                continue;
+            }
+            explicitCommonBottleneck(safeList(evidence.attempts()).stream()
+                    .map(AttemptEvidence::answerMeta)
+                    .toList()).ifPresent(key -> bottlenecks.put(evidenceKey(evidence.domainId(), evidence.sessionPublicId()), key));
+        }
+        return bottlenecks;
+    }
+
+    private static Map<String, String> teachBottlenecks(List<TeachEvidence> teach) {
+        Map<String, String> bottlenecks = new LinkedHashMap<>();
+        for (TeachEvidence evidence : safeList(teach)) {
+            if (evidence == null) {
+                continue;
+            }
+            String bottleneck = explicitBottleneck(evidence.verifiedSlots());
+            if (bottleneck != null) {
+                bottlenecks.put(evidenceKey(evidence.domainId(), evidence.conversationId()), bottleneck);
+            }
+        }
+        return bottlenecks;
+    }
+
+    private static Map<String, String> lifeBottlenecks(List<LifeEvidence> life) {
+        Map<String, String> bottlenecks = new LinkedHashMap<>();
+        safeList(life).stream()
+                .filter(Objects::nonNull)
+                .collect(Collectors.groupingBy(
+                        evidence -> evidenceKey(evidence.domainId(), evidence.visitPublicId()),
+                        LinkedHashMap::new,
+                        Collectors.toList()))
+                .forEach((visitKey, attempts) -> explicitCommonBottleneck(attempts.stream()
+                                .map(LifeEvidence::payload)
+                                .toList())
+                        .ifPresent(key -> bottlenecks.put(visitKey, key)));
+        return bottlenecks;
+    }
+
+    private static java.util.Optional<String> explicitCommonBottleneck(List<Map<String, Object>> metadata) {
+        Set<String> keys = metadata.stream()
+                .map(DiagnosticMetrics::explicitBottleneck)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(HashSet::new));
+        return keys.size() == 1 ? java.util.Optional.of(keys.iterator().next()) : java.util.Optional.empty();
+    }
+
+    private static String explicitBottleneck(Map<String, Object> metadata) {
+        Map<String, Object> values = safeMap(metadata);
+        for (String key : BOTTLENECK_METADATA_KEYS) {
+            Object value = values.get(key);
+            if (value instanceof String text && !text.isBlank()) {
+                return text.trim();
+            }
+        }
+        return null;
+    }
+
+    private static boolean hasRepeatedBottleneck(List<TrendPoint> recent, Map<String, String> bottleneckByEvidenceId) {
+        Map<String, Long> counts = recent.stream()
+                .map(TrendPoint::evidenceId)
+                .map(bottleneckByEvidenceId::get)
+                .filter(value -> value != null && !value.isBlank())
+                .collect(Collectors.groupingBy(value -> value, Collectors.counting()));
+        return counts.values().stream().anyMatch(count -> count >= 2);
+    }
+
+    private static Map<String, String> bottlenecksFor(DomainTrend trend, Map<String, String> allBottlenecks) {
+        return trend.points().stream()
+                .map(TrendPoint::evidenceId)
+                .filter(evidenceId -> allBottlenecks.containsKey(evidenceKey(trend.domainId(), evidenceId)))
+                .collect(Collectors.toMap(
+                        Function.identity(),
+                        evidenceId -> allBottlenecks.get(evidenceKey(trend.domainId(), evidenceId)),
+                        (left, right) -> left,
+                        LinkedHashMap::new));
+    }
+
+    private static String evidenceKey(String domainId, String evidenceId) {
+        return domainId + "\u0000" + evidenceId;
     }
 
     private static DomainTrend trend(String domainId, String label, List<TrendPoint> points) {
@@ -256,10 +406,11 @@ final class DiagnosticMetrics {
     private static void appendStatusesAndFacts(
             List<DomainTrend> trends,
             DiagnosticReportDtos.FactCategory category,
+            Map<String, String> bottleneckByEvidenceId,
             List<DomainStatus> statuses,
             List<ReportFact> facts) {
         for (DomainTrend trend : trends) {
-            StatusLabel label = status(trend.points());
+            StatusLabel label = status(trend.points(), bottlenecksFor(trend, bottleneckByEvidenceId));
             String direction = direction(trend.points());
             statuses.add(new DomainStatus(
                     trend.domainId(), trend.label(), label, direction, trend.totalCount(), trend.recentCount()));
@@ -267,7 +418,7 @@ final class DiagnosticMetrics {
                     trend.label() + ":" + trend.domainId(),
                     category,
                     trend.domainId() + " recent independent score is "
-                            + display(averageScores(recentPoints(trend.points()), TrendPoint::independentScore))
+                            + display(rawAverage(recentPoints(trend.points()), TrendPoint::independentScore))
                             + "% (" + label + ")."));
         }
     }
@@ -287,16 +438,6 @@ final class DiagnosticMetrics {
         return markRecent(chronological).stream().filter(TrendPoint::recent).toList();
     }
 
-    private static boolean outcomesConflict(List<TrendPoint> recent) {
-        double lowest = recent.stream().mapToDouble(TrendPoint::independentScore).min().orElse(0.0);
-        double highest = recent.stream().mapToDouble(TrendPoint::independentScore).max().orElse(0.0);
-        return highest - lowest >= CONFLICT_RANGE;
-    }
-
-    private static boolean recentlyDeclining(List<TrendPoint> recent) {
-        return recent.getFirst().independentScore() - recent.getLast().independentScore() >= DIRECTION_DELTA;
-    }
-
     private static Comparator<AttemptEvidence> attemptOrder() {
         return Comparator.comparing(AttemptEvidence::occurredAt, Comparator.nullsLast(Comparator.naturalOrder()))
                 .thenComparingInt(AttemptEvidence::attemptNo)
@@ -308,7 +449,11 @@ final class DiagnosticMetrics {
     }
 
     private static double percent(int numerator, int denominator) {
-        return denominator == 0 ? 0.0 : round(numerator * 100.0 / denominator);
+        return round(rawPercent(numerator, denominator));
+    }
+
+    private static double rawPercent(int numerator, int denominator) {
+        return denominator == 0 ? 0.0 : numerator * 100.0 / denominator;
     }
 
     private static double average(List<Integer> values) {
@@ -326,10 +471,10 @@ final class DiagnosticMetrics {
         return round(median);
     }
 
-    private static double averageScores(List<TrendPoint> points, Function<TrendPoint, Double> score) {
+    private static double rawAverage(List<TrendPoint> points, Function<TrendPoint, Double> score) {
         return points.isEmpty()
                 ? 0.0
-                : round(points.stream().mapToDouble(point -> score.apply(point)).average().orElse(0.0));
+                : points.stream().mapToDouble(point -> score.apply(point)).average().orElse(0.0);
     }
 
     private static String display(double value) {
