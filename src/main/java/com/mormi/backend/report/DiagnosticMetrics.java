@@ -1,0 +1,350 @@
+package com.mormi.backend.report;
+
+import static com.mormi.backend.report.DiagnosticReportDtos.FactCategory.CONCEPT;
+import static com.mormi.backend.report.DiagnosticReportDtos.FactCategory.EXPLANATION;
+import static com.mormi.backend.report.DiagnosticReportDtos.FactCategory.LIFE;
+import static com.mormi.backend.report.DiagnosticReportDtos.StatusLabel.DEVELOPING;
+import static com.mormi.backend.report.DiagnosticReportDtos.StatusLabel.OBSERVING;
+import static com.mormi.backend.report.DiagnosticReportDtos.StatusLabel.STABLE;
+import static com.mormi.backend.report.DiagnosticReportDtos.StatusLabel.SUPPORT_NEEDED;
+
+import com.mormi.backend.report.DiagnosticReportDtos.AttemptEvidence;
+import com.mormi.backend.report.DiagnosticReportDtos.DiagnosticAnalysis;
+import com.mormi.backend.report.DiagnosticReportDtos.DomainStatus;
+import com.mormi.backend.report.DiagnosticReportDtos.DomainTrend;
+import com.mormi.backend.report.DiagnosticReportDtos.DrillMetric;
+import com.mormi.backend.report.DiagnosticReportDtos.HomeEvidence;
+import com.mormi.backend.report.DiagnosticReportDtos.LifeEvidence;
+import com.mormi.backend.report.DiagnosticReportDtos.ReportFact;
+import com.mormi.backend.report.DiagnosticReportDtos.StatusLabel;
+import com.mormi.backend.report.DiagnosticReportDtos.TeachEvidence;
+import com.mormi.backend.report.DiagnosticReportDtos.TrendPoint;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+/** Pure, deterministic calculations for normalized diagnostic-report evidence. */
+final class DiagnosticMetrics {
+
+    private static final int MAX_RECENT_RECORDS = 5;
+    private static final int MIN_RECENT_RECORDS = 3;
+    private static final int MIN_HISTORICAL_RECORDS = 2;
+    private static final double STABLE_THRESHOLD = 80.0;
+    private static final double DEVELOPING_THRESHOLD = 50.0;
+    private static final double CONFLICT_RANGE = 50.0;
+    private static final double DIRECTION_DELTA = 10.0;
+
+    private DiagnosticMetrics() {
+    }
+
+    static DrillMetric drill(List<AttemptEvidence> attempts) {
+        List<AttemptEvidence> ordered = attempts.stream()
+                .filter(Objects::nonNull)
+                .sorted(attemptOrder())
+                .toList();
+        Map<String, List<AttemptEvidence>> attemptsByQuestion = ordered.stream()
+                .collect(Collectors.groupingBy(
+                        DiagnosticMetrics::questionKey,
+                        LinkedHashMap::new,
+                        Collectors.toList()));
+
+        int firstTryCorrect = 0;
+        int incorrectQuestions = 0;
+        int correctedQuestions = 0;
+        for (List<AttemptEvidence> questionAttempts : attemptsByQuestion.values()) {
+            if (questionAttempts.getFirst().correct()) {
+                firstTryCorrect++;
+            }
+            if (questionAttempts.stream().anyMatch(attempt -> !attempt.correct())) {
+                incorrectQuestions++;
+                if (questionAttempts.getLast().correct()) {
+                    correctedQuestions++;
+                }
+            }
+        }
+
+        List<Integer> elapsed = ordered.stream()
+                .map(AttemptEvidence::elapsedMs)
+                .filter(Objects::nonNull)
+                .sorted()
+                .toList();
+        int incorrectAttempts = (int) ordered.stream().filter(attempt -> !attempt.correct()).count();
+
+        return new DrillMetric(
+                attemptsByQuestion.size(),
+                ordered.size(),
+                firstTryCorrect,
+                incorrectAttempts,
+                correctedQuestions,
+                incorrectQuestions,
+                percent(firstTryCorrect, attemptsByQuestion.size()),
+                percent(incorrectAttempts, ordered.size()),
+                percent(correctedQuestions, incorrectQuestions),
+                average(elapsed),
+                median(elapsed));
+    }
+
+    static List<TrendPoint> markRecent(List<TrendPoint> chronological) {
+        int recentStart = Math.max(0, chronological.size() - MAX_RECENT_RECORDS);
+        List<TrendPoint> marked = new ArrayList<>(chronological.size());
+        for (int index = 0; index < chronological.size(); index++) {
+            TrendPoint point = chronological.get(index);
+            marked.add(new TrendPoint(
+                    point.evidenceId(),
+                    point.label(),
+                    point.occurredAt(),
+                    point.independentScore(),
+                    point.supportedScore(),
+                    index >= recentStart));
+        }
+        return List.copyOf(marked);
+    }
+
+    static StatusLabel status(List<TrendPoint> chronological) {
+        List<TrendPoint> recent = recentPoints(chronological);
+        if (recent.size() < MIN_RECENT_RECORDS || outcomesConflict(recent) || recentlyDeclining(recent)) {
+            return OBSERVING;
+        }
+
+        double independentAverage = averageScores(recent, TrendPoint::independentScore);
+        if (independentAverage >= STABLE_THRESHOLD) {
+            return STABLE;
+        }
+        if (independentAverage >= DEVELOPING_THRESHOLD) {
+            return DEVELOPING;
+        }
+        return SUPPORT_NEEDED;
+    }
+
+    static String direction(List<TrendPoint> chronological) {
+        List<TrendPoint> recent = recentPoints(chronological);
+        int pastEnd = chronological.size() - recent.size();
+        if (recent.size() < MIN_RECENT_RECORDS || pastEnd < MIN_HISTORICAL_RECORDS) {
+            return "INSUFFICIENT_HISTORY";
+        }
+
+        double recentAverage = averageScores(recent, TrendPoint::independentScore);
+        double pastAverage = averageScores(chronological.subList(0, pastEnd), TrendPoint::independentScore);
+        if (recentAverage - pastAverage >= DIRECTION_DELTA) {
+            return "IMPROVING";
+        }
+        if (pastAverage - recentAverage >= DIRECTION_DELTA) {
+            return "DECLINING";
+        }
+        return "MAINTAINING";
+    }
+
+    static DiagnosticAnalysis analyze(
+            List<HomeEvidence> home,
+            List<TeachEvidence> teach,
+            List<LifeEvidence> life) {
+        List<DomainTrend> homeTrends = homeDrillTrends(home);
+        List<DomainTrend> teachTrends = teachTrends(teach);
+        List<DomainTrend> lifeTrends = lifeTrends(life);
+        List<DomainStatus> statuses = new ArrayList<>();
+        List<ReportFact> facts = new ArrayList<>();
+        appendStatusesAndFacts(homeTrends, CONCEPT, statuses, facts);
+        appendStatusesAndFacts(teachTrends, EXPLANATION, statuses, facts);
+        appendStatusesAndFacts(lifeTrends, LIFE, statuses, facts);
+
+        Map<String, DrillMetric> drillMetrics = home.stream()
+                .filter(Objects::nonNull)
+                .collect(Collectors.groupingBy(
+                        HomeEvidence::domainId,
+                        LinkedHashMap::new,
+                        Collectors.flatMapping(
+                                evidence -> safeList(evidence.attempts()).stream(),
+                                Collectors.toList())))
+                .entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .collect(Collectors.toMap(Map.Entry::getKey, entry -> drill(entry.getValue()), (left, right) -> left,
+                        LinkedHashMap::new));
+
+        return new DiagnosticAnalysis(
+                homeTrends,
+                teachTrends,
+                lifeTrends,
+                List.copyOf(statuses),
+                java.util.Collections.unmodifiableMap(new LinkedHashMap<>(drillMetrics)),
+                List.copyOf(facts));
+    }
+
+    private static List<DomainTrend> homeDrillTrends(List<HomeEvidence> home) {
+        return safeList(home).stream()
+                .filter(Objects::nonNull)
+                .collect(Collectors.groupingBy(HomeEvidence::domainId, LinkedHashMap::new, Collectors.toList()))
+                .entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(entry -> trend(
+                        entry.getKey(),
+                        "drill",
+                        entry.getValue().stream()
+                                .map(evidence -> homePoint(evidence, drill(safeList(evidence.attempts()))))
+                                .toList()))
+                .toList();
+    }
+
+    private static List<DomainTrend> teachTrends(List<TeachEvidence> teach) {
+        return groupedTrends(
+                teach,
+                TeachEvidence::domainId,
+                "teach",
+                evidence -> new TrendPoint(
+                        evidence.conversationId(),
+                        "teach",
+                        evidence.occurredAt(),
+                        independentTeachScore(evidence),
+                        supportedTeachScore(evidence),
+                        false));
+    }
+
+    private static List<DomainTrend> lifeTrends(List<LifeEvidence> life) {
+        return groupedTrends(
+                life,
+                LifeEvidence::domainId,
+                "life",
+                evidence -> new TrendPoint(
+                        evidence.visitPublicId(),
+                        "life",
+                        evidence.occurredAt(),
+                        evidence.correct() && !evidence.scaffoldUsed() ? 100.0 : 0.0,
+                        evidence.correct() ? 100.0 : 0.0,
+                        false));
+    }
+
+    private static <T> List<DomainTrend> groupedTrends(
+            List<T> evidence,
+            Function<T, String> domainId,
+            String label,
+            Function<T, TrendPoint> point) {
+        return safeList(evidence).stream()
+                .filter(Objects::nonNull)
+                .collect(Collectors.groupingBy(domainId, LinkedHashMap::new, Collectors.toList()))
+                .entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(entry -> trend(entry.getKey(), label, entry.getValue().stream().map(point).toList()))
+                .toList();
+    }
+
+    private static TrendPoint homePoint(HomeEvidence evidence, DrillMetric metric) {
+        return new TrendPoint(
+                evidence.sessionPublicId(),
+                "drill",
+                evidence.completedAt(),
+                metric.firstTryAccuracy(),
+                100.0 - metric.attemptErrorRate(),
+                false);
+    }
+
+    private static DomainTrend trend(String domainId, String label, List<TrendPoint> points) {
+        List<TrendPoint> chronological = points.stream()
+                .sorted(Comparator.comparing(TrendPoint::occurredAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(TrendPoint::evidenceId, Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
+        List<TrendPoint> marked = markRecent(chronological);
+        return new DomainTrend(domainId, label, marked, marked.size(), (int) marked.stream().filter(TrendPoint::recent).count());
+    }
+
+    private static void appendStatusesAndFacts(
+            List<DomainTrend> trends,
+            DiagnosticReportDtos.FactCategory category,
+            List<DomainStatus> statuses,
+            List<ReportFact> facts) {
+        for (DomainTrend trend : trends) {
+            StatusLabel label = status(trend.points());
+            String direction = direction(trend.points());
+            statuses.add(new DomainStatus(
+                    trend.domainId(), trend.label(), label, direction, trend.totalCount(), trend.recentCount()));
+            facts.add(new ReportFact(
+                    trend.label() + ":" + trend.domainId(),
+                    category,
+                    trend.domainId() + " recent independent score is "
+                            + display(averageScores(recentPoints(trend.points()), TrendPoint::independentScore))
+                            + "% (" + label + ")."));
+        }
+    }
+
+    private static double independentTeachScore(TeachEvidence evidence) {
+        return "H0".equalsIgnoreCase(evidence.maxHint()) && !safeMap(evidence.verifiedSlots()).isEmpty() ? 100.0 : 0.0;
+    }
+
+    private static double supportedTeachScore(TeachEvidence evidence) {
+        return ("taught".equalsIgnoreCase(evidence.outcome()) || "supported".equalsIgnoreCase(evidence.outcome()))
+                        && !safeMap(evidence.verifiedSlots()).isEmpty()
+                ? 100.0
+                : 0.0;
+    }
+
+    private static List<TrendPoint> recentPoints(List<TrendPoint> chronological) {
+        return markRecent(chronological).stream().filter(TrendPoint::recent).toList();
+    }
+
+    private static boolean outcomesConflict(List<TrendPoint> recent) {
+        double lowest = recent.stream().mapToDouble(TrendPoint::independentScore).min().orElse(0.0);
+        double highest = recent.stream().mapToDouble(TrendPoint::independentScore).max().orElse(0.0);
+        return highest - lowest >= CONFLICT_RANGE;
+    }
+
+    private static boolean recentlyDeclining(List<TrendPoint> recent) {
+        return recent.getFirst().independentScore() - recent.getLast().independentScore() >= DIRECTION_DELTA;
+    }
+
+    private static Comparator<AttemptEvidence> attemptOrder() {
+        return Comparator.comparing(AttemptEvidence::occurredAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparingInt(AttemptEvidence::attemptNo)
+                .thenComparing(AttemptEvidence::itemId, Comparator.nullsLast(Comparator.naturalOrder()));
+    }
+
+    private static String questionKey(AttemptEvidence attempt) {
+        return attempt.questionIndex() == null ? "item:" + attempt.itemId() : "question:" + attempt.questionIndex();
+    }
+
+    private static double percent(int numerator, int denominator) {
+        return denominator == 0 ? 0.0 : round(numerator * 100.0 / denominator);
+    }
+
+    private static double average(List<Integer> values) {
+        return values.isEmpty() ? 0.0 : round(values.stream().mapToDouble(Integer::doubleValue).average().orElse(0.0));
+    }
+
+    private static double median(List<Integer> values) {
+        if (values.isEmpty()) {
+            return 0.0;
+        }
+        int middle = values.size() / 2;
+        double median = values.size() % 2 == 0
+                ? (values.get(middle - 1) + values.get(middle)) / 2.0
+                : values.get(middle);
+        return round(median);
+    }
+
+    private static double averageScores(List<TrendPoint> points, Function<TrendPoint, Double> score) {
+        return points.isEmpty()
+                ? 0.0
+                : round(points.stream().mapToDouble(point -> score.apply(point)).average().orElse(0.0));
+    }
+
+    private static String display(double value) {
+        return BigDecimal.valueOf(value).stripTrailingZeros().toPlainString();
+    }
+
+    private static double round(double value) {
+        return BigDecimal.valueOf(value).setScale(1, RoundingMode.HALF_UP).doubleValue();
+    }
+
+    private static <T> List<T> safeList(List<T> values) {
+        return values == null ? List.of() : values;
+    }
+
+    private static Map<String, Object> safeMap(Map<String, Object> values) {
+        return values == null ? Map.of() : values;
+    }
+}
