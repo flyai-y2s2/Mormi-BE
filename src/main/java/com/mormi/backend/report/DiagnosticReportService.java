@@ -1,0 +1,868 @@
+package com.mormi.backend.report;
+
+import static com.mormi.backend.report.DiagnosticReportDtos.FactCategory.CONCEPT;
+import static com.mormi.backend.report.DiagnosticReportDtos.FactCategory.EXPLANATION;
+import static com.mormi.backend.report.DiagnosticReportDtos.FactCategory.IMPROVED;
+import static com.mormi.backend.report.DiagnosticReportDtos.FactCategory.OBSERVE;
+import static com.mormi.backend.report.DiagnosticReportDtos.Mode.HOME;
+import static com.mormi.backend.report.DiagnosticReportDtos.Mode.LIFE;
+
+import com.mormi.backend.cafe.CafeVisit;
+import com.mormi.backend.cafe.CafeVisitRepository;
+import com.mormi.backend.cafe.CafeVisitStage;
+import com.mormi.backend.cafe.CafeVisitStageRepository;
+import com.mormi.backend.dialogue.DialogueConversation;
+import com.mormi.backend.dialogue.DialogueConversationRepository;
+import com.mormi.backend.learner.Learner;
+import com.mormi.backend.learner.LearnerService;
+import com.mormi.backend.report.DiagnosticReportDtos.AiConversationEvidence;
+import com.mormi.backend.report.DiagnosticReportDtos.AiNarrative;
+import com.mormi.backend.report.DiagnosticReportDtos.AiReportEvidence;
+import com.mormi.backend.report.DiagnosticReportDtos.AiSummary;
+import com.mormi.backend.report.DiagnosticReportDtos.AiTurnEvidence;
+import com.mormi.backend.report.DiagnosticReportDtos.AttemptEvidence;
+import com.mormi.backend.report.DiagnosticReportDtos.CurrentSummary;
+import com.mormi.backend.report.DiagnosticReportDtos.DataRange;
+import com.mormi.backend.report.DiagnosticReportDtos.DiagnosticAnalysis;
+import com.mormi.backend.report.DiagnosticReportDtos.DiagnosticReport;
+import com.mormi.backend.report.DiagnosticReportDtos.DomainStatus;
+import com.mormi.backend.report.DiagnosticReportDtos.DomainTrend;
+import com.mormi.backend.report.DiagnosticReportDtos.EvidenceCounts;
+import com.mormi.backend.report.DiagnosticReportDtos.EvidenceText;
+import com.mormi.backend.report.DiagnosticReportDtos.FactCategory;
+import com.mormi.backend.report.DiagnosticReportDtos.Highlight;
+import com.mormi.backend.report.DiagnosticReportDtos.HomeEvidence;
+import com.mormi.backend.report.DiagnosticReportDtos.LearnerHeader;
+import com.mormi.backend.report.DiagnosticReportDtos.LifeEvidence;
+import com.mormi.backend.report.DiagnosticReportDtos.ModeReport;
+import com.mormi.backend.report.DiagnosticReportDtos.ReportFact;
+import com.mormi.backend.report.DiagnosticReportDtos.SpeechEvidence;
+import com.mormi.backend.report.DiagnosticReportDtos.SpeechSample;
+import com.mormi.backend.report.DiagnosticReportDtos.StatusLabel;
+import com.mormi.backend.report.DiagnosticReportDtos.TeachEvidence;
+import com.mormi.backend.report.DiagnosticReportDtos.TrendPoint;
+import com.mormi.backend.session.Attempt;
+import com.mormi.backend.session.AttemptRepository;
+import com.mormi.backend.session.LearningSession;
+import com.mormi.backend.session.LearningSessionRepository;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.OffsetDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/** Aggregates learner-owned records into a current, non-persisted diagnostic report. */
+@Service
+public class DiagnosticReportService {
+
+    private static final Logger log = LoggerFactory.getLogger(DiagnosticReportService.class);
+    private static final String ACTIVITY_DRILL = "drill";
+    private static final String SPEECH_UNAVAILABLE = "비교 가능한 발화 근거가 부족합니다.";
+    private static final Set<String> COMPLETION_OUTCOMES = Set.of("taught", "supported", "bright_exit");
+    private static final Set<String> VERIFIED_RESPONSE_CATEGORIES =
+            Set.of("correct_full", "correct_partial", "self_correction");
+    private static final Map<String, String> HOME_LABELS = Map.of(
+            "number-count", "수 세기",
+            "number-compare", "수 비교",
+            "money-count", "돈 세기",
+            "money-price", "가격 합산",
+            "money-budget", "예산과 거스름돈");
+    private static final Map<String, String> LIFE_LABELS = Map.of(
+            "queue", "줄 서기",
+            "menu", "메뉴 고르기",
+            "calculate", "메뉴 값 계산하기",
+            "change", "거스름돈 받기",
+            "complete", "카페 완료");
+    private static final Map<String, String> SCENARIO_DOMAINS = Map.of(
+            "cafe_queue", "queue",
+            "cafe_budget_menu", "menu",
+            "cafe_menu_total", "calculate",
+            "cafe_change", "change");
+    private static final List<String> REPORT_DOMAINS = List.of(
+            "number-count",
+            "number-compare",
+            "money-count",
+            "money-price",
+            "money-budget",
+            "queue",
+            "menu",
+            "calculate",
+            "change",
+            "complete");
+
+    private final ReportAiClient aiClient;
+    private final LearnerService learnerService;
+    private final LearningSessionRepository sessionRepository;
+    private final AttemptRepository attemptRepository;
+    private final CafeVisitRepository cafeVisitRepository;
+    private final CafeVisitStageRepository cafeVisitStageRepository;
+    private final DialogueConversationRepository dialogueRepository;
+
+    public DiagnosticReportService(
+            ReportAiClient aiClient,
+            LearnerService learnerService,
+            LearningSessionRepository sessionRepository,
+            AttemptRepository attemptRepository,
+            CafeVisitRepository cafeVisitRepository,
+            CafeVisitStageRepository cafeVisitStageRepository,
+            DialogueConversationRepository dialogueRepository) {
+        this.aiClient = aiClient;
+        this.learnerService = learnerService;
+        this.sessionRepository = sessionRepository;
+        this.attemptRepository = attemptRepository;
+        this.cafeVisitRepository = cafeVisitRepository;
+        this.cafeVisitStageRepository = cafeVisitStageRepository;
+        this.dialogueRepository = dialogueRepository;
+    }
+
+    @Transactional(readOnly = true)
+    public DiagnosticReport current(long learnerId) {
+        Learner learner = learnerService.require(learnerId);
+        RecordContext records = loadRecords(learnerId, true);
+        boolean includeRaw = rawEvidencePermitted(learner);
+        Optional<AiReportEvidence> aiEvidence = safeEvidence(learnerId, includeRaw);
+        List<TeachEvidence> teach = normalizeTeach(records, aiEvidence.orElse(null));
+        DiagnosticAnalysis analysis = DiagnosticMetrics.analyze(records.home(), teach, records.life());
+
+        List<DomainTrend> homeTrends = new ArrayList<>();
+        homeTrends.addAll(presentTrends(analysis.homeDrillTrends(), "drill"));
+        homeTrends.addAll(presentTrends(analysis.teachTrends(), "teach"));
+        List<DomainTrend> lifeTrends = presentTrends(analysis.lifeTrends(), "life");
+        List<DomainStatus> statuses = presentStatuses(analysis.domainStatuses());
+        List<ReportFact> facts = presentationFacts(analysis, records, aiEvidence.orElse(null));
+
+        NarrativeResult narrative = narrative(learner.getDisplayName(), facts);
+        List<OffsetDateTime> occurrences = new ArrayList<>();
+        records.home().stream().map(HomeEvidence::completedAt).filter(Objects::nonNull).forEach(occurrences::add);
+        records.analyzableVisits().stream().map(CafeVisit::getCompletedAt).filter(Objects::nonNull).forEach(occurrences::add);
+        occurrences.sort(Comparator.naturalOrder());
+
+        int speechSamples = aiEvidence.map(evidence -> speechCandidates(records, evidence, null).size()).orElse(0);
+        return new DiagnosticReport(
+                new LearnerHeader(learnerId, learner.getDisplayName()),
+                new DataRange(
+                        occurrences.isEmpty() ? null : occurrences.getFirst(),
+                        occurrences.isEmpty() ? null : occurrences.getLast(),
+                        records.home().size(),
+                        records.analyzableVisits().size()),
+                narrative.currentSummary(),
+                List.of(new ModeReport(HOME, List.copyOf(homeTrends)), new ModeReport(LIFE, lifeTrends)),
+                statuses,
+                narrative.improvedPoint(),
+                narrative.observePoint(),
+                new EvidenceCounts(
+                        records.home().size(),
+                        records.home().stream().mapToInt(home -> home.attempts().size()).sum(),
+                        teach.size(),
+                        records.analyzableVisits().size(),
+                        speechSamples),
+                narrative.fallback());
+    }
+
+    @Transactional(readOnly = true)
+    public SpeechEvidence speechEvidence(long learnerId, String domainId) {
+        Learner learner = learnerService.require(learnerId);
+        if (!HOME_LABELS.containsKey(domainId) && !LIFE_LABELS.containsKey(domainId)) {
+            return unavailableSpeech(domainId);
+        }
+        RecordContext records = loadRecords(learnerId, false);
+        Optional<AiReportEvidence> evidence = safeEvidence(learnerId, rawEvidencePermitted(learner));
+        if (evidence.isEmpty()) {
+            return unavailableSpeech(domainId);
+        }
+
+        List<SpeechCandidate> candidates = speechCandidates(records, evidence.orElseThrow(), domainId);
+        Optional<SpeechPair> pair = comparablePair(candidates);
+        if (pair.isEmpty()) {
+            return unavailableSpeech(domainId);
+        }
+        SpeechPair selected = pair.orElseThrow();
+        return new SpeechEvidence(
+                domainId,
+                true,
+                null,
+                selected.past().sample(),
+                selected.recent().sample(),
+                selected.verifiedElements(),
+                changeSummary(selected.past().sample(), selected.recent().sample()));
+    }
+
+    private RecordContext loadRecords(long learnerId, boolean loadMetricRows) {
+        Map<Long, LearningSession> sessions = safeList(sessionRepository
+                        .findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(learnerId))
+                .stream()
+                .filter(Objects::nonNull)
+                .filter(session -> Objects.equals(session.getLearnerId(), learnerId))
+                .filter(session -> session.getId() != null && session.getPublicId() != null)
+                .filter(session -> session.getCompletedAt() != null)
+                .filter(session -> HOME_LABELS.containsKey(session.getCurriculumSessionId()))
+                .collect(Collectors.toMap(
+                        LearningSession::getId,
+                        Function.identity(),
+                        (first, ignored) -> first,
+                        LinkedHashMap::new));
+        List<Long> sessionIds = sessions.keySet().stream().sorted().toList();
+        List<Attempt> attempts = loadMetricRows && !sessionIds.isEmpty()
+                ? dedupeAttempts(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(sessionIds))
+                : List.of();
+        Map<Long, List<AttemptEvidence>> attemptsBySession = new LinkedHashMap<>();
+        for (Attempt attempt : attempts) {
+            LearningSession session = sessions.get(attempt.getLearningSessionId());
+            if (session == null || !ACTIVITY_DRILL.equals(attempt.getActivity()) || !analyzableAttempt(attempt)) {
+                continue;
+            }
+            attemptsBySession.computeIfAbsent(session.getId(), ignored -> new ArrayList<>()).add(
+                    new AttemptEvidence(
+                            session.getCurriculumSessionId(),
+                            attempt.getItemId(),
+                            attempt.getQuestionIndex(),
+                            attempt.getAttemptNo(),
+                            attempt.isCorrect(),
+                            attempt.getElapsedMs(),
+                            attempt.getCreatedAt(),
+                            safeMap(attempt.getAnswerMeta())));
+        }
+
+        List<HomeEvidence> home = new ArrayList<>();
+        for (LearningSession session : sessions.values()) {
+            List<AttemptEvidence> sessionAttempts = attemptsBySession.getOrDefault(session.getId(), List.of());
+            if (!loadMetricRows || !sessionAttempts.isEmpty()) {
+                home.add(new HomeEvidence(
+                        session.getPublicId(),
+                        session.getCurriculumSessionId(),
+                        session.getCompletedAt(),
+                        sessionAttempts));
+            }
+        }
+        home.sort(Comparator.comparing(HomeEvidence::completedAt).thenComparing(HomeEvidence::sessionPublicId));
+
+        Map<Long, CafeVisit> visits = safeList(cafeVisitRepository
+                        .findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtAsc(learnerId))
+                .stream()
+                .filter(Objects::nonNull)
+                .filter(visit -> Objects.equals(visit.getLearnerId(), learnerId))
+                .filter(visit -> visit.getId() != null && visit.getPublicId() != null && visit.getCompletedAt() != null)
+                .collect(Collectors.toMap(
+                        CafeVisit::getId,
+                        Function.identity(),
+                        (first, ignored) -> first,
+                        LinkedHashMap::new));
+        List<Long> visitIds = visits.keySet().stream().sorted().toList();
+        List<CafeVisitStage> stageRows = loadMetricRows && !visitIds.isEmpty()
+                ? dedupeStages(cafeVisitStageRepository.findByCafeVisitIdInOrderByCreatedAtAscIdAsc(visitIds))
+                : List.of();
+        List<LifeEvidence> life = stageRows.stream()
+                .filter(stage -> visits.containsKey(stage.getCafeVisitId()))
+                .filter(stage -> LIFE_LABELS.containsKey(stage.getStage()))
+                .map(stage -> new LifeEvidence(
+                        visits.get(stage.getCafeVisitId()).getPublicId(),
+                        stage.getStage(),
+                        stage.getAttemptNo(),
+                        stage.isCorrect(),
+                        Boolean.TRUE.equals(safeMap(stage.getPayload()).get("scaffold_used")),
+                        stage.getCreatedAt(),
+                        safeMap(stage.getPayload())))
+                .toList();
+        Set<Long> analyzableVisitIds = stageRows.stream()
+                .filter(stage -> visits.containsKey(stage.getCafeVisitId()))
+                .filter(stage -> LIFE_LABELS.containsKey(stage.getStage()))
+                .map(CafeVisitStage::getCafeVisitId)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        List<CafeVisit> analyzableVisits = loadMetricRows
+                ? analyzableVisitIds.stream().map(visits::get).filter(Objects::nonNull).toList()
+                : List.copyOf(visits.values());
+
+        Map<String, DialogueConversation> dialogues = safeList(
+                        dialogueRepository.findByLearnerIdOrderByCreatedAtAsc(learnerId))
+                .stream()
+                .filter(Objects::nonNull)
+                .filter(dialogue -> Objects.equals(dialogue.getLearnerId(), learnerId))
+                .filter(dialogue -> dialogue.getConversationId() != null && !dialogue.getConversationId().isBlank())
+                .filter(dialogue -> dialogueOwnedBySelectedRecord(dialogue, sessions, visits))
+                .collect(Collectors.toMap(
+                        DialogueConversation::getConversationId,
+                        Function.identity(),
+                        (first, ignored) -> first,
+                        LinkedHashMap::new));
+        return new RecordContext(sessions, visits, dialogues, List.copyOf(home), life, analyzableVisits);
+    }
+
+    private boolean dialogueOwnedBySelectedRecord(
+            DialogueConversation dialogue,
+            Map<Long, LearningSession> sessions,
+            Map<Long, CafeVisit> visits) {
+        boolean homeOwned = dialogue.getLearningSessionId() != null
+                && dialogue.getCafeVisitId() == null
+                && sessions.containsKey(dialogue.getLearningSessionId());
+        boolean lifeOwned = dialogue.getCafeVisitId() != null
+                && dialogue.getLearningSessionId() == null
+                && visits.containsKey(dialogue.getCafeVisitId())
+                && SCENARIO_DOMAINS.containsKey(dialogue.getScenarioId());
+        return homeOwned || lifeOwned;
+    }
+
+    private List<TeachEvidence> normalizeTeach(RecordContext records, AiReportEvidence evidence) {
+        if (!validAiEnvelope(evidence)) {
+            return List.of();
+        }
+        Map<String, AiConversationEvidence> unique = uniqueAiConversations(evidence);
+        List<TeachEvidence> teach = new ArrayList<>();
+        for (Map.Entry<String, AiConversationEvidence> entry : unique.entrySet()) {
+            DialogueConversation owner = records.dialogues().get(entry.getKey());
+            AiConversationEvidence conversation = entry.getValue();
+            String domainId = ownedDomain(records, owner, conversation);
+            if (domainId == null || !completedEvidence(conversation)) {
+                continue;
+            }
+            AiTurnEvidence representative = safeList(conversation.turns()).stream()
+                    .filter(Objects::nonNull)
+                    .filter(turn -> turn.taskId() != null && !turn.taskId().isBlank())
+                    .sorted(Comparator.comparing(
+                            AiTurnEvidence::createdAt, Comparator.nullsLast(Comparator.naturalOrder())))
+                    .reduce((first, second) -> second)
+                    .orElse(null);
+            if (representative == null) {
+                continue;
+            }
+            teach.add(new TeachEvidence(
+                    conversation.conversationId(),
+                    domainId,
+                    representative.taskId(),
+                    conversation.completionOutcome(),
+                    conversation.taskMaxHint(),
+                    representative.expressionLevel(),
+                    safeMap(conversation.verifiedSlots()),
+                    conversation.updatedAt()));
+        }
+        return teach.stream()
+                .sorted(Comparator.comparing(TeachEvidence::occurredAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(TeachEvidence::conversationId))
+                .toList();
+    }
+
+    private Optional<AiReportEvidence> safeEvidence(long learnerId, boolean includeRaw) {
+        try {
+            return aiClient.evidence(learnerId, includeRaw)
+                    .filter(evidence -> validAiEnvelope(evidence) && evidence.learnerId() == learnerId);
+        } catch (RuntimeException error) {
+            log.warn("Mormi-AI report evidence fallback type={}", error.getClass().getSimpleName());
+            return Optional.empty();
+        }
+    }
+
+    private boolean validAiEnvelope(AiReportEvidence evidence) {
+        return evidence != null && evidence.learnerId() > 0;
+    }
+
+    private Map<String, AiConversationEvidence> uniqueAiConversations(AiReportEvidence evidence) {
+        if (evidence == null) {
+            return Map.of();
+        }
+        return safeList(evidence.conversations()).stream()
+                .filter(Objects::nonNull)
+                .filter(conversation -> conversation.conversationId() != null
+                        && !conversation.conversationId().isBlank())
+                .collect(Collectors.toMap(
+                        AiConversationEvidence::conversationId,
+                        Function.identity(),
+                        (first, ignored) -> first,
+                        LinkedHashMap::new));
+    }
+
+    private String ownedDomain(
+            RecordContext records,
+            DialogueConversation owner,
+            AiConversationEvidence conversation) {
+        if (owner == null || conversation == null || !Objects.equals(
+                owner.getConversationId(), conversation.conversationId())) {
+            return null;
+        }
+        if (owner.getLearningSessionId() != null && owner.getCafeVisitId() == null) {
+            LearningSession session = records.sessions().get(owner.getLearningSessionId());
+            if (session == null
+                    || !Objects.equals(session.getPublicId(), conversation.learningSessionId())
+                    || !Objects.equals(owner.getScenarioId(), conversation.scenarioId())) {
+                return null;
+            }
+            return HOME_LABELS.containsKey(session.getCurriculumSessionId())
+                    ? session.getCurriculumSessionId()
+                    : null;
+        }
+        if (owner.getCafeVisitId() != null && owner.getLearningSessionId() == null) {
+            CafeVisit visit = records.visits().get(owner.getCafeVisitId());
+            if (visit == null
+                    || conversation.learningSessionId() != null
+                    || !Objects.equals(owner.getScenarioId(), conversation.scenarioId())) {
+                return null;
+            }
+            return SCENARIO_DOMAINS.get(owner.getScenarioId());
+        }
+        return null;
+    }
+
+    private boolean completedEvidence(AiConversationEvidence conversation) {
+        return "completed".equalsIgnoreCase(conversation.status())
+                && conversation.completionOutcome() != null
+                && COMPLETION_OUTCOMES.contains(conversation.completionOutcome().toLowerCase())
+                && !safeMap(conversation.verifiedSlots()).isEmpty();
+    }
+
+    private List<SpeechCandidate> speechCandidates(
+            RecordContext records,
+            AiReportEvidence evidence,
+            String requestedDomain) {
+        if (!validAiEnvelope(evidence)) {
+            return List.of();
+        }
+        List<SpeechCandidate> candidates = new ArrayList<>();
+        for (AiConversationEvidence conversation : uniqueAiConversations(evidence).values()) {
+            DialogueConversation owner = records.dialogues().get(conversation.conversationId());
+            String domainId = ownedDomain(records, owner, conversation);
+            if (domainId == null
+                    || (requestedDomain != null && !requestedDomain.equals(domainId))
+                    || !completedEvidence(conversation)) {
+                continue;
+            }
+            Set<String> conversationSlots = verifiedSlotIds(conversation.verifiedSlots());
+            Set<String> seenTurnIds = new HashSet<>();
+            for (AiTurnEvidence turn : safeList(conversation.turns())) {
+                if (turn == null
+                        || turn.turnId() == null
+                        || !seenTurnIds.add(turn.turnId())
+                        || turn.taskId() == null
+                        || turn.taskId().isBlank()
+                        || turn.response() == null
+                        || turn.response().isBlank()
+                        || turn.createdAt() == null
+                        || !VERIFIED_RESPONSE_CATEGORIES.contains(normalize(turn.responseCategory()))) {
+                    continue;
+                }
+                Set<String> turnSlots = verifiedTurnSlotIds(turn);
+                if (turnSlots.isEmpty()) {
+                    turnSlots = conversationSlots;
+                } else {
+                    turnSlots.retainAll(conversationSlots);
+                }
+                if (turnSlots.isEmpty()) {
+                    continue;
+                }
+                candidates.add(new SpeechCandidate(
+                        domainId,
+                        turn.taskId(),
+                        new SpeechSample(
+                                "conversation:" + conversation.conversationId() + ":turn:" + turn.turnId(),
+                                turn.response(),
+                                turn.hintLevel(),
+                                turn.expressionLevel(),
+                                turn.createdAt()),
+                        Set.copyOf(turnSlots)));
+            }
+        }
+        return candidates.stream()
+                .sorted(Comparator.comparing(candidate -> candidate.sample().occurredAt()))
+                .toList();
+    }
+
+    private Optional<SpeechPair> comparablePair(List<SpeechCandidate> candidates) {
+        List<SpeechPair> pairs = new ArrayList<>();
+        safeList(candidates).stream()
+                .collect(Collectors.groupingBy(SpeechCandidate::taskId, LinkedHashMap::new, Collectors.toList()))
+                .values()
+                .forEach(group -> {
+                    List<SpeechCandidate> ordered = group.stream()
+                            .sorted(Comparator.comparing(candidate -> candidate.sample().occurredAt()))
+                            .toList();
+                    for (int recentIndex = ordered.size() - 1; recentIndex > 0; recentIndex--) {
+                        SpeechCandidate recent = ordered.get(recentIndex);
+                        for (int pastIndex = 0; pastIndex < recentIndex; pastIndex++) {
+                            SpeechCandidate past = ordered.get(pastIndex);
+                            List<String> shared = past.verifiedElements().stream()
+                                    .filter(recent.verifiedElements()::contains)
+                                    .sorted()
+                                    .toList();
+                            if (!shared.isEmpty()) {
+                                pairs.add(new SpeechPair(past, recent, shared));
+                                recentIndex = -1;
+                                break;
+                            }
+                        }
+                    }
+                });
+        return pairs.stream().max(Comparator
+                .comparing((SpeechPair pair) -> pair.recent().sample().occurredAt())
+                .thenComparing(pair -> pair.past().sample().occurredAt(), Comparator.reverseOrder()));
+    }
+
+    private Set<String> verifiedTurnSlotIds(AiTurnEvidence turn) {
+        Object raw = safeMap(turn.pedagogy()).get("verified_slots");
+        if (!(raw instanceof Map<?, ?> slots)) {
+            return new LinkedHashSet<>();
+        }
+        Set<String> result = new LinkedHashSet<>();
+        slots.forEach((key, value) -> {
+            if (key != null && value != null && !String.valueOf(key).isBlank()) {
+                result.add(String.valueOf(key));
+            }
+        });
+        return result;
+    }
+
+    private Set<String> verifiedSlotIds(Map<String, Object> slots) {
+        return safeMap(slots).entrySet().stream()
+                .filter(entry -> entry.getKey() != null && !entry.getKey().isBlank() && entry.getValue() != null)
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private List<DomainTrend> presentTrends(List<DomainTrend> trends, String kind) {
+        return safeList(trends).stream()
+                .filter(trend -> labelFor(trend.domainId()) != null)
+                .map(trend -> new DomainTrend(
+                        trend.domainId(),
+                        switch (kind) {
+                            case "drill" -> labelFor(trend.domainId()) + " · 반복학습";
+                            case "teach" -> labelFor(trend.domainId()) + " · 설명 독립성";
+                            default -> labelFor(trend.domainId());
+                        },
+                        trend.points(),
+                        trend.totalCount(),
+                        trend.recentCount()))
+                .toList();
+    }
+
+    private List<DomainStatus> presentStatuses(List<DomainStatus> statuses) {
+        return safeList(statuses).stream()
+                .filter(status -> labelFor(status.domainId()) != null)
+                .map(status -> new DomainStatus(
+                        status.domainId(),
+                        switch (status.label()) {
+                            case "drill" -> labelFor(status.domainId()) + " · 반복학습";
+                            case "teach" -> labelFor(status.domainId()) + " · 설명 독립성";
+                            default -> labelFor(status.domainId());
+                        },
+                        status.status(),
+                        status.direction(),
+                        status.totalCount(),
+                        status.recentCount()))
+                .toList();
+    }
+
+    private List<ReportFact> presentationFacts(
+            DiagnosticAnalysis analysis,
+            RecordContext records,
+            AiReportEvidence aiEvidence) {
+        Map<String, DomainStatus> statuses = safeList(analysis.domainStatuses()).stream()
+                .collect(Collectors.toMap(
+                        status -> status.label() + ":" + status.domainId(),
+                        Function.identity(),
+                        (first, ignored) -> first,
+                        LinkedHashMap::new));
+        List<ReportFact> facts = new ArrayList<>();
+        appendTrendFacts(facts, analysis.homeDrillTrends(), statuses, "drill", CONCEPT);
+        facts.addAll(speechFacts(records, aiEvidence));
+        appendTrendFacts(facts, analysis.teachTrends(), statuses, "teach", EXPLANATION);
+        appendTrendFacts(facts, analysis.lifeTrends(), statuses, "life", FactCategory.LIFE);
+
+        Optional<DomainStatus> improving = safeList(analysis.domainStatuses()).stream()
+                .filter(status -> "IMPROVING".equals(status.direction()))
+                .findFirst();
+        facts.add(improving
+                .map(status -> new ReportFact(
+                        "improved:" + status.label() + ":" + status.domainId(),
+                        IMPROVED,
+                        labelFor(status.domainId()) + "의 최근 독립 수행은 이전 기록보다 향상되었습니다."))
+                .orElseGet(() -> new ReportFact(
+                        "improved:insufficient-history",
+                        IMPROVED,
+                        "현재 자료에서는 향상을 확정할 장기 근거가 충분하지 않습니다.")));
+
+        Optional<DomainStatus> observe = safeList(analysis.domainStatuses()).stream()
+                .filter(status -> status.status() != StatusLabel.STABLE)
+                .findFirst();
+        facts.add(observe
+                .map(status -> new ReportFact(
+                        "observe:" + status.label() + ":" + status.domainId(),
+                        OBSERVE,
+                        labelFor(status.domainId()) + "의 현재 상태는 " + koreanStatus(status.status())
+                                + "이므로 계속 관찰합니다."))
+                .orElseGet(() -> new ReportFact(
+                        "observe:next-records",
+                        OBSERVE,
+                        analysis.domainStatuses().isEmpty()
+                                ? "분석 가능한 완료 기록이 아직 없습니다."
+                                : "새 기록에서도 현재 수행이 유지되는지 계속 관찰합니다.")));
+        return List.copyOf(facts);
+    }
+
+    private List<ReportFact> speechFacts(RecordContext records, AiReportEvidence aiEvidence) {
+        if (!validAiEnvelope(aiEvidence)) {
+            return List.of();
+        }
+        List<ReportFact> facts = new ArrayList<>();
+        for (String domainId : REPORT_DOMAINS) {
+            Optional<SpeechPair> pair = comparablePair(speechCandidates(records, aiEvidence, domainId));
+            if (pair.isEmpty()) {
+                continue;
+            }
+            SpeechPair selected = pair.orElseThrow();
+            SpeechSample past = selected.past().sample();
+            SpeechSample recent = selected.recent().sample();
+            String helpChange = Objects.equals(past.hintLevel(), recent.hintLevel())
+                    ? "도움 수준은 두 기록 모두 " + valueOrUnknown(recent.hintLevel()) + "입니다."
+                    : "도움 수준은 " + valueOrUnknown(past.hintLevel()) + "에서 "
+                            + valueOrUnknown(recent.hintLevel()) + "로 바뀌었습니다.";
+            facts.add(new ReportFact(
+                    "speech:" + domainId,
+                    EXPLANATION,
+                    labelFor(domainId) + " 발화 비교에서 공통 검증 요소 "
+                            + selected.verifiedElements().size() + "개가 확인되었고 " + helpChange));
+        }
+        return List.copyOf(facts);
+    }
+
+    private void appendTrendFacts(
+            List<ReportFact> facts,
+            List<DomainTrend> trends,
+            Map<String, DomainStatus> statuses,
+            String kind,
+            FactCategory category) {
+        for (DomainTrend trend : safeList(trends)) {
+            String label = labelFor(trend.domainId());
+            DomainStatus status = statuses.get(kind + ":" + trend.domainId());
+            if (label == null || status == null) {
+                continue;
+            }
+            double recentAverage = trend.points().stream()
+                    .filter(TrendPoint::recent)
+                    .mapToDouble(TrendPoint::independentScore)
+                    .average()
+                    .orElse(0.0);
+            String subject = switch (kind) {
+                case "drill" -> label + " 반복학습";
+                case "teach" -> label + " 설명";
+                default -> label;
+            };
+            facts.add(new ReportFact(
+                    kind + ":" + trend.domainId(),
+                    category,
+                    subject + "의 최근 독립 수행률은 " + display(recentAverage)
+                            + "%이며 상태는 " + koreanStatus(status.status()) + "입니다."));
+        }
+    }
+
+    private NarrativeResult narrative(String learnerLabel, List<ReportFact> facts) {
+        try {
+            Optional<AiSummary> summary = aiClient.summarize(learnerLabel, facts);
+            if (summary.isPresent() && validSummary(summary.orElseThrow(), facts)) {
+                AiSummary value = summary.orElseThrow();
+                return new NarrativeResult(
+                        new CurrentSummary(
+                                evidenceText(value.conceptPerformance()),
+                                evidenceText(value.explanationChange()),
+                                evidenceText(value.lifeTransfer())),
+                        highlight(value.improvedPoint()),
+                        highlight(value.observePoint()),
+                        false);
+            }
+        } catch (RuntimeException error) {
+            log.warn("Mormi-AI report summary fallback type={}", error.getClass().getSimpleName());
+        }
+        return fallbackNarrative(facts);
+    }
+
+    private boolean validSummary(AiSummary summary, List<ReportFact> facts) {
+        if (summary == null) {
+            return false;
+        }
+        Map<String, String> statements = facts.stream().collect(Collectors.toMap(
+                ReportFact::evidenceId,
+                ReportFact::statement,
+                (first, ignored) -> first,
+                LinkedHashMap::new));
+        return List.of(
+                        summary.conceptPerformance(),
+                        summary.explanationChange(),
+                        summary.lifeTransfer(),
+                        summary.improvedPoint(),
+                        summary.observePoint())
+                .stream()
+                .allMatch(narrative -> exactNarrative(narrative, statements));
+    }
+
+    private boolean exactNarrative(AiNarrative narrative, Map<String, String> facts) {
+        if (narrative == null
+                || narrative.text() == null
+                || narrative.text().isBlank()
+                || narrative.evidenceRefs() == null
+                || narrative.evidenceRefs().isEmpty()
+                || narrative.evidenceRefs().size() > 5
+                || new HashSet<>(narrative.evidenceRefs()).size() != narrative.evidenceRefs().size()
+                || narrative.evidenceRefs().stream().anyMatch(ref -> !facts.containsKey(ref))) {
+            return false;
+        }
+        List<String> referenced = narrative.evidenceRefs().stream().map(facts::get).toList();
+        return referenced.contains(narrative.text()) || narrative.text().equals(String.join(" ", referenced));
+    }
+
+    private NarrativeResult fallbackNarrative(List<ReportFact> facts) {
+        EvidenceText concept = fallbackText(facts, CONCEPT, "분석 가능한 집 반복학습 근거가 아직 없습니다.");
+        EvidenceText explanation = fallbackText(facts, EXPLANATION, SPEECH_UNAVAILABLE);
+        EvidenceText life = fallbackText(
+                facts, FactCategory.LIFE, "분석 가능한 실생활 적용 근거가 아직 없습니다.");
+        EvidenceText improved = fallbackText(
+                facts, IMPROVED, "현재 자료에서는 향상을 확정할 장기 근거가 충분하지 않습니다.");
+        EvidenceText observe = fallbackText(facts, OBSERVE, "새 기록이 쌓이는 동안 계속 관찰합니다.");
+        return new NarrativeResult(
+                new CurrentSummary(concept, explanation, life),
+                new Highlight(improved.text(), improved.evidenceRefs()),
+                new Highlight(observe.text(), observe.evidenceRefs()),
+                true);
+    }
+
+    private EvidenceText fallbackText(List<ReportFact> facts, FactCategory category, String emptyText) {
+        return facts.stream()
+                .filter(fact -> fact.category() == category)
+                .findFirst()
+                .map(fact -> new EvidenceText(fact.statement(), List.of(fact.evidenceId())))
+                .orElseGet(() -> new EvidenceText(emptyText, List.of()));
+    }
+
+    private EvidenceText evidenceText(AiNarrative narrative) {
+        return new EvidenceText(narrative.text(), List.copyOf(narrative.evidenceRefs()));
+    }
+
+    private Highlight highlight(AiNarrative narrative) {
+        return new Highlight(narrative.text(), List.copyOf(narrative.evidenceRefs()));
+    }
+
+    private List<Attempt> dedupeAttempts(List<Attempt> attempts) {
+        Map<String, Attempt> unique = new LinkedHashMap<>();
+        for (Attempt attempt : safeList(attempts)) {
+            if (attempt == null) {
+                continue;
+            }
+            String key = attempt.getId() != null
+                    ? "id:" + attempt.getId()
+                    : "source:" + attempt.getLearningSessionId() + ":" + attempt.getActivity() + ":"
+                            + attempt.getAttemptNo();
+            unique.putIfAbsent(key, attempt);
+        }
+        return List.copyOf(unique.values());
+    }
+
+    private List<CafeVisitStage> dedupeStages(List<CafeVisitStage> stages) {
+        Map<String, CafeVisitStage> unique = new LinkedHashMap<>();
+        for (CafeVisitStage stage : safeList(stages)) {
+            if (stage == null) {
+                continue;
+            }
+            String key = stage.getId() != null
+                    ? "id:" + stage.getId()
+                    : "source:" + stage.getCafeVisitId() + ":" + stage.getStage() + ":" + stage.getAttemptNo();
+            unique.putIfAbsent(key, stage);
+        }
+        return List.copyOf(unique.values());
+    }
+
+    private boolean analyzableAttempt(Attempt attempt) {
+        return attempt.getQuestionIndex() != null
+                || (attempt.getItemId() != null && !attempt.getItemId().isBlank());
+    }
+
+    private boolean rawEvidencePermitted(Learner learner) {
+        return learner.isConversationStorageConsent()
+                && learner.getRetentionPolicy() != null
+                && !"no_raw".equalsIgnoreCase(learner.getRetentionPolicy());
+    }
+
+    private SpeechEvidence unavailableSpeech(String domainId) {
+        return new SpeechEvidence(domainId, false, SPEECH_UNAVAILABLE, null, null, List.of(), null);
+    }
+
+    private String changeSummary(SpeechSample past, SpeechSample recent) {
+        if (Objects.equals(past.hintLevel(), recent.hintLevel())) {
+            return "두 발화 모두 도움 수준은 " + valueOrUnknown(recent.hintLevel()) + "입니다.";
+        }
+        return "도움 수준이 " + valueOrUnknown(past.hintLevel()) + "에서 "
+                + valueOrUnknown(recent.hintLevel()) + "로 바뀌었습니다.";
+    }
+
+    private String labelFor(String domainId) {
+        return HOME_LABELS.containsKey(domainId) ? HOME_LABELS.get(domainId) : LIFE_LABELS.get(domainId);
+    }
+
+    private String koreanStatus(StatusLabel status) {
+        return switch (status) {
+            case STABLE -> "안정";
+            case DEVELOPING -> "발달 중";
+            case SUPPORT_NEEDED -> "지원 필요";
+            case OBSERVING -> "관찰 중";
+        };
+    }
+
+    private String display(double value) {
+        return BigDecimal.valueOf(value)
+                .setScale(1, RoundingMode.HALF_UP)
+                .stripTrailingZeros()
+                .toPlainString();
+    }
+
+    private String normalize(String value) {
+        return value == null ? "" : value.toLowerCase();
+    }
+
+    private String valueOrUnknown(String value) {
+        return value == null || value.isBlank() ? "확인 불가" : value;
+    }
+
+    private <T> List<T> safeList(List<T> values) {
+        return values == null ? List.of() : values;
+    }
+
+    private Map<String, Object> safeMap(Map<String, Object> values) {
+        return values == null ? Map.of() : values;
+    }
+
+    private record RecordContext(
+            Map<Long, LearningSession> sessions,
+            Map<Long, CafeVisit> visits,
+            Map<String, DialogueConversation> dialogues,
+            List<HomeEvidence> home,
+            List<LifeEvidence> life,
+            List<CafeVisit> analyzableVisits) {
+    }
+
+    private record NarrativeResult(
+            CurrentSummary currentSummary,
+            Highlight improvedPoint,
+            Highlight observePoint,
+            boolean fallback) {
+    }
+
+    private record SpeechCandidate(
+            String domainId,
+            String taskId,
+            SpeechSample sample,
+            Set<String> verifiedElements) {
+    }
+
+    private record SpeechPair(
+            SpeechCandidate past,
+            SpeechCandidate recent,
+            List<String> verifiedElements) {
+    }
+}

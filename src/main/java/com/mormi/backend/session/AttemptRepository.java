@@ -13,6 +13,8 @@ public interface AttemptRepository extends JpaRepository<Attempt, Long> {
 
     List<Attempt> findByLearningSessionIdOrderByIdAsc(Long learningSessionId);
 
+    List<Attempt> findByLearningSessionIdInOrderByCreatedAtAscIdAsc(List<Long> learningSessionIds);
+
     int countByLearningSessionIdAndActivity(Long learningSessionId, String activity);
 
     /** 해당 문제에서 이 시도 이전까지 쌓인 오답 수. 보상 등급을 서버가 계산할 때 쓴다. */
