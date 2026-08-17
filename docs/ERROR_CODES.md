@@ -139,6 +139,37 @@ AI가 200을 줬지만 내용이 계약과 다른 경우다. 전부 503이다.
 | `dialogue_context_missing` | 저장해 둔 카페 문제 정보를 못 찾음 |
 | `dialogue_context_invalid` | 저장된 카페 문제 정보가 손상됨 |
 
+## 궁금해사전 (`dictionary_*`)
+
+BE가 Mormi-AI의 사전 카드를 중계하다 실패한 경우다. `dialogue_*` 와 달리
+**점(.) 진단 접미사가 붙지 않으므로 정확히 일치로 분기하면 된다.**
+사전 조회 실패는 학습 진행을 막지 않는다. 사전 화면만 오류 상태로 두고
+학습 흐름은 계속 진행한다.
+
+### 설정 문제 (배포 직후 여기부터 의심)
+
+| code | status | 원인 |
+|---|---|---|
+| `dictionary_not_configured` | 503 | BE에 `MORMI_DIALOGUE_BASE_URL` 미설정 |
+| `dictionary_key_not_configured` | 503 | BE에 `MORMI_DIALOGUE_SERVICE_KEY` 미설정 |
+| `dictionary_auth_failed` | 503 | AI가 401/403. BE·AI의 서비스 키 불일치 |
+
+### 조회 결과
+
+| code | status | 언제 | 프런트가 할 일 |
+|---|---|---|---|
+| `dictionary_card_not_found` | 404 | 그 커리큘럼에 승인된 카드가 없음 | **재시도 금지.** 사전 버튼 숨김 또는 빈 상태 |
+| `dictionary_version_mismatch` | 409 | 기대한 콘텐츠 버전과 현재 버전이 다름 | 버전 파라미터 없이 다시 조회해 새 카드로 갱신 |
+| `dictionary_snapshot_unavailable` | 409 | 구버전 대화에 고정 스냅샷이 없음 | 세션 경로(최신 카드)로 대체 조회 |
+| `dictionary_rate_limited` | 503 | AI가 429 | 잠시 후 재시도 |
+| `dictionary_ai_error` | 503 | AI 5xx. BE가 1회 재시도한 뒤의 결과 | 잠시 후 재시도 |
+| `dictionary_unavailable` | 503 | AI 연결 실패·시간초과. 1회 재시도 후 | 잠시 후 재시도 |
+| `dictionary_upstream_error` | 503 | 그 밖의 AI 오류 | 잠시 후 재시도 |
+
+대화 스냅샷 조회에서 AI에 대화 자체가 없으면 위 코드가 아니라 일반 `not_found` 404 로
+온다. BE에 소유 기록이 있는데 AI가 대화를 모르는 비정상 상황이므로, 화면은 "없음" 표의
+대화 없음과 같게 처리한다.
+
 ## 서버
 
 | code | status | 프런트가 할 일 |

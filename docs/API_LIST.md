@@ -103,6 +103,7 @@
 | `GET` | `/v1/learning-sessions/{id}` | 새로고침 복구 (시도 전체 포함) |
 | `POST` | `/v1/learning-sessions/{id}/attempts` | 문제 시도 1건 |
 | `POST` | `/v1/learning-sessions/{id}/teaching` | 저장된 반복 결과로 AI 가르치기 대화 시작·복구 |
+| `GET` | `/v1/learning-sessions/{id}/dictionary-card` | 세션 커리큘럼의 궁금해사전 카드 조회 (F 절 참고) |
 | `POST` | `/v1/learning-sessions/{id}/complete` | 종료 + 보상 정산 |
 
 ```jsonc
@@ -214,6 +215,7 @@
 |---|---|---|
 | `GET` | `/v1/dialogue/conversations/{conversation_id}` | 소유권 확인 후 최신 TurnContract 복구 |
 | `POST` | `/v1/dialogue/conversations/{conversation_id}/responses` | 소유권 확인 후 아이 응답 전달 |
+| `GET` | `/v1/dialogue/conversations/{conversation_id}/dictionary-card` | 대화에 고정된 궁금해사전 카드 스냅샷 |
 
 운영 호출 경로는 `FE → Spring BE → Mormi-AI`입니다. FE는 `learner_id`, 저장 동의, 보존기간, AI 서비스 키를 보내지 않습니다. Spring BE가 인증된 학습자 레코드에서 채웁니다.
 카페 대화 응답에는 AI의 `conversation_id`, `turn`과 함께 BE가 보관한
@@ -234,6 +236,19 @@
   }
 }
 ```
+
+**궁금해사전 중계**: 사전 카드는 AI가 소유한 승인·버전 관리 콘텐츠입니다. BE는
+인증과 소유권만 확인하고 카드 본문(`reference` + `card`)을 **무손실로 통과**시킵니다.
+문장을 보정하거나 자체 fallback 문구를 만들지 않으므로, 응답 스키마는 AI 문서
+(`Mormi-AI/docs/API_SPEC.md`)가 원본입니다.
+
+- 세션 경로는 현재 승인된 최신 카드, 대화 경로는 대화 시작 시점에 고정된 스냅샷을
+  돌려줍니다. **가르치기 대화 중에는 대화 경로를 써야** 모르미의 설명과 사전 문장이
+  같게 유지됩니다. 집·카페 대화 모두 같은 대화 경로 하나로 조회합니다.
+- 세션 경로는 `?expected_content_version=N` 을 받으며 AI에 그대로 전달합니다.
+  버전이 다르면 409 `dictionary_version_mismatch` 로 거절됩니다.
+- 읽기 요청이라 연결 실패·AI 5xx 는 BE가 1회 재시도한 뒤 503 을 돌려줍니다.
+  오류 코드는 `ERROR_CODES.md` 의 궁금해사전 절을 참고합니다.
 
 ### G. 리포트
 

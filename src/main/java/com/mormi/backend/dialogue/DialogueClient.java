@@ -116,7 +116,7 @@ public class DialogueClient {
                 return false;
             }
             JsonNode turn = envelope.path("turn");
-            return "completed".equals(turn.path("status").asText())
+            return "completed".equals(turn.path("status").asString())
                     && turn.path("completion").path("teach_reward_eligible").asBoolean(false);
         } catch (ApiException error) {
             log.warn("대화 완료 확인 실패 conversationId={} : {}", conversationId, error.getMessage());
@@ -214,8 +214,8 @@ public class DialogueClient {
         try {
             JsonNode detail = DIAGNOSTIC_JSON.readTree(error.getResponseBodyAsString()).path("detail");
             String value = "code".equals(field)
-                    ? detail.path("code").asText()
-                    : detail.path("issues").path(0).path("location").asText();
+                    ? detail.path("code").asString()
+                    : detail.path("issues").path(0).path("location").asString();
             return safeDiagnosticValue(value);
         } catch (Exception ignored) {
             // 이전 AI 버전의 문자열 detail 또는 JSON이 아닌 오류 본문은 사용하지 않는다.
@@ -235,7 +235,7 @@ public class DialogueClient {
             if (detail.isArray()) {
                 return "detail_array";
             }
-            if (detail.isTextual()) {
+            if (detail.isString()) {
                 return "detail_text";
             }
             return "detail_missing";

@@ -103,7 +103,7 @@ public class DialogueService {
         request.put("practice_summary", buildPracticeSummary(session));
 
         JsonNode envelope = requireEnvelope(dialogueClient.createConversation(request));
-        String conversationId = envelope.path("conversation_id").asText();
+        String conversationId = envelope.path("conversation_id").asString();
 
         session.setPracticeResultId(practiceResultId);
         session.setConversationId(conversationId);
@@ -157,7 +157,7 @@ public class DialogueService {
         }
 
         JsonNode envelope = requireEnvelope(dialogueClient.createConversation(body));
-        String conversationId = envelope.path("conversation_id").asText();
+        String conversationId = envelope.path("conversation_id").asString();
         DialogueConversation dialogue = DialogueConversation.forCafeVisit(
                 conversationId, learnerId, visit.getId(), request.scenarioId(), round, scenarioContext);
         dialogueRepository.save(dialogue);
@@ -241,7 +241,7 @@ public class DialogueService {
     }
 
     private JsonNode requireEnvelope(JsonNode envelope) {
-        if (envelope == null || envelope.path("conversation_id").asText().isBlank()
+        if (envelope == null || envelope.path("conversation_id").asString().isBlank()
                 || envelope.path("turn").isMissingNode()) {
             throw ApiException.serviceUnavailable(
                     "dialogue_invalid_response", "대화 서버 응답 형식이 올바르지 않습니다.");
@@ -253,7 +253,7 @@ public class DialogueService {
             DialogueConversation dialogue, JsonNode rawEnvelope) {
         JsonNode envelope = requireEnvelope(rawEnvelope);
         Map<String, Object> response = new LinkedHashMap<>();
-        response.put("conversation_id", envelope.path("conversation_id").asText());
+        response.put("conversation_id", envelope.path("conversation_id").asString());
         response.put("turn", envelope.path("turn"));
         response.put("scenario_context", dialogue.getScenarioContext());
         response.put("stage_progress", reconcileCafeCompletion(dialogue, envelope));
@@ -279,9 +279,9 @@ public class DialogueService {
 
         JsonNode turn = envelope.path("turn");
         JsonNode completion = turn.path("completion");
-        boolean completedByDialogue = "completed".equals(turn.path("status").asText())
+        boolean completedByDialogue = "completed".equals(turn.path("status").asString())
                 && completion.path("teach_reward_eligible").asBoolean(false)
-                && !"bright_exit".equals(completion.path("outcome").asText());
+                && !"bright_exit".equals(completion.path("outcome").asString());
         if (!completedByDialogue) {
             return stageProgress(expectedStage, visit.stage(), false, "pending");
         }
@@ -425,7 +425,7 @@ public class DialogueService {
     private int factInt(JsonNode facts, String key) {
         JsonNode value = facts.path(key);
         try {
-            return Integer.parseInt(value.asText());
+            return Integer.parseInt(value.asString());
         } catch (NumberFormatException error) {
             throw ApiException.serviceUnavailable(
                     "dialogue_completion_fact_invalid", "검증된 계산 결과를 확인하지 못했습니다.");
@@ -433,7 +433,7 @@ public class DialogueService {
     }
 
     private String factText(JsonNode facts, String key) {
-        String value = facts.path(key).asText();
+        String value = facts.path(key).asString();
         if (value.isBlank()) {
             throw ApiException.serviceUnavailable(
                     "dialogue_completion_fact_invalid", "검증된 메뉴 선택을 확인하지 못했습니다.");
