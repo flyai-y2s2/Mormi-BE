@@ -49,6 +49,9 @@ public class SecurityConfig {
                         }))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/health").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/v1/auth/signup").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/v1/auth/login").permitAll()
+                        // 연구 코드 단독 온보딩. FE 전환 후 아래 두 줄과 함께 제거한다.
                         .requestMatchers(HttpMethod.POST, "/v1/learners").permitAll()
                         .requestMatchers(HttpMethod.POST, "/v1/learners/auth").permitAll()
                         .requestMatchers("/v1/**").authenticated()
