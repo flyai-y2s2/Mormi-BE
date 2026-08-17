@@ -1,6 +1,5 @@
 package com.mormi.backend.auth;
 
-import com.mormi.backend.learner.LearnerRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -24,12 +23,10 @@ public class LearnerTokenFilter extends OncePerRequestFilter {
 
     private static final String BEARER = "Bearer ";
 
-    private final LearnerRepository learnerRepository;
-    private final TokenHasher tokenHasher;
+    private final AuthService authService;
 
-    public LearnerTokenFilter(LearnerRepository learnerRepository, TokenHasher tokenHasher) {
-        this.learnerRepository = learnerRepository;
-        this.tokenHasher = tokenHasher;
+    public LearnerTokenFilter(AuthService authService) {
+        this.authService = authService;
     }
 
     @Override
@@ -42,10 +39,9 @@ public class LearnerTokenFilter extends OncePerRequestFilter {
                 && SecurityContextHolder.getContext().getAuthentication() == null) {
             String token = header.substring(BEARER.length()).trim();
             if (!token.isEmpty()) {
-                learnerRepository.findByTokenHash(tokenHasher.hash(token)).ifPresent(learner -> {
-                    LearnerPrincipal principal =
-                            new LearnerPrincipal(learner.getId(), learner.getResearchCode());
-                    var authentication = new UsernamePasswordAuthenticationToken(principal, null, List.of());
+                authService.authenticate(token).ifPresent(principal -> {
+                    var authentication =
+                            new UsernamePasswordAuthenticationToken(principal, null, List.of());
                     authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
                     SecurityContextHolder.getContext().setAuthentication(authentication);
                 });

@@ -37,7 +37,18 @@ public class Learner {
     @Column(name = "analytics_id", nullable = false, updatable = false)
     private UUID analyticsId;
 
-    @Column(name = "token_hash", nullable = false, length = 64)
+    /** 아이디·비밀번호 도입 전에 만들어진 학습자만 값을 가진다. 신규 가입은 채우지 않는다. */
+    @Column(name = "login_id", length = 30, updatable = false)
+    private String loginId;
+
+    /** BCrypt 해시는 항상 60자다. 평문은 어디에도 남기지 않는다. */
+    @Column(name = "password_hash", length = 60)
+    @Setter
+    private String passwordHash;
+
+    /** @deprecated 토큰은 learner_tokens 가 관리한다. FE 전환 후 컬럼과 함께 제거한다. */
+    @Deprecated
+    @Column(name = "token_hash", length = 64)
     @Setter
     private String tokenHash;
 
@@ -56,10 +67,9 @@ public class Learner {
     @Column(name = "created_at", nullable = false, updatable = false, insertable = false)
     private OffsetDateTime createdAt;
 
-    private Learner(String displayName, String researchCode, String tokenHash) {
+    private Learner(String displayName, String researchCode) {
         this.displayName = displayName;
         this.researchCode = researchCode;
-        this.tokenHash = tokenHash;
         this.analyticsId = UUID.randomUUID();
         // 파일럿 참여자는 온보딩 전에 보호자·기관 동의를 완료한다.
         this.conversationStorageConsent = true;
@@ -67,8 +77,21 @@ public class Learner {
         this.onboardingCompletedAt = OffsetDateTime.now();
     }
 
+    /** 아이디·비밀번호 회원가입. 토큰은 learner_tokens 가 따로 발급한다. */
+    public static Learner register(
+            String displayName, String researchCode, String loginId, String passwordHash) {
+        Learner learner = new Learner(displayName, researchCode);
+        learner.loginId = loginId;
+        learner.passwordHash = passwordHash;
+        return learner;
+    }
+
+    /** @deprecated 연구 코드 단독 온보딩. FE 전환 후 제거한다. */
+    @Deprecated
     public static Learner create(String displayName, String researchCode, String tokenHash) {
-        return new Learner(displayName, researchCode, tokenHash);
+        Learner learner = new Learner(displayName, researchCode);
+        learner.tokenHash = tokenHash;
+        return learner;
     }
 
     /**
