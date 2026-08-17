@@ -24,18 +24,21 @@
 인증: `Authorization: Bearer <learner token>`.
 보상 계산, 정오 판정, 해금 판정은 **전부 서버가 확정**합니다. 프런트는 표시만 합니다.
 
-### A. 학습자
+### A. 인증
 
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| `POST` | `/v1/learners` | — | 온보딩. 이름 + 참여 번호로 생성 또는 복구 |
-| `POST` | `/v1/learners/auth` | — | 참여 번호로 복구, 토큰 재발급 |
-| `GET` | `/v1/learners/{learner_id}` | ✓ | 프로필 조회 (본인만) |
-| `PATCH` | `/v1/learners/me/conversation-consent` | ✓ | 자유 발화 암호화 저장 동의·보존기간 변경 |
+| `POST` | `/v1/auth/signup` | — | 회원가입. 201 + `access_token` |
+| `POST` | `/v1/auth/login` | — | 로그인. 200 + `access_token` |
+| `POST` | `/v1/auth/logout` | ✓ | 현재 기기의 토큰만 폐기. 204 |
+| `POST` | `/v1/auth/logout-all` | ✓ | 해당 학습자의 모든 토큰 폐기. 204 |
 
 ```jsonc
-// POST /v1/learners
-{ "display_name": "민준", "research_code": "MORMI-A03" }
+// POST /v1/auth/signup
+{
+  "display_name": "민준", "research_code": "MORMI-A03",
+  "login_id": "minjun01", "password": "pilot1234"
+}
 // 201
 {
   "id": 1, "display_name": "민준", "research_code": "MORMI-A03",
@@ -43,13 +46,32 @@
   "conversation_storage_consent": true, "retention_policy": "permanent",
   "access_token": "KMw_gyMdWRtm..."
 }
+
+// POST /v1/auth/login
+{ "login_id": "minjun01", "password": "pilot1234" }
+// 200 — 응답 본문은 signup 과 같습니다.
 ```
 
-- **같은 참여 번호로 다시 들어오면 새 학습자를 만들지 않고 기존 진행도를 이어받습니다.** 기기 교체·캐시 삭제 후에도 복구됩니다.
-- `display_name` 은 화면 표시 전용. PostHog 와 AI 프롬프트에는 `analytics_id` 만 씁니다.
-- 토큰은 평문 저장하지 않고 SHA-256 해시만 보관합니다.
+- `login_id` 는 영숫자 4~20자, `password` 는 8자 이상입니다. 비밀번호는 BCrypt 해시만 보관합니다.
+- **아이디가 없을 때와 비밀번호가 틀릴 때의 응답이 같습니다.** 가입 여부를 떠볼 수 없게 하기 위함이며, 프런트는 두 경우를 구분해 안내할 수 없습니다.
+- **로그인해도 기존 토큰이 죽지 않습니다.** 태블릿과 보호자 휴대폰을 동시에 쓸 수 있습니다.
+- 토큰은 평문 저장하지 않고 SHA-256 해시만 `learner_tokens` 에 보관합니다. 만료는 발급 30일이며 인증에 성공할 때마다 뒤로 밀립니다.
+- `logout` 은 그 요청에 쓰인 토큰만, `logout-all` 은 해당 학습자의 모든 토큰을 폐기합니다. 폐기된 토큰은 즉시 401 입니다.
+- `research_code` 는 연구 식별자 전용이며 인증에 관여하지 않습니다.
 
-### B. 진행도 / 해금
+### B. 학습자
+
+| Method | Path | 인증 | 설명 |
+|---|---|---|---|
+| `GET` | `/v1/learners/{learner_id}` | ✓ | 프로필 조회 (본인만) |
+| `PATCH` | `/v1/learners/me/conversation-consent` | ✓ | 자유 발화 암호화 저장 동의·보존기간 변경 |
+| ~~`POST`~~ | ~~`/v1/learners`~~ | — | **deprecated.** 연구 코드 온보딩. `/v1/auth/signup` 을 씁니다 |
+| ~~`POST`~~ | ~~`/v1/learners/auth`~~ | — | **deprecated.** 연구 코드 복구. `/v1/auth/login` 을 씁니다 |
+
+- `display_name` 은 화면 표시 전용. PostHog 와 AI 프롬프트에는 `analytics_id` 만 씁니다.
+- deprecated 두 경로는 FE 전환 기간에만 유지하며, 토큰은 새 경로와 똑같이 `learner_tokens` 에 발급됩니다. FE 전환이 끝나면 별도 PR 로 제거합니다.
+
+### C. 진행도 / 해금
 
 | Method | Path | 설명 |
 |---|---|---|
@@ -73,7 +95,7 @@
 
 `level`·`stars`·`cafe_unlocked` 는 프런트가 계산하던 값을 서버로 옮긴 것입니다.
 
-### C. 학습 세션 (집)
+### D. 학습 세션 (집)
 
 | Method | Path | 설명 |
 |---|---|---|
@@ -135,7 +157,7 @@
 
 `.../teaching`은 정답 처리된 서로 다른 반복 문제 5개가 모두 저장된 뒤에만 성공합니다. 시도에서 `PracticeSummary`를 집계하고, 결정형 `practice_result_id`와 인라인 요약을 AI에 전달한 뒤 최초 전체 `TurnContract`를 반환합니다. 같은 요청을 다시 보내면 기존 대화를 복구합니다.
 
-### D. 카페
+### E. 카페
 
 | Method | Path | 설명 |
 |---|---|---|
@@ -186,7 +208,7 @@
 - 화폐별 최종 구성만 저장하고 −/＋ 버튼 클릭 로그는 저장하지 않습니다.
 - 예산 초과 주문도 **오답으로 기록**합니다(`menu_over_budget`). 다음 단계는 열리지 않습니다.
 
-### E. 인증된 AI 대화 프록시
+### F. 인증된 AI 대화 프록시
 
 | Method | Path | 설명 |
 |---|---|---|
@@ -213,7 +235,7 @@
 }
 ```
 
-### F. 리포트
+### G. 리포트
 
 | Method | Path | 설명 |
 |---|---|---|
@@ -222,7 +244,7 @@
 
 `ReportDashboard.tsx` 의 `Report` 타입과 같은 필드 구성입니다. `sessionTitle`·`misconception`·`learnedLine` 처럼 커리큘럼 본문에 있는 값은 `session_id` 로 프런트가 채웁니다.
 
-### G. 운영
+### H. 운영
 
 | Method | Path | 설명 |
 |---|---|---|
@@ -267,12 +289,14 @@ AI에서 처리가 끝났지만 응답만 유실된 경우도 있으므로, FE�
 
 ---
 
-## 4. DB 스키마 (`V1__init.sql`)
+## 4. DB 스키마 (`V1__init.sql` ~ `V5__learner_accounts.sql`)
 
 ```
 learners             id, display_name, research_code UNIQUE, analytics_id UUID UNIQUE,
-                     token_hash UNIQUE, conversation_storage_consent, retention_policy,
-                     onboarding_completed_at, created_at
+                     login_id UNIQUE, password_hash, conversation_storage_consent,
+                     retention_policy, onboarding_completed_at, created_at
+                     token_hash 은 deprecated. FE 전환 후 제거
+learner_tokens       id, learner_id, token_hash UNIQUE, expires_at, revoked_at, created_at
 learning_sessions    id, public_id UNIQUE, learner_id, curriculum_session_id, variant_seed,
                      scaffold_level, elapsed_seconds, transfer_solved, timed_out,
                      conversation_id, practice_result_id, started_at, completed_at
@@ -293,6 +317,7 @@ dialogue_conversations id, conversation_id UNIQUE, learner_id,
                      scenario_context JSONB, created_at
 ```
 
+- 로그인 세션은 `learner_tokens` 에 행 단위로 쌓입니다. 학습자당 여러 행이 살아 있을 수 있어 다기기 로그인이 되고, 로그아웃은 행을 지우지 않고 `revoked_at` 을 남깁니다.
 - 지갑 잔액은 별도 컬럼 없이 `reward_ledger` 합계로 도출합니다.
 - 아동 데이터 테이블에는 `learner_id` 인덱스가 있습니다.
 - 아이 이름·자유 발화 원문·음성은 저장하지 않습니다. 대화 원문은 Mormi-AI 가 암호화 보관합니다.
