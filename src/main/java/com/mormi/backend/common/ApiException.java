@@ -25,6 +25,11 @@ public class ApiException extends RuntimeException {
         return new ApiException(HttpStatus.CONFLICT, code, message);
     }
 
+    /** 아이디·비밀번호 중 어느 쪽이 틀렸는지 구분해 알려주지 않는다. */
+    public static ApiException unauthorized(String message) {
+        return new ApiException(HttpStatus.UNAUTHORIZED, "unauthorized", message);
+    }
+
     public static ApiException forbidden(String message) {
         return new ApiException(HttpStatus.FORBIDDEN, "forbidden", message);
     }

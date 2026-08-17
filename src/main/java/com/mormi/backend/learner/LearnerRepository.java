@@ -7,7 +7,9 @@ public interface LearnerRepository extends JpaRepository<Learner, Long> {
 
     Optional<Learner> findByResearchCode(String researchCode);
 
-    Optional<Learner> findByTokenHash(String tokenHash);
+    Optional<Learner> findByLoginId(String loginId);
+
+    boolean existsByLoginId(String loginId);
 
     boolean existsByResearchCode(String researchCode);
 }
