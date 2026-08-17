@@ -588,8 +588,8 @@ public class DiagnosticReportService {
                 .map(trend -> new DomainTrend(
                         trend.domainId(),
                         switch (kind) {
-                            case "drill" -> labelFor(trend.domainId()) + " · 반복학습";
-                            case "teach" -> labelFor(trend.domainId()) + " · 설명 독립성";
+                            case "drill" -> labelFor(trend.domainId()) + " · 문제 정답률";
+                            case "teach" -> labelFor(trend.domainId()) + " · 혼자 설명하기";
                             default -> labelFor(trend.domainId());
                         },
                         trend.points(),
@@ -604,8 +604,8 @@ public class DiagnosticReportService {
                 .map(status -> new DomainStatus(
                         status.domainId(),
                         switch (status.label()) {
-                            case "drill" -> labelFor(status.domainId()) + " · 반복학습";
-                            case "teach" -> labelFor(status.domainId()) + " · 설명 독립성";
+                            case "drill" -> labelFor(status.domainId()) + " · 문제 정답률";
+                            case "teach" -> labelFor(status.domainId()) + " · 혼자 설명하기";
                             default -> labelFor(status.domainId());
                         },
                         status.status(),
@@ -639,7 +639,7 @@ public class DiagnosticReportService {
                 .map(status -> new ReportFact(
                         "improved:" + status.label() + ":" + status.domainId(),
                         IMPROVED,
-                        labelFor(status.domainId()) + "의 최근 독립 수행은 이전 기록보다 향상되었습니다."))
+                        improvedStatement(status)))
                 .orElseGet(() -> new ReportFact(
                         "improved:insufficient-history",
                         IMPROVED,
@@ -711,17 +711,28 @@ public class DiagnosticReportService {
                     .mapToDouble(TrendPoint::independentScore)
                     .average()
                     .orElse(0.0);
-            String subject = switch (kind) {
-                case "drill" -> label + " 반복학습";
-                case "teach" -> label + " 설명";
-                default -> label;
+            String statement = switch (kind) {
+                case "drill" -> label + " 문제 정답률은 최근 " + display(recentAverage)
+                        + "%이며 상태는 " + koreanStatus(status.status()) + "입니다.";
+                case "teach" -> label + "를 최근 혼자 설명한 비율은 " + display(recentAverage)
+                        + "%이며 상태는 " + koreanStatus(status.status()) + "입니다.";
+                default -> label + "를 최근 혼자 해결한 비율은 " + display(recentAverage)
+                        + "%이며 상태는 " + koreanStatus(status.status()) + "입니다.";
             };
             facts.add(new ReportFact(
                     kind + ":" + trend.domainId(),
                     category,
-                    subject + "의 최근 독립 수행률은 " + display(recentAverage)
-                            + "%이며 상태는 " + koreanStatus(status.status()) + "입니다."));
+                    statement));
         }
+    }
+
+    private String improvedStatement(DomainStatus status) {
+        String label = labelFor(status.domainId());
+        return switch (status.label()) {
+            case "drill" -> label + " 문제 정답률은 이전 기록보다 좋아졌습니다.";
+            case "teach" -> label + "를 혼자 설명한 결과는 이전 기록보다 좋아졌습니다.";
+            default -> label + "를 혼자 해결한 결과는 이전 기록보다 좋아졌습니다.";
+        };
     }
 
     private Comparator<DomainStatus> statusSalienceOrder() {
@@ -815,10 +826,10 @@ public class DiagnosticReportService {
     }
 
     private NarrativeResult fallbackNarrative(List<ReportFact> facts) {
-        EvidenceText concept = fallbackText(facts, CONCEPT, "분석 가능한 집 반복학습 근거가 아직 없습니다.");
+        EvidenceText concept = fallbackText(facts, CONCEPT, "분석 가능한 문제 풀이 기록이 아직 없습니다.");
         EvidenceText explanation = fallbackText(facts, EXPLANATION, SPEECH_UNAVAILABLE);
         EvidenceText life = fallbackText(
-                facts, FactCategory.LIFE, "분석 가능한 실생활 적용 근거가 아직 없습니다.");
+                facts, FactCategory.LIFE, "분석 가능한 생활 속 문제 해결 기록이 아직 없습니다.");
         EvidenceText improved = fallbackText(
                 facts, IMPROVED, "현재 자료에서는 향상을 확정할 장기 근거가 충분하지 않습니다.");
         EvidenceText observe = fallbackText(facts, OBSERVE, "새 기록이 쌓이는 동안 계속 관찰합니다.");

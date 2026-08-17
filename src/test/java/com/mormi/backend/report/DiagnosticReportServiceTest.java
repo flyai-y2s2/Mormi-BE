@@ -117,7 +117,7 @@ class DiagnosticReportServiceTest {
         assertThat(report.dataRange().totalLifeVisits()).isEqualTo(1);
         assertThat(report.modes()).extracting(ModeReport::mode).containsExactly(HOME, LIFE);
         assertThat(report.modes().getFirst().domains()).extracting(domain -> domain.label())
-                .contains("돈 세기 · 반복학습");
+                .contains("돈 세기 · 문제 정답률");
         assertThat(report.modes().getLast().domains()).extracting(domain -> domain.label())
                 .contains("메뉴 값 계산하기");
         assertThat(report.evidenceCounts().drillAttempts()).isEqualTo(3);
@@ -141,7 +141,7 @@ class DiagnosticReportServiceTest {
         assertThat(report.evidenceCounts().homeSessions()).isEqualTo(1);
         assertThat(report.evidenceCounts().drillAttempts()).isZero();
         assertThat(report.modes().getFirst().domains())
-                .noneMatch(domain -> domain.label().contains("반복학습"));
+                .noneMatch(domain -> domain.label().contains("문제 정답률"));
     }
 
     @Test
@@ -169,7 +169,7 @@ class DiagnosticReportServiceTest {
         DiagnosticReport report = service.current(LEARNER_ID);
 
         assertThat(report.currentSummary().conceptPerformance().text())
-                .isEqualTo("돈 세기 반복학습의 최근 독립 수행률은 60%이며 상태는 발달 중입니다.");
+                .isEqualTo("돈 세기 문제 정답률은 최근 60%이며 상태는 발달 중입니다.");
         assertThat(report.currentSummary().conceptPerformance().evidenceRefs())
                 .containsExactly("drill:money-count");
         assertThat(report.observePoint().text())
@@ -194,7 +194,7 @@ class DiagnosticReportServiceTest {
         DiagnosticReport report = service.current(LEARNER_ID);
 
         assertThat(report.improvedPoint().text())
-                .isEqualTo("돈 세기의 최근 독립 수행은 이전 기록보다 향상되었습니다.");
+                .isEqualTo("돈 세기 문제 정답률은 이전 기록보다 좋아졌습니다.");
         assertThat(report.improvedPoint().evidenceRefs())
                 .containsExactly("improved:drill:money-count");
     }
@@ -257,7 +257,7 @@ class DiagnosticReportServiceTest {
 
         assertThat(report.evidenceCounts().teachConversations()).isEqualTo(1);
         assertThat(report.modes().getFirst().domains()).extracting(domain -> domain.label())
-                .contains("돈 세기 · 설명 독립성");
+                .contains("돈 세기 · 혼자 설명하기");
     }
 
     @Test
@@ -282,7 +282,7 @@ class DiagnosticReportServiceTest {
 
         assertThat(report.evidenceCounts().teachConversations()).isZero();
         assertThat(report.modes().getFirst().domains())
-                .noneMatch(domain -> domain.label().contains("설명 독립성"));
+                .noneMatch(domain -> domain.label().contains("혼자 설명하기"));
     }
 
     @Test
@@ -303,7 +303,7 @@ class DiagnosticReportServiceTest {
 
         assertThat(report.narrativeFallback()).isFalse();
         assertThat(report.currentSummary().conceptPerformance().text())
-                .isEqualTo("돈 세기 반복학습의 최근 독립 수행률은 100%이며 상태는 관찰 중입니다.");
+                .isEqualTo("돈 세기 문제 정답률은 최근 100%이며 상태는 관찰 중입니다.");
     }
 
     @Test
