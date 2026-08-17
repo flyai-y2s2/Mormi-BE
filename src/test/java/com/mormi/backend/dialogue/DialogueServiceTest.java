@@ -416,7 +416,7 @@ class DialogueServiceTest {
         JsonNode conversationId = mock(JsonNode.class);
         JsonNode turn = mock(JsonNode.class);
         when(envelope.path("conversation_id")).thenReturn(conversationId);
-        when(conversationId.asText()).thenReturn("conversation-safe-1");
+        when(conversationId.asString()).thenReturn("conversation-safe-1");
         when(envelope.path("turn")).thenReturn(turn);
         when(turn.isMissingNode()).thenReturn(false);
 
