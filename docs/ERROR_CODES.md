@@ -93,6 +93,15 @@
 | `dialogue_scenario_invalid` | 400 | 지원하지 않는 카페 시나리오 id | 화면 버그. 시나리오 id 확인 |
 | `invalid_request` | 400 | 그 밖의 잘못된 요청 | 개발 로그만 남기고 일반 오류 표시 |
 
+## 학습 세션 (이슈 #6 추가분)
+
+| code | status | 언제 | 프런트가 할 일 |
+|---|---|---|---|
+| `application_scope_not_allowed` | 400 | `application_scope` 를 transfer 가 아닌 시도에 보냄 | 재시도 금지. 요청 구성 버그 |
+
+`application_scope` 값이 목록(`same_form_new_number`, `new_representation`, `real_life_context`) 밖이면
+`validation_failed` (422) 로 떨어진다.
+
 ## AI 대화 연동 (`dialogue_*`)
 
 BE가 Mormi-AI를 부르다 실패한 경우다. **대부분 503이고 재시도 가능**하다.

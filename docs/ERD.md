@@ -1,6 +1,6 @@
 # 데이터 모델과 학습자 격리
 
-`V1__init.sql` ~ `V5__learner_accounts.sql` 기준. 스키마를 바꾸면 이 문서도 같이 고친다.
+`V1__init.sql` ~ `V10__report_snapshots.sql` 기준. 스키마를 바꾸면 이 문서도 같이 고친다.
 
 ## ERD
 
@@ -110,6 +110,99 @@ erDiagram
         timestamptz created_at
     }
 ```
+
+## 관찰·집계·리포트 (V6~V10, 이슈 #6)
+
+```mermaid
+erDiagram
+    observation_events ||--o{ learning_observations : "id → observation_event_id"
+    learners ||--o{ learning_observations : "id → learner_id"
+    learners ||--o{ learning_task_outcomes : "id → learner_id"
+    learning_sessions ||--o{ learning_task_outcomes : "id → learning_session_id"
+    organizations ||--o{ educators : "id → organization_id"
+    organizations ||--o{ cohorts : "id → organization_id"
+    cohorts ||--o{ learner_enrollments : "id → cohort_id"
+    learners ||--o{ learner_enrollments : "id → learner_id"
+    learners ||--o{ consent_records : "id → learner_id"
+    learners ||--o{ report_snapshots : "id → learner_id (nullable)"
+    cohorts ||--o{ report_snapshots : "id → cohort_id (nullable)"
+
+    observation_events {
+        bigserial id PK
+        varchar   event_id UK "AI가 부여한 멱등 키"
+        varchar   schema_version
+        varchar   event_type
+        jsonb     payload "받은 그대로. 실패 이벤트 재처리 근거"
+        varchar   status "received | processed | failed"
+        text      error_message
+        timestamptz received_at
+        timestamptz processed_at
+    }
+
+    learning_observations {
+        bigserial id PK
+        bigint    observation_event_id FK
+        varchar   ai_observation_id UK "AI 원본 추적. 재전송돼도 한 행"
+        bigint    learner_id FK "대화 기록에서 역참조. 이벤트 값을 믿지 않는다"
+        bigint    learning_session_id FK "null 가능"
+        bigint    cafe_visit_id FK "null 가능"
+        varchar   expression_before "발화사다리 L4~L0"
+        varchar   expression_after
+        varchar   hint_before "힌트사다리 H0~H3"
+        varchar   hint_after
+        varchar   response_category
+        varchar   concept_result "not_assessed 는 오답으로 합산 금지"
+        varchar   bottleneck_candidate "후보일 뿐. 확정 오개념 아님"
+        boolean   help_used "NULL = 수집 안 됨. false 와 다름"
+        boolean   system_error "아동 수행 실패와 분리 집계"
+        timestamptz observed_at
+    }
+
+    learning_task_outcomes {
+        bigserial id PK
+        bigint    learner_id FK
+        bigint    learning_session_id FK
+        varchar   task_key "attempts.item_id 와 같은 값. (세션, task_key) UNIQUE"
+        boolean   first_try_success "attempts 파생. 근거 없으면 NULL"
+        boolean   retry_success
+        boolean   success_after_help "관찰 없으면 NULL"
+        varchar   expression_lowest "가장 많이 내려간 발화 단계"
+        varchar   hint_max "가장 높이 올라간 힌트 단계"
+        varchar   completion_outcome "system_failure 는 아동 실패와 분리"
+        integer   bottleneck_evidence_count "1 이면 단일 관찰"
+        bigint_arr source_attempt_ids "근거 추적"
+        bigint_arr source_observation_ids
+        varchar   aggregation_rule_version
+    }
+
+    consent_records {
+        bigserial id PK
+        bigint    learner_id FK
+        varchar   scope "conversation_storage 등"
+        varchar   policy_version "동의 문서 버전. 백필은 pilot-baseline"
+        boolean   granted
+        timestamptz collected_at
+        varchar   collected_by
+        timestamptz withdrawn_at "철회는 행 삭제가 아니라 이 기록"
+    }
+
+    report_snapshots {
+        bigserial id PK
+        bigint    learner_id FK "cohort_id 와 XOR"
+        bigint    cohort_id FK
+        timestamptz period_start
+        timestamptz period_end
+        jsonb     body "LLM 없이 성립하는 구조화 리포트"
+        bigint_arr source_observation_ids "생성 시점 근거 고정"
+        varchar   aggregation_rule_version
+        varchar   llm_model "NULL = LLM 미사용"
+        varchar   approval_status "draft | edited | approved"
+    }
+```
+
+- `learning_task_outcomes` 는 파생 테이블이다. 원본은 attempts 와 learning_observations 이고, 관찰이 늦게 도착하면 같은 규칙으로 다시 계산해 덮어쓴다.
+- `report_snapshots` 는 반대로 불변이다. 생성 시점의 근거 ID 를 고정해 교사가 승인한 리포트의 근거가 나중에 바뀌지 않게 한다.
+- 집계·리포트의 불리언 NULL 은 전부 '수집 안 됨'이다. false(근거를 보고 아니라고 판단)와 다르며, 화면·분석에서 0/false 로 합치면 안 된다.
 
 `attempts`와 `cafe_visit_stages`에는 `learner_id`가 없다. 각각 부모(`learning_sessions`, `cafe_visits`)를 통해서만 도달하고, 그 부모가 학습자에 묶여 있다.
 

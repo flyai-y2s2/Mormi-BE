@@ -1,7 +1,9 @@
 package com.mormi.backend.outcome;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.mormi.backend.dialogue.DialogueConversation;
@@ -138,6 +140,27 @@ class TaskOutcomeIntegrationTest {
         LearningTaskOutcome outcome = 집계(학습);
         assertThat(outcome.getBottleneckCandidate()).isEqualTo("carry_over");
         assertThat(outcome.getBottleneckEvidenceCount()).isEqualTo(2);
+    }
+
+    @Test
+    void 리포트가_단일_관찰과_반복_관찰_병목을_구분한다() throws Exception {
+        학습 학습 = 학습을_시작한다("MORMI-OUT-06");
+        시도(학습, 1, false);
+        완료(학습);
+
+        관찰(학습, "obs-rep1", Map.of("bottleneck_candidate", "carry_over"));
+        mockMvc.perform(get("/v1/reports/summary")
+                        .header("Authorization", "Bearer " + 학습.token()))
+                .andExpect(jsonPath("$.bottleneck_candidates[0].candidate").value("carry_over"))
+                .andExpect(jsonPath("$.bottleneck_candidates[0].evidence_count").value(1))
+                // 한 번 관찰된 후보는 확정 오개념으로 표시하면 안 된다.
+                .andExpect(jsonPath("$.bottleneck_candidates[0].repeated").value(false));
+
+        관찰(학습, "obs-rep2", Map.of("bottleneck_candidate", "carry_over"));
+        mockMvc.perform(get("/v1/reports/summary")
+                        .header("Authorization", "Bearer " + 학습.token()))
+                .andExpect(jsonPath("$.bottleneck_candidates[0].evidence_count").value(2))
+                .andExpect(jsonPath("$.bottleneck_candidates[0].repeated").value(true));
     }
 
     private record 학습(String token, long learnerId, String publicId, long sessionId, String conversationId) {
