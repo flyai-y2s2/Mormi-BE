@@ -3,6 +3,7 @@ package com.mormi.backend.session;
 import com.mormi.backend.common.ApiException;
 import com.mormi.backend.curriculum.CurriculumCatalog;
 import com.mormi.backend.dialogue.DialogueClient;
+import com.mormi.backend.outcome.TaskOutcomeService;
 import com.mormi.backend.progress.ThemeProgressService;
 import com.mormi.backend.reward.RewardService;
 import com.mormi.backend.reward.RewardSource;
@@ -49,18 +50,21 @@ public class LearningSessionService {
     private final RewardService rewardService;
     private final ThemeProgressService themeProgressService;
     private final DialogueClient dialogueClient;
+    private final TaskOutcomeService taskOutcomeService;
 
     public LearningSessionService(
             LearningSessionRepository sessionRepository,
             AttemptRepository attemptRepository,
             RewardService rewardService,
             ThemeProgressService themeProgressService,
-            DialogueClient dialogueClient) {
+            DialogueClient dialogueClient,
+            TaskOutcomeService taskOutcomeService) {
         this.sessionRepository = sessionRepository;
         this.attemptRepository = attemptRepository;
         this.rewardService = rewardService;
         this.themeProgressService = themeProgressService;
         this.dialogueClient = dialogueClient;
+        this.taskOutcomeService = taskOutcomeService;
     }
 
     @Transactional
@@ -188,6 +192,10 @@ public class LearningSessionService {
                         "teach-reward:%s".formatted(session.getPublicId()));
             }
         }
+
+        // 관찰이 하나도 없는 문제도 집계 행을 갖도록 완료 시점에 한 번 계산한다.
+        // 뒤늦게 관찰이 도착하면 수집 쪽에서 같은 규칙으로 다시 계산한다.
+        taskOutcomeService.recompute(session.getId());
 
         List<String> completed = sessionRepository.findCompletedCurriculumSessionIds(learnerId);
         boolean cafeUnlocked = themeProgressService.syncCafeUnlock(learnerId, Set.copyOf(completed));
