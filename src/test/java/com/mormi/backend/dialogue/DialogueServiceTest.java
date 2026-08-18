@@ -407,6 +407,8 @@ class DialogueServiceTest {
                     index,
                     true,
                     1000 + index,
+                    null,
+                    null,
                     Map.of("selected_choice_id", "choice-" + index));
             ReflectionTestUtils.setField(attempt, "id", (long) index + 1);
             attempts.add(attempt);

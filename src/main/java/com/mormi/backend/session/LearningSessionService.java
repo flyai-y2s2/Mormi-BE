@@ -28,6 +28,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class LearningSessionService {
 
     private static final String ACTIVITY_DRILL = "drill";
+    private static final String ACTIVITY_TRANSFER = "transfer";
     private static final Set<String> SAFE_ANSWER_META_KEYS = Set.of(
             "selected_choice_id",
             "selected_choice_ids",
@@ -103,6 +104,12 @@ public class LearningSessionService {
             return buildAttemptResponse(session, attempt, true, attempt.getRewardGranted());
         }
 
+        // 적용 맥락은 적용(transfer) 시도에만 의미가 있다. drill 에 섞이면 집계가 오염된다.
+        if (request.applicationScope() != null && !ACTIVITY_TRANSFER.equals(request.activity())) {
+            throw ApiException.badRequest(
+                    "application_scope_not_allowed", "application_scope 는 transfer 시도에만 보낼 수 있습니다.");
+        }
+
         boolean correct = Boolean.TRUE.equals(request.isCorrect());
         int wrongBefore = attemptRepository.countWrongForQuestion(
                 session.getId(), request.activity(), request.questionIndex());
@@ -119,6 +126,8 @@ public class LearningSessionService {
                 request.questionIndex(),
                 correct,
                 request.elapsedMs(),
+                request.applicationScope(),
+                request.supportLevel(),
                 answerMeta));
 
         int granted = 0;
@@ -138,6 +147,17 @@ public class LearningSessionService {
             }
         }
         return buildAttemptResponse(session, attempt, false, granted);
+    }
+
+    /**
+     * 적용 시도 기록이 있으면 서버 기록으로 판정하고, 없으면 FE 값을 쓴다.
+     * 적용 시도를 아직 안 보내는 예전 FE 가 깨지지 않으면서도 기록이 생기는 즉시 서버가 기준이 된다.
+     */
+    private boolean deriveTransferSolved(Long sessionId, boolean reported) {
+        if (attemptRepository.countByLearningSessionIdAndActivity(sessionId, ACTIVITY_TRANSFER) == 0) {
+            return reported;
+        }
+        return attemptRepository.countCorrect(sessionId, ACTIVITY_TRANSFER) > 0;
     }
 
     private RecordAttemptResponse buildAttemptResponse(
@@ -168,7 +188,7 @@ public class LearningSessionService {
 
         boolean teachEligible = false;
         if (!session.isCompleted()) {
-            session.setTransferSolved(request.transferSolved());
+            session.setTransferSolved(deriveTransferSolved(session.getId(), request.transferSolved()));
             session.setScaffoldLevel(request.scaffoldLevel());
             session.setElapsedSeconds(
                     request.elapsedSeconds() != null ? request.elapsedSeconds() : session.serverElapsedSeconds());
