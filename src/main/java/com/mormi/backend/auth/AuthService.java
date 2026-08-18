@@ -4,6 +4,7 @@ import com.mormi.backend.auth.AuthDtos.LoginRequest;
 import com.mormi.backend.auth.AuthDtos.SignupRequest;
 import com.mormi.backend.common.ApiException;
 import com.mormi.backend.curriculum.CurriculumCatalog;
+import com.mormi.backend.learner.ConsentRecordService;
 import com.mormi.backend.learner.Learner;
 import com.mormi.backend.learner.LearnerDtos.LearnerResponse;
 import com.mormi.backend.learner.LearnerRepository;
@@ -26,6 +27,7 @@ public class AuthService {
     private static final String LOGIN_FAILED = "아이디 또는 비밀번호가 올바르지 않습니다.";
 
     private final LearnerRepository learnerRepository;
+    private final ConsentRecordService consentRecordService;
     private final LearnerTokenRepository learnerTokenRepository;
     private final TokenHasher tokenHasher;
     private final PasswordEncoder passwordEncoder;
@@ -36,12 +38,14 @@ public class AuthService {
             LearnerTokenRepository learnerTokenRepository,
             TokenHasher tokenHasher,
             PasswordEncoder passwordEncoder,
-            RewardService rewardService) {
+            RewardService rewardService,
+            ConsentRecordService consentRecordService) {
         this.learnerRepository = learnerRepository;
         this.learnerTokenRepository = learnerTokenRepository;
         this.tokenHasher = tokenHasher;
         this.passwordEncoder = passwordEncoder;
         this.rewardService = rewardService;
+        this.consentRecordService = consentRecordService;
     }
 
     @Transactional
@@ -64,6 +68,7 @@ public class AuthService {
         rewardService.grant(
                 learner.getId(), null, RewardSource.SEED, CurriculumCatalog.WALLET_SEED,
                 "seed:" + learner.getId());
+        consentRecordService.recordBaseline(learner.getId(), learner.isConversationStorageConsent());
 
         return LearnerResponse.of(learner, issueToken(learner.getId()));
     }
