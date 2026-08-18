@@ -41,6 +41,9 @@ public final class SessionDtos {
             @NotNull @Min(0) @Max(50) Integer questionIndex,
             @NotNull Boolean isCorrect,
             @Min(0) @Max(600000) Integer elapsedMs,
+            @Pattern(regexp = "same_form_new_number|new_representation|real_life_context")
+            String applicationScope,
+            @Min(0) @Max(3) Integer supportLevel,
             Map<String, Object> answerMeta) {
     }
 

@@ -230,6 +230,9 @@ DB_PASSWORD=<비밀번호>
 MORMI_DIALOGUE_BASE_URL=http://<Mormi-AI-내부주소>:8000
 MORMI_DIALOGUE_SERVICE_KEY=<AI의 MORMI_SERVICE_API_KEY와 같은 값>
 MORMI_DIALOGUE_READ_TIMEOUT_SECONDS=45
+# AI -> BE 관찰 이벤트 수신 키 (이슈 #6). AI 전송기 설정과 같은 값이어야 한다.
+# 생성: openssl rand -hex 32
+MORMI_OBSERVATION_INGEST_KEY=<AI 전송기와 같은 값>
 EOF
 ```
 
@@ -243,6 +246,10 @@ sudo chmod 640 /etc/mormi-backend/mormi.env
 이 파일은 GitHub Secrets에 넣지 않는다. EC2 위에서만 존재.
 
 `MORMI_DIALOGUE_BASE_URL`과 `MORMI_DIALOGUE_SERVICE_KEY`가 없으면 일반 학습 API는 실행되지만 가르치기·카페 AI 대화를 시작할 수 없습니다. 서비스 키를 FE 또는 Vercel의 `NEXT_PUBLIC_*` 환경변수에 넣지 마세요.
+
+`MORMI_OBSERVATION_INGEST_KEY`가 없으면 앱은 정상 동작하지만 `/internal/**`이 전부 401이 되어
+AI 관찰 이벤트를 받을 수 없습니다. 일부러 이렇게 만들었습니다 — 설정 누락이 인증 해제가 되면 안 되므로,
+빠뜨리면 잠기는 쪽이 기본값입니다. 키 값 변경 후에는 `docker restart mormi-backend`.
 
 ### 3-4. 8080 포트 방화벽
 

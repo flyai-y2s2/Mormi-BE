@@ -259,6 +259,48 @@
 
 `ReportDashboard.tsx` 의 `Report` 타입과 같은 필드 구성입니다. `sessionTitle`·`misconception`·`learnedLine` 처럼 커리큘럼 본문에 있는 값은 `session_id` 로 프런트가 채웁니다.
 
+**오개념 표시 규칙 (이슈 #6).** 응답의 `synchronized` 는 오답이 하나라도 있으면 true 가 되는
+하위 호환 값이므로 오개념 확정 표시에 쓰지 않습니다. 대신 `bottleneck_candidates` 를 씁니다.
+
+```jsonc
+{ "...기존 필드...": "...",
+  "bottleneck_candidates": [
+    { "candidate": "carry_over", "evidence_count": 2, "repeated": true } ] }
+```
+
+- `repeated: false`(관찰 1회)는 "이런 모습이 한 번 보였어요" 수준으로만 표현합니다.
+- 값은 AI 관찰 집계(`learning_task_outcomes`)에서 나오며, 관찰이 없으면 빈 배열입니다.
+- AI 계약상 `concept_result = not_assessed`(도움 요청·입력 오류·장난)는 오답으로 합산하지 않습니다.
+
+### G-2. AI 관찰 이벤트 수신 (내부 전용, 이슈 #6)
+
+| Method | Path | 설명 |
+|---|---|---|
+| `POST` | `/internal/v1/observations/events` | AI 관찰 이벤트 멱등 수집 |
+
+- 인증: `X-Mormi-Service-Key` 헤더 (`MORMI_OBSERVATION_INGEST_KEY`). 학습자 토큰·CORS 대상이 아닙니다.
+- 계약 원본: `Mormi-AI/docs/OBSERVATION_EVENTS.md`. `schema_version` 은 숫자 `1` 입니다.
+- 발화사다리(`expression_before/after`, L4~L0)와 힌트사다리(`hint_before/after`, H0~H3)는
+  별개 상태값으로 받습니다. FE 의 0~3 사다리와 변환하지 않습니다.
+- 소유권은 이벤트의 `learner_id` 가 아니라 `conversation_id` 로 BE 대화 기록에서 역참조합니다.
+
+```jsonc
+// 요청 (전송기가 outbox payload 를 observation 으로 감싼다)
+{ "event_id": "evt_...", "schema_version": 1, "event_type": "dialogue_observation",
+  "observation": { "observation_id": "observation_...", "conversation_id": "conversation_...",
+                   "task_id": "money-count:1", "expression_before": "L4", "expression_after": "L4",
+                   "hint_before": "H0", "hint_after": "H0", "concept_result": "correct_partial", "..." : "..." } }
+// 200 — 재전송이어도 오류가 아니다
+{ "event_id": "evt_...", "status": "processed", "duplicate": false, "observation_id": 1 }
+```
+
+| 응답 | 의미 | AI 전송기가 할 일 |
+|---|---|---|
+| `200` | 반영 완료 (`duplicate: true` 포함) | 없음 |
+| `409 unknown_conversation` | 대화 커밋 전에 이벤트가 먼저 도착 | **잠시 후 재전송** |
+| `422 unsupported_schema_version` 등 | 내용 자체가 문제 | 재전송 금지. 이벤트는 `failed` 로 보존됨 |
+| `401` | 서비스 키 없음/불일치 | 설정 확인. 이벤트는 저장되지 않음 |
+
 ### H. 운영
 
 | Method | Path | 설명 |
@@ -374,7 +416,8 @@ DB_USERNAME=mormi DB_PASSWORD=mormi ./gradlew bootRun
 |---|---|---|
 | 1 | RDS 안에서 Spring / Mormi-AI 데이터 분리 | **미정.** Mormi-AI 는 `create_schema()` 로 직접 테이블을 만들고 Spring 은 Flyway + `ddl-auto: validate` 라 같은 스키마에 두면 충돌 위험. 스키마 또는 DB 분리 권장 |
 | 2 | 지갑 vs 카페 10,000원 | 분리 유지. 카페는 고정 실습 소지금이고 지갑에서 차감하지 않음 |
-| 3 | `ladder` 0~3 ↔ `L4~L0` 매핑 | 리포트는 0~3 그대로 저장. 대화 연동 시 확정 필요 |
+| 3 | `ladder` 0~3 ↔ `L4~L0` 매핑 | **여전히 미정.** BE 는 변환하지 않기로 함 — attempts.support_level 은 FE 0~3, 관찰은 발화 L4~L0·힌트 H0~H3 을 각자 원본 척도로 저장. 매핑 확정 시 조회 계층에서만 잇는다 |
 | 4 | 별노트 저장 주체 | Mormi-AI 보유. Spring 은 TurnContract를 전달 |
+| 4-1 | 별노트 → BE 이벤트 계약 | **미정.** `learning_task_outcomes.star_note_*` 컬럼은 준비돼 있으나 AI 가 별노트를 어떤 이벤트로 보낼지 계약이 없어 당분간 NULL |
 | 5 | `conversation_storage_consent` 관리 주체 | Spring `learners` 및 동의 변경 API. AI가 실제 암호화·삭제 수행 |
 | 6 | 참여 번호 발급 방식 | 연구자가 사전 발급해 전달하는 것으로 가정 |
