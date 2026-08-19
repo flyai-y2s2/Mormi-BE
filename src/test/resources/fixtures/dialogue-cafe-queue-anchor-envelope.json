@@ -1,0 +1,56 @@
+{
+  "conversation_id": "conversation_cafequeueanchor01",
+  "turn": {
+    "turn_id": "turn_cafequeueanchor01",
+    "scene": "cafe",
+    "scenario_id": "cafe_queue",
+    "task_id": "cafe_queue",
+    "stage_id": "queue",
+    "task_index": 0,
+    "mormi": {
+      "text": "사람을 한 명씩 눌러 두 줄을 같이 세어 볼까?",
+      "mood": "curious",
+      "max_lines": 2
+    },
+    "input": {
+      "kind": "count",
+      "placeholder": null,
+      "choices": [],
+      "target_slots": ["left_count", "right_count"],
+      "submit_label": null,
+      "config": {
+        "left_person_ids": ["l1", "l2", "l3"],
+        "right_person_ids": ["r1", "r2", "r3", "r4", "r5"]
+      }
+    },
+    "visual": {
+      "type": "cafe_queues",
+      "data": {
+        "left_people": 3,
+        "right_people": 5,
+        "show_counts": false
+      }
+    },
+    "help_card": null,
+    "note_update": null,
+    "status": "active",
+    "state_version": 1,
+    "completion": null,
+    "pedagogy": null,
+    "task_anchor": {
+      "anchor_id": "cafe_queue:guided_count",
+      "title": "지금 모르미에게 알려줄 것",
+      "prompt": "사람을 한 명씩 눌러 두 줄을 같이 세어 볼까?",
+      "completed_items": [
+        {
+          "slot_id": "left_count",
+          "label": "왼쪽 줄 사람 수",
+          "value": 3,
+          "display_text": "왼쪽 줄에는 3명이 있어."
+        }
+      ],
+      "target_slots": ["right_count"]
+    },
+    "dictionary_ref": null
+  }
+}
