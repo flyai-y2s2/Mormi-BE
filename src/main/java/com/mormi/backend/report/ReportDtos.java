@@ -1,6 +1,7 @@
 package com.mormi.backend.report;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import java.util.List;
 
 /**
  * ReportDashboard.tsx 의 Report 타입과 같은 필드 구성이다.
@@ -21,7 +22,10 @@ public final class ReportDtos {
             int masteryTarget,
             int repetitions,
             int masterySeconds,
-            /** 오개념에 한 번이라도 동조했는지. 오답이 있었으면 true. */
+            /**
+             * 하위 호환용. 오답이 하나라도 있으면 true 가 되므로 오개념 확정 표시로 쓰면 안 된다.
+             * 오개념 후보 여부는 bottleneckCandidates 의 repeated 로 판단한다.
+             */
             @JsonProperty("synchronized") boolean misconceptionSynchronized,
             boolean transfer,
             int ladder,
@@ -33,6 +37,17 @@ public final class ReportDtos {
             int teachCoins,
             int walletBalance,
             int wrongAttemptCount,
-            int firstTryCorrectCount) {
+            int firstTryCorrectCount,
+            List<BottleneckCandidateView> bottleneckCandidates) {
+    }
+
+    /**
+     * 관찰에서 나온 병목 후보. repeated 가 false 면 한 번 관찰된 것이므로
+     * 화면에서 확정 오개념처럼 표시하지 않는다.
+     */
+    public record BottleneckCandidateView(
+            String candidate,
+            int evidenceCount,
+            boolean repeated) {
     }
 }

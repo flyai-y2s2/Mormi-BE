@@ -15,14 +15,17 @@ import org.springframework.transaction.annotation.Transactional;
 public class LearnerService {
 
     private final LearnerRepository learnerRepository;
+    private final ConsentRecordService consentRecordService;
     private final AuthService authService;
     private final RewardService rewardService;
 
     public LearnerService(
-            LearnerRepository learnerRepository, AuthService authService, RewardService rewardService) {
+            LearnerRepository learnerRepository, AuthService authService, RewardService rewardService,
+            ConsentRecordService consentRecordService) {
         this.learnerRepository = learnerRepository;
         this.authService = authService;
         this.rewardService = rewardService;
+        this.consentRecordService = consentRecordService;
     }
 
     /**
@@ -43,6 +46,7 @@ public class LearnerService {
             // 지갑 시작 잔액을 원장 첫 줄로 남긴다. 학습자당 한 번만 적립된다.
             rewardService.grant(
                     learner.getId(), null, RewardSource.SEED, CurriculumCatalog.WALLET_SEED, "seed:" + learner.getId());
+            consentRecordService.recordBaseline(learner.getId(), learner.isConversationStorageConsent());
         } else {
             learner.setDisplayName(request.displayName().trim());
         }
@@ -73,6 +77,8 @@ public class LearnerService {
             Long learnerId, ConversationConsentRequest request) {
         Learner learner = require(learnerId);
         learner.applyConsent(request.conversationStorageConsent(), request.retentionPolicy());
+        // 상태 캐시만 바꾸면 이전 동의가 사라진다. 장부에 철회·재동의를 함께 남긴다.
+        consentRecordService.recordChange(learnerId, learner.isConversationStorageConsent());
         return LearnerResponse.of(learner, null);
     }
 

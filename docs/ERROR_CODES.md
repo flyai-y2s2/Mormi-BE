@@ -32,9 +32,19 @@
 
 | code | status | 언제 | 프런트가 할 일 |
 |---|---|---|---|
-| `unauthorized` | 401 | 토큰이 없거나 만료·무효 | 저장된 토큰 지우고 온보딩 화면으로 |
+| `unauthorized` | 401 | 토큰이 없거나 만료·폐기·무효 | 저장된 토큰 지우고 로그인 화면으로 |
+| `unauthorized` | 401 | 로그인 실패 (`POST /v1/auth/login`) | "아이디 또는 비밀번호를 확인해 주세요" 입력 화면 유지 |
+| `login_id_taken` | 409 | 이미 쓰는 아이디로 가입 (`POST /v1/auth/signup`) | 아이디 입력란에 중복 안내, 다른 아이디 유도 |
+| `research_code_taken` | 409 | 이미 등록된 연구 코드로 가입 | 연구 담당자에게 문의 안내 |
 | `forbidden` | 403 | 다른 학습자의 세션·방문·대화·데이터 접근 | 재시도 금지. 진도 다시 불러오기 |
 | `forbidden` | 403 | 카페가 아직 해금되지 않음 | 재시도 금지. 집 학습으로 안내 |
+
+> ⚠️ **로그인 실패 401 은 아이디가 없는 것과 비밀번호가 틀린 것을 구분해 주지 않는다.**
+> 가입 여부를 떠볼 수 없게 하려고 서버가 일부러 같은 응답을 준다. 프런트도 두 경우를
+> 나눠 안내할 수 없으므로 한 문구로 처리한다.
+>
+> ⚠️ **로그아웃·전체 로그아웃 뒤의 401 은 만료와 구분되지 않는다.** 둘 다 `unauthorized`
+> 이므로 프런트는 동일하게 로그인 화면으로 보내면 된다.
 
 > ⚠️ 위 두 `forbidden` 은 **코드가 같은데 화면 처리가 정반대다.** 하나는 앱 상태가
 > 꼬인 것이고 하나는 정상적인 진행 안내다. 카페 미해금 쪽을 `cafe_locked` 로
@@ -44,7 +54,7 @@
 
 | code | status | 언제 | 프런트가 할 일 |
 |---|---|---|---|
-| `not_found` | 404 | 등록되지 않은 연구 코드 (`POST /v1/learners/auth`) | "코드를 다시 확인해 주세요" 입력 화면 유지 |
+| `not_found` | 404 | 등록되지 않은 연구 코드 (deprecated `POST /v1/learners/auth`) | "코드를 다시 확인해 주세요" 입력 화면 유지 |
 | `not_found` | 404 | 학습자·학습 세션·카페 방문·대화가 없음 | 진도 다시 불러오기 |
 | `not_found` | 404 | 완료된 세션이 없어 리포트가 비어 있음 (`/v1/reports/summary`) | 오류가 아닌 빈 상태 화면 |
 
@@ -66,6 +76,9 @@
 | `drill_not_completed` | 409 | 반복 문제 5개를 마치기 전에 가르치기 시작 | 반복 문제 화면 유지 |
 | `dialogue_stage_locked` | 409 | 아직 도달하지 않은 카페 단계의 대화 시작 요청 | 방문 조회 후 열린 단계로 이동 |
 
+회원가입의 `login_id_taken`, `research_code_taken` 도 409 지만 서버 상태 동기화가 아니라
+입력을 고쳐야 하는 경우다. 위 "인증·권한" 표를 본다.
+
 ## 입력값 (400 / 422)
 
 | code | status | 언제 | 프런트가 할 일 |
@@ -75,10 +88,20 @@
 | `budget` | 400 | 허용 목록(8000/9000/10000)에 없는 예산값 | 화면 버그. 문제 다시 뽑기 |
 | `denomination` | 400 | 존재하지 않는 화폐 액면가 | 화면 버그. 화폐 목록 확인 |
 | `count_range` | 400 | 화폐 개수가 0~20 범위를 벗어남 | 입력 UI에서 미리 제한 |
+| `invalid_cursor` | 422 | 별노트 목록에 모르는 `cursor` 를 보냄 | 커서 버리고 첫 페이지부터 다시 조회 |
 | `queue_context_required` | 400 | 줄 서기 대화 시작에 `queue_context` 누락 | 화면 버그. 좌우 인원 함께 전송 |
 | `cafe_context_required` | 400 | 메뉴 대화 시작에 `cafe_context` 누락 | 화면 버그. 메뉴 목록 함께 전송 |
 | `dialogue_scenario_invalid` | 400 | 지원하지 않는 카페 시나리오 id | 화면 버그. 시나리오 id 확인 |
 | `invalid_request` | 400 | 그 밖의 잘못된 요청 | 개발 로그만 남기고 일반 오류 표시 |
+
+## 학습 세션 (이슈 #6 추가분)
+
+| code | status | 언제 | 프런트가 할 일 |
+|---|---|---|---|
+| `application_scope_not_allowed` | 400 | `application_scope` 를 transfer 가 아닌 시도에 보냄 | 재시도 금지. 요청 구성 버그 |
+
+`application_scope` 값이 목록(`same_form_new_number`, `new_representation`, `real_life_context`) 밖이면
+`validation_failed` (422) 로 떨어진다.
 
 ## AI 대화 연동 (`dialogue_*`)
 
@@ -125,6 +148,37 @@ AI가 200을 줬지만 내용이 계약과 다른 경우다. 전부 503이다.
 | `dialogue_completion_fact_mismatch` | 검증된 줄 인원이 화면 문제와 다름 |
 | `dialogue_context_missing` | 저장해 둔 카페 문제 정보를 못 찾음 |
 | `dialogue_context_invalid` | 저장된 카페 문제 정보가 손상됨 |
+
+## 궁금해사전 (`dictionary_*`)
+
+BE가 Mormi-AI의 사전 카드를 중계하다 실패한 경우다. `dialogue_*` 와 달리
+**점(.) 진단 접미사가 붙지 않으므로 정확히 일치로 분기하면 된다.**
+사전 조회 실패는 학습 진행을 막지 않는다. 사전 화면만 오류 상태로 두고
+학습 흐름은 계속 진행한다.
+
+### 설정 문제 (배포 직후 여기부터 의심)
+
+| code | status | 원인 |
+|---|---|---|
+| `dictionary_not_configured` | 503 | BE에 `MORMI_DIALOGUE_BASE_URL` 미설정 |
+| `dictionary_key_not_configured` | 503 | BE에 `MORMI_DIALOGUE_SERVICE_KEY` 미설정 |
+| `dictionary_auth_failed` | 503 | AI가 401/403. BE·AI의 서비스 키 불일치 |
+
+### 조회 결과
+
+| code | status | 언제 | 프런트가 할 일 |
+|---|---|---|---|
+| `dictionary_card_not_found` | 404 | 그 커리큘럼에 승인된 카드가 없음 | **재시도 금지.** 사전 버튼 숨김 또는 빈 상태 |
+| `dictionary_version_mismatch` | 409 | 기대한 콘텐츠 버전과 현재 버전이 다름 | 버전 파라미터 없이 다시 조회해 새 카드로 갱신 |
+| `dictionary_snapshot_unavailable` | 409 | 구버전 대화에 고정 스냅샷이 없음 | 세션 경로(최신 카드)로 대체 조회 |
+| `dictionary_rate_limited` | 503 | AI가 429 | 잠시 후 재시도 |
+| `dictionary_ai_error` | 503 | AI 5xx. BE가 1회 재시도한 뒤의 결과 | 잠시 후 재시도 |
+| `dictionary_unavailable` | 503 | AI 연결 실패·시간초과. 1회 재시도 후 | 잠시 후 재시도 |
+| `dictionary_upstream_error` | 503 | 그 밖의 AI 오류 | 잠시 후 재시도 |
+
+대화 스냅샷 조회에서 AI에 대화 자체가 없으면 위 코드가 아니라 일반 `not_found` 404 로
+온다. BE에 소유 기록이 있는데 AI가 대화를 모르는 비정상 상황이므로, 화면은 "없음" 표의
+대화 없음과 같게 처리한다.
 
 ## 서버
 

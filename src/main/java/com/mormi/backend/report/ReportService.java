@@ -4,6 +4,8 @@ import com.mormi.backend.common.ApiException;
 import com.mormi.backend.curriculum.CurriculumCatalog;
 import com.mormi.backend.learner.Learner;
 import com.mormi.backend.learner.LearnerService;
+import com.mormi.backend.outcome.LearningTaskOutcomeRepository;
+import com.mormi.backend.report.ReportDtos.BottleneckCandidateView;
 import com.mormi.backend.report.ReportDtos.ReportSummary;
 import com.mormi.backend.reward.RewardService;
 import com.mormi.backend.reward.RewardSource;
@@ -28,16 +30,19 @@ public class ReportService {
     private final AttemptRepository attemptRepository;
     private final RewardService rewardService;
     private final LearnerService learnerService;
+    private final LearningTaskOutcomeRepository outcomeRepository;
 
     public ReportService(
             LearningSessionRepository sessionRepository,
             AttemptRepository attemptRepository,
             RewardService rewardService,
-            LearnerService learnerService) {
+            LearnerService learnerService,
+            LearningTaskOutcomeRepository outcomeRepository) {
         this.sessionRepository = sessionRepository;
         this.attemptRepository = attemptRepository;
         this.rewardService = rewardService;
         this.learnerService = learnerService;
+        this.outcomeRepository = outcomeRepository;
     }
 
     @Transactional(readOnly = true)
@@ -91,7 +96,22 @@ public class ReportService {
                 teachCoins,
                 rewardService.walletBalance(learner.getId()),
                 wrongCount,
-                firstTryCorrect);
+                firstTryCorrect,
+                bottleneckCandidates(session.getId()));
+    }
+
+    /**
+     * 관찰 집계의 병목 후보. 관찰 횟수를 함께 내보내 단일 관찰(repeated=false)이
+     * 화면에서 확정 오개념처럼 표시되지 않게 한다.
+     */
+    private List<BottleneckCandidateView> bottleneckCandidates(Long sessionId) {
+        return outcomeRepository.findByLearningSessionIdOrderByTaskKeyAsc(sessionId).stream()
+                .filter(outcome -> outcome.getBottleneckCandidate() != null)
+                .map(outcome -> new BottleneckCandidateView(
+                        outcome.getBottleneckCandidate(),
+                        outcome.getBottleneckEvidenceCount() == null ? 0 : outcome.getBottleneckEvidenceCount(),
+                        outcome.getBottleneckEvidenceCount() != null && outcome.getBottleneckEvidenceCount() >= 2))
+                .toList();
     }
 
     private int asInt(Object value) {

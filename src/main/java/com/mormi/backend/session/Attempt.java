@@ -55,6 +55,14 @@ public class Attempt {
     @Column(name = "elapsed_ms")
     private Integer elapsedMs;
 
+    /** 적용 문제의 맥락. same_form_new_number | new_representation | real_life_context */
+    @Column(name = "application_scope", length = 30, updatable = false)
+    private String applicationScope;
+
+    /** FE 사다리 0~3. NULL 은 수집 안 됨이며 0(도움 없음)과 다르다. */
+    @Column(name = "support_level", updatable = false)
+    private Integer supportLevel;
+
     @Column(name = "reward_granted", nullable = false)
     @Setter
     private int rewardGranted;
@@ -74,6 +82,8 @@ public class Attempt {
             Integer questionIndex,
             boolean correct,
             Integer elapsedMs,
+            String applicationScope,
+            Integer supportLevel,
             Map<String, Object> answerMeta) {
         this.learningSessionId = learningSessionId;
         this.activity = activity;
@@ -82,6 +92,8 @@ public class Attempt {
         this.questionIndex = questionIndex;
         this.correct = correct;
         this.elapsedMs = elapsedMs;
+        this.applicationScope = applicationScope;
+        this.supportLevel = supportLevel;
         this.answerMeta = answerMeta == null ? new LinkedHashMap<>() : new LinkedHashMap<>(answerMeta);
     }
 
@@ -93,8 +105,11 @@ public class Attempt {
             Integer questionIndex,
             boolean correct,
             Integer elapsedMs,
+            String applicationScope,
+            Integer supportLevel,
             Map<String, Object> answerMeta) {
         return new Attempt(
-                learningSessionId, activity, attemptNo, itemId, questionIndex, correct, elapsedMs, answerMeta);
+                learningSessionId, activity, attemptNo, itemId, questionIndex, correct, elapsedMs,
+                applicationScope, supportLevel, answerMeta);
     }
 }

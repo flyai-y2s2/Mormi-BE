@@ -25,6 +25,9 @@ mormi:
   local-report-admin:
     enabled: ${MORMI_LOCAL_REPORT_ADMIN_ENABLED:false}
     key: ${MORMI_LOCAL_REPORT_ADMIN_KEY:}
+  observation:
+    # AI가 관찰 이벤트를 보낼 때 쓰는 공유 키. 비어 있으면 /internal/** 은 전부 401 이다.
+    ingest-key: ${MORMI_OBSERVATION_INGEST_KEY:}
   dialogue:
     # 비어 있으면 가르치기 500원을 지급하지 않는다.
     base-url: ${MORMI_DIALOGUE_BASE_URL:}

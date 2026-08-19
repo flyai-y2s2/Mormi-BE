@@ -24,18 +24,21 @@
 인증: `Authorization: Bearer <learner token>`.
 보상 계산, 정오 판정, 해금 판정은 **전부 서버가 확정**합니다. 프런트는 표시만 합니다.
 
-### A. 학습자
+### A. 인증
 
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| `POST` | `/v1/learners` | — | 온보딩. 이름 + 참여 번호로 생성 또는 복구 |
-| `POST` | `/v1/learners/auth` | — | 참여 번호로 복구, 토큰 재발급 |
-| `GET` | `/v1/learners/{learner_id}` | ✓ | 프로필 조회 (본인만) |
-| `PATCH` | `/v1/learners/me/conversation-consent` | ✓ | 자유 발화 암호화 저장 동의·보존기간 변경 |
+| `POST` | `/v1/auth/signup` | — | 회원가입. 201 + `access_token` |
+| `POST` | `/v1/auth/login` | — | 로그인. 200 + `access_token` |
+| `POST` | `/v1/auth/logout` | ✓ | 현재 기기의 토큰만 폐기. 204 |
+| `POST` | `/v1/auth/logout-all` | ✓ | 해당 학습자의 모든 토큰 폐기. 204 |
 
 ```jsonc
-// POST /v1/learners
-{ "display_name": "민준", "research_code": "MORMI-A03" }
+// POST /v1/auth/signup
+{
+  "display_name": "민준", "research_code": "MORMI-A03",
+  "login_id": "minjun01", "password": "pilot1234"
+}
 // 201
 {
   "id": 1, "display_name": "민준", "research_code": "MORMI-A03",
@@ -43,13 +46,33 @@
   "conversation_storage_consent": true, "retention_policy": "permanent",
   "access_token": "KMw_gyMdWRtm..."
 }
+
+// POST /v1/auth/login
+{ "login_id": "minjun01", "password": "pilot1234" }
+// 200 — 응답 본문은 signup 과 같습니다.
 ```
 
-- **같은 참여 번호로 다시 들어오면 새 학습자를 만들지 않고 기존 진행도를 이어받습니다.** 기기 교체·캐시 삭제 후에도 복구됩니다.
-- `display_name` 은 화면 표시 전용. PostHog 와 AI 프롬프트에는 `analytics_id` 만 씁니다.
-- 토큰은 평문 저장하지 않고 SHA-256 해시만 보관합니다.
+- `login_id` 는 영숫자 4~20자, `password` 는 8자 이상입니다. 비밀번호는 BCrypt 해시만 보관합니다.
+- **아이디가 없을 때와 비밀번호가 틀릴 때의 응답이 같습니다.** 가입 여부를 떠볼 수 없게 하기 위함이며, 프런트는 두 경우를 구분해 안내할 수 없습니다.
+- **로그인해도 기존 토큰이 죽지 않습니다.** 태블릿과 보호자 휴대폰을 동시에 쓸 수 있습니다.
+- 토큰은 평문 저장하지 않고 SHA-256 해시만 `learner_tokens` 에 보관합니다. 만료는 발급 30일이며 인증에 성공할 때마다 뒤로 밀립니다.
+- `logout` 은 그 요청에 쓰인 토큰만, `logout-all` 은 해당 학습자의 모든 토큰을 폐기합니다. 폐기된 토큰은 즉시 401 입니다.
+- `research_code` 는 연구 식별자 전용이며 인증에 관여하지 않습니다.
 
-### B. 진행도 / 해금
+### B. 학습자
+
+| Method | Path | 인증 | 설명 |
+|---|---|---|---|
+| `GET` | `/v1/learners/{learner_id}` | ✓ | 프로필 조회 (본인만) |
+| `PATCH` | `/v1/learners/me/conversation-consent` | ✓ | 자유 발화 암호화 저장 동의·보존기간 변경 |
+| `GET` | `/v1/learners/{learner_id}/star-notes` | ✓ | 별노트 목록 (본인만). 상세는 G-3 |
+| ~~`POST`~~ | ~~`/v1/learners`~~ | — | **deprecated.** 연구 코드 온보딩. `/v1/auth/signup` 을 씁니다 |
+| ~~`POST`~~ | ~~`/v1/learners/auth`~~ | — | **deprecated.** 연구 코드 복구. `/v1/auth/login` 을 씁니다 |
+
+- `display_name` 은 화면 표시 전용. PostHog 와 AI 프롬프트에는 `analytics_id` 만 씁니다.
+- deprecated 두 경로는 FE 전환 기간에만 유지하며, 토큰은 새 경로와 똑같이 `learner_tokens` 에 발급됩니다. FE 전환이 끝나면 별도 PR 로 제거합니다.
+
+### C. 진행도 / 해금
 
 | Method | Path | 설명 |
 |---|---|---|
@@ -73,7 +96,7 @@
 
 `level`·`stars`·`cafe_unlocked` 는 프런트가 계산하던 값을 서버로 옮긴 것입니다.
 
-### C. 학습 세션 (집)
+### D. 학습 세션 (집)
 
 | Method | Path | 설명 |
 |---|---|---|
@@ -81,6 +104,7 @@
 | `GET` | `/v1/learning-sessions/{id}` | 새로고침 복구 (시도 전체 포함) |
 | `POST` | `/v1/learning-sessions/{id}/attempts` | 문제 시도 1건 |
 | `POST` | `/v1/learning-sessions/{id}/teaching` | 저장된 반복 결과로 AI 가르치기 대화 시작·복구 |
+| `GET` | `/v1/learning-sessions/{id}/dictionary-card` | 세션 커리큘럼의 궁금해사전 카드 조회 (F 절 참고) |
 | `POST` | `/v1/learning-sessions/{id}/complete` | 종료 + 보상 정산 |
 
 ```jsonc
@@ -135,7 +159,7 @@
 
 `.../teaching`은 정답 처리된 서로 다른 반복 문제 5개가 모두 저장된 뒤에만 성공합니다. 시도에서 `PracticeSummary`를 집계하고, 결정형 `practice_result_id`와 인라인 요약을 AI에 전달한 뒤 최초 전체 `TurnContract`를 반환합니다. 같은 요청을 다시 보내면 기존 대화를 복구합니다.
 
-### D. 카페
+### E. 카페
 
 | Method | Path | 설명 |
 |---|---|---|
@@ -186,12 +210,13 @@
 - 화폐별 최종 구성만 저장하고 −/＋ 버튼 클릭 로그는 저장하지 않습니다.
 - 예산 초과 주문도 **오답으로 기록**합니다(`menu_over_budget`). 다음 단계는 열리지 않습니다.
 
-### E. 인증된 AI 대화 프록시
+### F. 인증된 AI 대화 프록시
 
 | Method | Path | 설명 |
 |---|---|---|
 | `GET` | `/v1/dialogue/conversations/{conversation_id}` | 소유권 확인 후 최신 TurnContract 복구 |
 | `POST` | `/v1/dialogue/conversations/{conversation_id}/responses` | 소유권 확인 후 아이 응답 전달 |
+| `GET` | `/v1/dialogue/conversations/{conversation_id}/dictionary-card` | 대화에 고정된 궁금해사전 카드 스냅샷 |
 
 운영 호출 경로는 `FE → Spring BE → Mormi-AI`입니다. FE는 `learner_id`, 저장 동의, 보존기간, AI 서비스 키를 보내지 않습니다. Spring BE가 인증된 학습자 레코드에서 채웁니다.
 카페 대화 응답에는 AI의 `conversation_id`, `turn`과 함께 BE가 보관한
@@ -213,7 +238,68 @@
 }
 ```
 
-### F. 리포트
+**고정 질문 앵커(`turn.task_anchor`)**: 아이가 지금 답해야 할 질문입니다. 모르미 대사는
+도움 카드·브리지 반응으로 계속 바뀌므로 FE는 대사에서 원래 질문을 복원할 수 없습니다.
+AI가 LLM이 아닌 결정적 규칙으로 계산해 매 턴 실어 보내고, **BE는 이 값을 읽지도 바꾸지도
+않고 그대로 통과**시킵니다. 모르미 대사나 placeholder를 분석해 BE가 질문을 새로 만들지
+않습니다. 지어낸 값은 화면에 그럴듯하게 뜨면서 AI 상태와만 어긋나므로 탐지되지 않습니다.
+
+```json
+{
+  "turn": {
+    "task_anchor": {
+      "anchor_id": "cafe_queue:guided_count",
+      "title": "지금 모르미에게 알려줄 것",
+      "prompt": "사람을 한 명씩 눌러 두 줄을 같이 세어 볼까?",
+      "completed_items": [
+        { "slot_id": "left_count", "label": "왼쪽 줄 사람 수",
+          "value": 3, "display_text": "왼쪽 줄에는 3명이 있어." }
+      ],
+      "target_slots": ["right_count"]
+    }
+  }
+}
+```
+
+- **선택 필드입니다.** AI는 진행 중(`status=active`)이고 입력을 받는 턴에만 채웁니다.
+  완료된 턴과 `input.kind=none` 인 턴에는 `null` 로 옵니다.
+- 값이 **없는 모양이 두 가지**입니다. 신버전 AI 가 앵커를 뺀 턴은 `"task_anchor": null`,
+  아직 배포되지 않은 구버전 AI 응답은 **키 자체가 없습니다.** BE는 둘을 뭉개지 않고
+  받은 모양 그대로 넘깁니다. FE는 두 경우 모두 앵커 영역을 렌더링하지 않습니다.
+- `completed_items` 는 아이가 이미 검증된 값으로 알려 준 항목입니다. AI 가 검증한 슬롯만
+  들어가며, 자유 발화 원문은 들어가지 않습니다.
+- **스트리밍 경로는 현재 BE 에 없습니다.** AI 에는
+  `POST /v1/conversations/{id}/responses/stream` SSE 엔드포인트가 있고 앵커를
+  `mormi.delta` 보다 **먼저** `turn.metadata { turn_id, task_anchor }` 이벤트로 흘립니다.
+  대사가 흐르기 전에 질문이 화면에 고정되도록 한 순서입니다. 다만 BE 가 호출하는 AI 경로는
+  `POST /v1/conversations`, `POST /v1/conversations/{id}/responses`,
+  `GET /v1/conversations/{id}` 셋뿐이라 BE 프록시에는 스트리밍 구간이 없습니다. 나중에
+  BE 가 스트림을 중계하게 되면 `turn.metadata` 를 이 순서 그대로 전달해야 합니다.
+- 전 경로 무손실 전달은 `TaskAnchorContractIntegrationTest` 가 지킵니다. 대화 응답은
+  상류 스키마를 복제하지 않으려고 `JsonNode` 로 투명 전달하므로 자바 타입이 없고,
+  따라서 이 계약을 강제하는 것은 컴파일러가 아니라 그 테스트입니다.
+- **이 경로의 응답은 `/v3/api-docs` 로 타입 생성을 하면 안 됩니다.** 자동 생성 명세가
+  `GET /v1/dialogue/conversations/{id}` 와 `POST /v1/cafe-visits/{id}/dialogues` 는
+  빈 `{"type":"object"}` 로, `POST /v1/learning-sessions/{id}/teaching` 은
+  `JsonNode` 스키마로 내보내는데, 그 `JsonNode` 스키마의 속성은 실제 응답 필드가 아니라
+  Jackson 내부 판별 메서드(`array`, `empty`, `null`, `nodeType` …)입니다. 이 경로의
+  응답 형태는 AI 문서(`Mormi-AI/docs/API_SPEC.md`)의 `SessionEnvelope` 가 원본이고,
+  BE 가 카페에서 덧붙이는 필드는 이 문서가 원본입니다.
+
+**궁금해사전 중계**: 사전 카드는 AI가 소유한 승인·버전 관리 콘텐츠입니다. BE는
+인증과 소유권만 확인하고 카드 본문(`reference` + `card`)을 **무손실로 통과**시킵니다.
+문장을 보정하거나 자체 fallback 문구를 만들지 않으므로, 응답 스키마는 AI 문서
+(`Mormi-AI/docs/API_SPEC.md`)가 원본입니다.
+
+- 세션 경로는 현재 승인된 최신 카드, 대화 경로는 대화 시작 시점에 고정된 스냅샷을
+  돌려줍니다. **가르치기 대화 중에는 대화 경로를 써야** 모르미의 설명과 사전 문장이
+  같게 유지됩니다. 집·카페 대화 모두 같은 대화 경로 하나로 조회합니다.
+- 세션 경로는 `?expected_content_version=N` 을 받으며 AI에 그대로 전달합니다.
+  버전이 다르면 409 `dictionary_version_mismatch` 로 거절됩니다.
+- 읽기 요청이라 연결 실패·AI 5xx 는 BE가 1회 재시도한 뒤 503 을 돌려줍니다.
+  오류 코드는 `ERROR_CODES.md` 의 궁금해사전 절을 참고합니다.
+
+### G. 리포트
 
 | Method | Path | 설명 |
 |---|---|---|
@@ -222,7 +308,132 @@
 
 `ReportDashboard.tsx` 의 `Report` 타입과 같은 필드 구성입니다. `sessionTitle`·`misconception`·`learnedLine` 처럼 커리큘럼 본문에 있는 값은 `session_id` 로 프런트가 채웁니다.
 
-### G. 운영
+**오개념 표시 규칙 (이슈 #6).** 응답의 `synchronized` 는 오답이 하나라도 있으면 true 가 되는
+하위 호환 값이므로 오개념 확정 표시에 쓰지 않습니다. 대신 `bottleneck_candidates` 를 씁니다.
+
+```jsonc
+{ "...기존 필드...": "...",
+  "bottleneck_candidates": [
+    { "candidate": "carry_over", "evidence_count": 2, "repeated": true } ] }
+```
+
+- `repeated: false`(관찰 1회)는 "이런 모습이 한 번 보였어요" 수준으로만 표현합니다.
+- 값은 AI 관찰 집계(`learning_task_outcomes`)에서 나오며, 관찰이 없으면 빈 배열입니다.
+- AI 계약상 `concept_result = not_assessed`(도움 요청·입력 오류·장난)는 오답으로 합산하지 않습니다.
+
+### G-2. AI 관찰 이벤트 수신 (내부 전용, 이슈 #6)
+
+| Method | Path | 설명 |
+|---|---|---|
+| `POST` | `/internal/v1/observations/events` | AI 관찰 이벤트 멱등 수집 |
+
+- 인증: `X-Mormi-Service-Key` 헤더 (`MORMI_OBSERVATION_INGEST_KEY`). 학습자 토큰·CORS 대상이 아닙니다.
+- 계약 원본: `Mormi-AI/docs/OBSERVATION_EVENTS.md`. `schema_version` 은 숫자 `1` 입니다.
+- 발화사다리(`expression_before/after`, L4~L0)와 힌트사다리(`hint_before/after`, H0~H3)는
+  별개 상태값으로 받습니다. FE 의 0~3 사다리와 변환하지 않습니다.
+- 소유권은 이벤트의 `learner_id` 가 아니라 `conversation_id` 로 BE 대화 기록에서 역참조합니다.
+
+```jsonc
+// 요청 (전송기가 outbox payload 를 observation 으로 감싼다)
+{ "event_id": "evt_...", "schema_version": 1, "event_type": "dialogue_observation",
+  "observation": { "observation_id": "observation_...", "conversation_id": "conversation_...",
+                   "task_id": "money-count:1", "expression_before": "L4", "expression_after": "L4",
+                   "hint_before": "H0", "hint_after": "H0", "concept_result": "correct_partial", "..." : "..." } }
+// 200 — 재전송이어도 오류가 아니다
+{ "event_id": "evt_...", "status": "processed", "duplicate": false, "observation_id": 1 }
+```
+
+| 응답 | 의미 | AI 전송기가 할 일 |
+|---|---|---|
+| `200` | 반영 완료 (`duplicate: true` 포함) | 없음 |
+| `409 unknown_conversation` | 대화 커밋 전에 이벤트가 먼저 도착 | **잠시 후 재전송** |
+| `422 unsupported_schema_version` 등 | 내용 자체가 문제 | 재전송 금지. 이벤트는 `failed` 로 보존됨 |
+| `401` | 서비스 키 없음/불일치 | 설정 확인. 이벤트는 저장되지 않음 |
+
+### G-3. 별노트 수집·조회 (이슈 #12)
+
+AI가 발행하는 `star_note_created` 이벤트를 위 G-2 와 같은 엔드포인트에서 수집해
+BE 가 소유하는 별노트 원장(`star_notes`)에 저장하고, FE 에 목록 API 를 제공합니다.
+FE 는 AI 의 별노트 API 를 직접 호출하지 않습니다.
+
+#### 수집 (내부 전용)
+
+`POST /internal/v1/observations/events` — `event_type: "star_note_created"` 로 구분합니다.
+인증·수신함 멱등성(`event_id` unique)은 G-2 와 동일하고, 원장에서 `note_id` unique 로
+한 번 더 막습니다(다른 event_id 로 재전송된 같은 노트도 한 행만 남음).
+
+```jsonc
+// 요청 — 계약 원본: Mormi-AI/docs/OBSERVATION_EVENTS.md "별노트 독립 이벤트(B안)"
+{ "event_id": "event_...", "schema_version": 1, "event_type": "star_note_created",
+  "star_note": { "note_id": "note_...", "note_version": 1, "learner_id": 17,
+                 "conversation_id": "conversation_...", "skill_id": "number-count",
+                 "text": "색칠된 칸을 하나씩 세면 모두 3개야.",
+                 "attribution": "child", "attribution_label": "아이가 알려줌",
+                 "evidence": "direct_explanation",
+                 "evidence_links": [{ "observation_id": "observation_...", "source_slot_ids": ["tracking"] }],
+                 "active": true, "created_at": "2026-08-19T00:00:00+00:00" } }
+// 200 — 재전송이어도 오류가 아니다
+{ "event_id": "event_...", "status": "processed", "duplicate": false, "star_note_id": 1 }
+```
+
+| 응답 | 의미 | AI 전송기가 할 일 |
+|---|---|---|
+| `200` | 반영 완료 (`duplicate: true` 포함) | 없음 |
+| `409 unknown_conversation` | 대화 커밋 전에 별노트가 먼저 도착 | **잠시 후 재전송** |
+| `422 invalid_payload` 등 | 필수값 누락·형식 오류 | 재전송 금지. 이벤트는 `failed` 로 보존됨 |
+| `422 star_note_owner_mismatch` | 이벤트의 `learner_id` ≠ 대화 소유자 | 재전송 금지 |
+| `401` | 서비스 키 없음/불일치 | 설정 확인. 이벤트는 저장되지 않음 |
+
+- 필수 필드: `note_id`, `note_version`(1 이상), `conversation_id`, `text`, `attribution`, `created_at`.
+- 소유권은 G-2 와 같이 `conversation_id` 로 역참조합니다. 이벤트의 `learner_id` 는 검증에만 씁니다.
+- **순서 역전 허용**: `evidence_links` 의 관찰이 아직 도착하지 않았어도 수용합니다(FK 없이 ID 만 보존).
+  따라서 AI 재시도 표의 `unknown_learner` / `unknown_observation` / `missing_evidence_observation` 은
+  **예약만 되어 있고 BE 가 실제로 반환하지 않습니다.**
+- 같은 `note_id` 재발행은 `note_version` 이 올랐을 때만 반영합니다. 같은 버전으로 내용만 바꾸면
+  조용히 무시되므로, AI 는 수정 시 반드시 버전을 올려야 합니다. `active: false` 재발행 = 목록에서 숨김.
+- `learning_task_outcomes.star_note_*` 컬럼은 이 계약과 무관하게 아직 NULL 입니다(이슈 #14).
+
+#### 조회 (학습자용)
+
+| Method | Path | 인증 | 설명 |
+|---|---|---|---|
+| `GET` | `/v1/learners/{learner_id}/star-notes` | ✓ | 별노트 목록 (본인만). 커서 페이지네이션 |
+
+```jsonc
+// GET /v1/learners/1/star-notes?limit=20            — limit 1~50, 기본 20
+// GET /v1/learners/1/star-notes?limit=20&cursor=... — cursor 는 직전 응답의 next_cursor
+// 200
+{
+  "star_notes": [
+    { "note_id": "note_...", "skill_id": "number-count",
+      "text": "색칠된 칸을 하나씩 세면 모두 3개야.",   // AI 원문 그대로. BE 가 재작성하지 않는다
+      "attribution": "child", "attribution_label": "아이가 알려줌",
+      "evidence": "direct_explanation",
+      "scene": "home_teach", "scenario_id": "home_teach", "task_id": "home_teaching",
+      "created_at": "2026-08-19T00:00:00Z" }           // AI 가 노트를 만든 시각
+  ],
+  "next_cursor": "note_..."   // 마지막 페이지면 필드 자체가 없음
+}
+```
+
+- 정렬: `created_at` 내림차순, 동률이면 `note_id` 내림차순. 커서(keyset) 방식이라
+  조회 사이에 새 노트가 생겨도 중복·누락 없이 이어집니다. FE 는 `next_cursor` 를 그대로 넘깁니다.
+- 비활성(`active: false`) 노트는 목록에서 제외됩니다.
+- 모르는 커서(남의 노트 ID 포함)는 `422 invalid_cursor`. 남의 목록은 `403 forbidden`, 무토큰은 `401`.
+
+#### 배포 순서와 backfill
+
+1. BE 배포 (수신 분기 + 원장 + 목록 API)
+2. AI 에 `MORMI_STAR_NOTE_EVENTS_ENABLED=true` 적용 후 재시작
+3. AI outbox 의 pending 별노트 적체가 줄어드는지 확인
+4. FE 목록 연동 활성화 (Mormi-FE#27)
+
+**backfill 없음**: 플래그를 켜기 전에 AI outbox 에 쌓인 pending 분은 일반 재시도로 유입되지만,
+outbox 이전의 역사 별노트는 자동 생성되지 않습니다. 필요해지면 별도 이슈로 진행합니다.
+롤백: BE 를 이전 버전으로 되돌리면 별노트 이벤트가 `422 unsupported_event_type` 으로 실패하므로,
+**먼저 AI 플래그를 `false` 로 되돌린 뒤** BE 를 롤백합니다(pending 보존, 유실 없음).
+
+### H. 운영
 
 | Method | Path | 설명 |
 |---|---|---|
@@ -267,12 +478,14 @@ AI에서 처리가 끝났지만 응답만 유실된 경우도 있으므로, FE�
 
 ---
 
-## 4. DB 스키마 (`V1__init.sql`)
+## 4. DB 스키마 (`V1__init.sql` ~ `V5__learner_accounts.sql`)
 
 ```
 learners             id, display_name, research_code UNIQUE, analytics_id UUID UNIQUE,
-                     token_hash UNIQUE, conversation_storage_consent, retention_policy,
-                     onboarding_completed_at, created_at
+                     login_id UNIQUE, password_hash, conversation_storage_consent,
+                     retention_policy, onboarding_completed_at, created_at
+                     token_hash 은 deprecated. FE 전환 후 제거
+learner_tokens       id, learner_id, token_hash UNIQUE, expires_at, revoked_at, created_at
 learning_sessions    id, public_id UNIQUE, learner_id, curriculum_session_id, variant_seed,
                      scaffold_level, elapsed_seconds, transfer_solved, timed_out,
                      conversation_id, practice_result_id, started_at, completed_at
@@ -293,6 +506,7 @@ dialogue_conversations id, conversation_id UNIQUE, learner_id,
                      scenario_context JSONB, created_at
 ```
 
+- 로그인 세션은 `learner_tokens` 에 행 단위로 쌓입니다. 학습자당 여러 행이 살아 있을 수 있어 다기기 로그인이 되고, 로그아웃은 행을 지우지 않고 `revoked_at` 을 남깁니다.
 - 지갑 잔액은 별도 컬럼 없이 `reward_ledger` 합계로 도출합니다.
 - 아동 데이터 테이블에는 `learner_id` 인덱스가 있습니다.
 - 아이 이름·자유 발화 원문·음성은 저장하지 않습니다. 대화 원문은 Mormi-AI 가 암호화 보관합니다.
@@ -334,7 +548,8 @@ DB_USERNAME=mormi DB_PASSWORD=mormi ./gradlew bootRun
 |---|---|---|
 | 1 | RDS 안에서 Spring / Mormi-AI 데이터 분리 | **미정.** Mormi-AI 는 `create_schema()` 로 직접 테이블을 만들고 Spring 은 Flyway + `ddl-auto: validate` 라 같은 스키마에 두면 충돌 위험. 스키마 또는 DB 분리 권장 |
 | 2 | 지갑 vs 카페 10,000원 | 분리 유지. 카페는 고정 실습 소지금이고 지갑에서 차감하지 않음 |
-| 3 | `ladder` 0~3 ↔ `L4~L0` 매핑 | 리포트는 0~3 그대로 저장. 대화 연동 시 확정 필요 |
-| 4 | 별노트 저장 주체 | Mormi-AI 보유. Spring 은 TurnContract를 전달 |
+| 3 | `ladder` 0~3 ↔ `L4~L0` 매핑 | **여전히 미정.** BE 는 변환하지 않기로 함 — attempts.support_level 은 FE 0~3, 관찰은 발화 L4~L0·힌트 H0~H3 을 각자 원본 척도로 저장. 매핑 확정 시 조회 계층에서만 잇는다 |
+| 4 | 별노트 저장 주체 | AI 가 생성·발행하고 **Spring 이 서비스 원장(`star_notes`)을 소유** (이슈 #12, G-3 참조). FE 는 Spring 목록 API 만 사용 |
+| 4-1 | 별노트 → BE 이벤트 계약 | **확정.** `star_note_created` 이벤트로 수집 (G-3). `learning_task_outcomes.star_note_*` 컬럼 연결은 후속 이슈 #14, 그때까지 NULL |
 | 5 | `conversation_storage_consent` 관리 주체 | Spring `learners` 및 동의 변경 API. AI가 실제 암호화·삭제 수행 |
 | 6 | 참여 번호 발급 방식 | 연구자가 사전 발급해 전달하는 것으로 가정 |

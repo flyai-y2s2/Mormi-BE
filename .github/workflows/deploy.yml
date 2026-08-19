@@ -1,13 +1,17 @@
-name: CI/CD (develop → ECR → EC2)
+name: CI/CD (PR 검증, develop → ECR → EC2)
 
 on:
   push:
     branches: [develop]
+  # 머지 뒤에 처음 알면 develop 이 깨진 채로 남는다. PR 단계에서 테스트만 돌린다.
+  pull_request:
+    branches: [develop]
   workflow_dispatch: {}
 
 concurrency:
-  group: deploy-develop
-  cancel-in-progress: false
+  # develop 배포는 순서를 지켜야 하므로 취소하지 않고, PR 은 새 푸시가 이전 실행을 대체한다.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
@@ -38,7 +42,9 @@ jobs:
       - name: Build & test (Testcontainers PostgreSQL)
         run: ./gradlew --no-daemon clean build
 
+      # PR 검증은 빌드·테스트까지만 하면 되므로 배포용 산출물은 만들지 않는다.
       - name: Upload JAR artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: app-jar
@@ -49,6 +55,8 @@ jobs:
   deploy:
     name: Build image, push to ECR, deploy to EC2
     needs: build
+    # PR 은 검증만 한다. 배포는 develop 에 머지된 뒤에만 일어난다.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 15
 

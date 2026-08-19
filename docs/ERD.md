@@ -1,11 +1,12 @@
 # 데이터 모델과 학습자 격리
 
-`V1__init.sql` 기준. 스키마를 바꾸면 이 문서도 같이 고친다.
+`V1__init.sql` ~ `V11__star_notes.sql` 기준. 스키마를 바꾸면 이 문서도 같이 고친다.
 
 ## ERD
 
 ```mermaid
 erDiagram
+    learners ||--o{ learner_tokens    : "id → learner_id"
     learners ||--o{ learning_sessions : "id → learner_id"
     learners ||--o{ theme_progress    : "id → learner_id"
     learners ||--o{ cafe_visits       : "id → learner_id"
@@ -17,12 +18,23 @@ erDiagram
     learners {
         bigserial id PK
         varchar   display_name
-        varchar   research_code UK "재접속용 코드"
+        varchar   research_code UK "연구 식별자. 인증에는 쓰지 않는다"
         uuid      analytics_id  UK "PostHog 등 외부 분석용"
-        varchar   token_hash    UK "액세스 토큰의 해시"
+        varchar   login_id      UK "로그인 아이디. 기존 학습자는 NULL"
+        varchar   password_hash "BCrypt 해시 60자"
+        varchar   token_hash    UK "deprecated. FE 전환 후 제거"
         boolean   conversation_storage_consent
         varchar   retention_policy
         timestamptz onboarding_completed_at
+        timestamptz created_at
+    }
+
+    learner_tokens {
+        bigserial id PK
+        bigint    learner_id FK
+        varchar   token_hash UK "액세스 토큰의 SHA-256 해시"
+        timestamptz expires_at "발급 30일. 인증 성공 시 뒤로 밀린다"
+        timestamptz revoked_at "로그아웃 시각. NULL 이면 살아 있다"
         timestamptz created_at
     }
 
@@ -99,6 +111,121 @@ erDiagram
     }
 ```
 
+## 관찰·집계·리포트 (V6~V10, 이슈 #6)
+
+```mermaid
+erDiagram
+    observation_events ||--o{ learning_observations : "id → observation_event_id"
+    observation_events ||--o{ star_notes : "id → observation_event_id"
+    learners ||--o{ learning_observations : "id → learner_id"
+    learners ||--o{ star_notes : "id → learner_id"
+    learning_sessions ||--o{ star_notes : "id → learning_session_id (nullable)"
+    learners ||--o{ learning_task_outcomes : "id → learner_id"
+    learning_sessions ||--o{ learning_task_outcomes : "id → learning_session_id"
+    organizations ||--o{ educators : "id → organization_id"
+    organizations ||--o{ cohorts : "id → organization_id"
+    cohorts ||--o{ learner_enrollments : "id → cohort_id"
+    learners ||--o{ learner_enrollments : "id → learner_id"
+    learners ||--o{ consent_records : "id → learner_id"
+    learners ||--o{ report_snapshots : "id → learner_id (nullable)"
+    cohorts ||--o{ report_snapshots : "id → cohort_id (nullable)"
+
+    observation_events {
+        bigserial id PK
+        varchar   event_id UK "AI가 부여한 멱등 키"
+        varchar   schema_version
+        varchar   event_type
+        jsonb     payload "받은 그대로. 실패 이벤트 재처리 근거"
+        varchar   status "received | processed | failed"
+        text      error_message
+        timestamptz received_at
+        timestamptz processed_at
+    }
+
+    learning_observations {
+        bigserial id PK
+        bigint    observation_event_id FK
+        varchar   ai_observation_id UK "AI 원본 추적. 재전송돼도 한 행"
+        bigint    learner_id FK "대화 기록에서 역참조. 이벤트 값을 믿지 않는다"
+        bigint    learning_session_id FK "null 가능"
+        bigint    cafe_visit_id FK "null 가능"
+        varchar   expression_before "발화사다리 L4~L0"
+        varchar   expression_after
+        varchar   hint_before "힌트사다리 H0~H3"
+        varchar   hint_after
+        varchar   response_category
+        varchar   concept_result "not_assessed 는 오답으로 합산 금지"
+        varchar   bottleneck_candidate "후보일 뿐. 확정 오개념 아님"
+        boolean   help_used "NULL = 수집 안 됨. false 와 다름"
+        boolean   system_error "아동 수행 실패와 분리 집계"
+        timestamptz observed_at
+    }
+
+    learning_task_outcomes {
+        bigserial id PK
+        bigint    learner_id FK
+        bigint    learning_session_id FK
+        varchar   task_key "attempts.item_id 와 같은 값. (세션, task_key) UNIQUE"
+        boolean   first_try_success "attempts 파생. 근거 없으면 NULL"
+        boolean   retry_success
+        boolean   success_after_help "관찰 없으면 NULL"
+        varchar   expression_lowest "가장 많이 내려간 발화 단계"
+        varchar   hint_max "가장 높이 올라간 힌트 단계"
+        varchar   completion_outcome "system_failure 는 아동 실패와 분리"
+        integer   bottleneck_evidence_count "1 이면 단일 관찰"
+        bigint_arr source_attempt_ids "근거 추적"
+        bigint_arr source_observation_ids
+        varchar   aggregation_rule_version
+    }
+
+    star_notes {
+        bigserial id PK
+        bigint    observation_event_id FK "마지막으로 반영된 수신 이벤트"
+        varchar   note_id UK "AI 원본 추적. 다른 event_id 로 재전송돼도 한 행"
+        integer   note_version "같거나 낮은 버전의 재발행은 무시"
+        bigint    learner_id FK "대화 기록에서 역참조. 이벤트 값을 믿지 않는다"
+        bigint    learning_session_id FK "null 가능"
+        varchar   conversation_id
+        varchar   skill_id
+        text      note_text "AI 원문 그대로. BE 가 재작성하지 않는다"
+        varchar   attribution "child 등. AI 원문 그대로"
+        varchar   attribution_label
+        varchar   evidence
+        jsonb     evidence_links "의도적으로 FK 없음. 관찰보다 먼저 도착해도 수용(순서 역전)"
+        boolean   active "false = 목록에서 숨김. 행은 지우지 않는다"
+        timestamptz note_created_at "AI 생성 시각. 목록 정렬 키"
+        timestamptz created_at
+    }
+
+    consent_records {
+        bigserial id PK
+        bigint    learner_id FK
+        varchar   scope "conversation_storage 등"
+        varchar   policy_version "동의 문서 버전. 백필은 pilot-baseline"
+        boolean   granted
+        timestamptz collected_at
+        varchar   collected_by
+        timestamptz withdrawn_at "철회는 행 삭제가 아니라 이 기록"
+    }
+
+    report_snapshots {
+        bigserial id PK
+        bigint    learner_id FK "cohort_id 와 XOR"
+        bigint    cohort_id FK
+        timestamptz period_start
+        timestamptz period_end
+        jsonb     body "LLM 없이 성립하는 구조화 리포트"
+        bigint_arr source_observation_ids "생성 시점 근거 고정"
+        varchar   aggregation_rule_version
+        varchar   llm_model "NULL = LLM 미사용"
+        varchar   approval_status "draft | edited | approved"
+    }
+```
+
+- `learning_task_outcomes` 는 파생 테이블이다. 원본은 attempts 와 learning_observations 이고, 관찰이 늦게 도착하면 같은 규칙으로 다시 계산해 덮어쓴다.
+- `report_snapshots` 는 반대로 불변이다. 생성 시점의 근거 ID 를 고정해 교사가 승인한 리포트의 근거가 나중에 바뀌지 않게 한다.
+- 집계·리포트의 불리언 NULL 은 전부 '수집 안 됨'이다. false(근거를 보고 아니라고 판단)와 다르며, 화면·분석에서 0/false 로 합치면 안 된다.
+
 `attempts`와 `cafe_visit_stages`에는 `learner_id`가 없다. 각각 부모(`learning_sessions`, `cafe_visits`)를 통해서만 도달하고, 그 부모가 학습자에 묶여 있다.
 
 지갑 잔액 컬럼은 없다. `reward_ledger`의 합계로 도출한다(`RewardLedgerRepository.sumAmountByLearnerId`). 잔액을 따로 들고 있으면 원장과 어긋날 수 있어서다.
@@ -109,7 +236,11 @@ erDiagram
 
 **1. 토큰이 학습자를 특정한다**
 
-`POST /v1/learners`가 학습자마다 다른 액세스 토큰을 발급하고, DB에는 해시만 남긴다(`token_hash`, UNIQUE). 요청이 오면 `LearnerTokenFilter`가 토큰을 해시해 학습자를 찾고, 그 결과를 `LearnerPrincipal`로 심는다. 토큰이 없으면 401이다.
+`POST /v1/auth/login`이 로그인마다 다른 액세스 토큰을 발급하고, DB에는 해시만 남긴다(`learner_tokens.token_hash`, UNIQUE). 요청이 오면 `LearnerTokenFilter`가 `AuthService.authenticate()`에 넘기고, 거기서 토큰을 해시해 행을 찾은 뒤 폐기·만료 여부까지 확인해 `LearnerPrincipal`로 심는다. 토큰이 없거나 죽었으면 401이다.
+
+행이 학습자당 여러 개일 수 있어 기기를 두 대 써도 서로를 밀어내지 않는다. 대신 로그아웃은 그 요청에 쓰인 토큰만(`LearnerPrincipal.tokenId`), 전체 로그아웃은 학습자의 모든 행을 폐기한다.
+
+비밀번호는 BCrypt 해시(`password_hash`)로만 보관하고, 로그인 실패 응답은 아이디가 없을 때와 비밀번호가 틀릴 때가 같다. `research_code`는 연구 식별자로만 남고 인증에는 관여하지 않는다.
 
 **2. 컨트롤러는 클라이언트가 보낸 learner_id를 믿지 않는다**
 

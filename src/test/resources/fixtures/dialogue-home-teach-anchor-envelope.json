@@ -1,0 +1,55 @@
+{
+  "conversation_id": "conversation_hometeachanchor01",
+  "turn": {
+    "turn_id": "turn_hometeachanchor01",
+    "scene": "home_teach",
+    "scenario_id": "home_teach",
+    "task_id": "home_teaching",
+    "stage_id": "home_teach",
+    "task_index": 0,
+    "mormi": {
+      "text": "점이 몇 개인지랑 어떻게 세는지 알려주면 안 될까?",
+      "mood": "curious",
+      "max_lines": 2
+    },
+    "input": {
+      "kind": "text",
+      "placeholder": "네가 센 수나 방법을 알려줘",
+      "choices": [],
+      "target_slots": ["answer", "tracking"],
+      "submit_label": null,
+      "config": {}
+    },
+    "visual": {
+      "type": "home_teaching",
+      "data": {
+        "curriculum_session_id": "number-count",
+        "subject": "number",
+        "unit": "수 감각",
+        "title": "수를 빠뜨리지 않고 세어요",
+        "problem": {
+          "prompt": "지금 점이 몇 개야?",
+          "answers": ["3", "4", "5"],
+          "visual": {
+            "type": "ten-frame",
+            "count": 3
+          }
+        }
+      }
+    },
+    "help_card": null,
+    "note_update": null,
+    "status": "active",
+    "state_version": 1,
+    "completion": null,
+    "pedagogy": null,
+    "task_anchor": {
+      "anchor_id": "home_teaching:free_count_and_method",
+      "title": "지금 모르미에게 알려줄 것",
+      "prompt": "점이 몇 개인지랑 어떻게 세는지 알려주면 안 될까?",
+      "completed_items": [],
+      "target_slots": ["answer", "tracking"]
+    },
+    "dictionary_ref": null
+  }
+}

@@ -1,5 +1,6 @@
 package com.mormi.backend.config;
 
+import com.mormi.backend.auth.InternalServiceKeyFilter;
 import com.mormi.backend.auth.LearnerTokenFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import java.nio.charset.StandardCharsets;
@@ -21,12 +22,15 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 public class SecurityConfig {
 
     private final LearnerTokenFilter learnerTokenFilter;
+    private final InternalServiceKeyFilter internalServiceKeyFilter;
     private final List<String> allowedOrigins;
 
     public SecurityConfig(
             LearnerTokenFilter learnerTokenFilter,
+            InternalServiceKeyFilter internalServiceKeyFilter,
             @Value("${mormi.cors.allowed-origins:http://localhost:3000}") List<String> allowedOrigins) {
         this.learnerTokenFilter = learnerTokenFilter;
+        this.internalServiceKeyFilter = internalServiceKeyFilter;
         this.allowedOrigins = allowedOrigins;
     }
 
@@ -49,12 +53,19 @@ public class SecurityConfig {
                         }))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/health").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/v1/auth/signup").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/v1/auth/login").permitAll()
+                        // 연구 코드 단독 온보딩. FE 전환 후 아래 두 줄과 함께 제거한다.
                         .requestMatchers(HttpMethod.POST, "/v1/learners").permitAll()
                         .requestMatchers(HttpMethod.POST, "/v1/learners/auth").permitAll()
                         .requestMatchers(HttpMethod.GET, "/v1/local-report-admin/**").permitAll()
+                        // 내부 서버 전용. 학습자 토큰이 아니라 서비스 키로만 통과한다.
+                        .requestMatchers("/internal/**")
+                        .hasAuthority(InternalServiceKeyFilter.SERVICE_AUTHORITY)
                         .requestMatchers("/v1/**").authenticated()
                         .anyRequest().permitAll())
-                .addFilterBefore(learnerTokenFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(learnerTokenFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(internalServiceKeyFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 

@@ -823,6 +823,8 @@ class DiagnosticReportServiceTest {
                 attemptNo - 1,
                 correct,
                 1_000,
+                null,
+                null,
                 Map.of());
         ReflectionTestUtils.setField(attempt, "id", id);
         ReflectionTestUtils.setField(attempt, "createdAt", createdAt);

@@ -27,12 +27,16 @@ public class LearnerController {
         this.learnerService = learnerService;
     }
 
+    /** @deprecated 연구 코드는 크리덴셜이 아니다. POST /v1/auth/signup 을 쓴다. */
+    @Deprecated
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public LearnerResponse create(@Valid @RequestBody CreateLearnerRequest request) {
         return learnerService.createOrRestore(request);
     }
 
+    /** @deprecated 연구 코드는 크리덴셜이 아니다. POST /v1/auth/login 을 쓴다. */
+    @Deprecated
     @PostMapping("/auth")
     public LearnerResponse authenticate(@Valid @RequestBody LearnerAuthRequest request) {
         return learnerService.restore(request.researchCode());
