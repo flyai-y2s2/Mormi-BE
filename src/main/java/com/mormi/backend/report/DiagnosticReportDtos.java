@@ -79,7 +79,20 @@ public final class DiagnosticReportDtos {
             OffsetDateTime occurredAt,
             double independentScore,
             double supportedScore,
+            Integer attemptCount,
+            Integer questionCount,
+            String expressionLevel,
             boolean recent) {
+
+        public TrendPoint(
+                String evidenceId,
+                String label,
+                OffsetDateTime occurredAt,
+                double independentScore,
+                double supportedScore,
+                boolean recent) {
+            this(evidenceId, label, occurredAt, independentScore, supportedScore, null, null, null, recent);
+        }
     }
 
     public record DomainTrend(

@@ -51,6 +51,40 @@ class DiagnosticMetricsTest {
     }
 
     @Test
+    void homeTrendExposesQuestionAndAttemptCountsForAttemptsToCorrectAverage() {
+        var home = List.of(new DiagnosticReportDtos.HomeEvidence(
+                "session-1",
+                "money-count",
+                START,
+                List.of(
+                        drill("money-count", "money-count:0", 0, 1, false, 1000, 0),
+                        drill("money-count", "money-count:0", 0, 2, true, 1000, 1),
+                        drill("money-count", "money-count:1", 1, 1, true, 1000, 2))));
+
+        var point = DiagnosticMetrics.analyze(home, List.of(), List.of())
+                .homeDrillTrends().getFirst().points().getFirst();
+
+        assertThat(point.attemptCount()).isEqualTo(3);
+        assertThat(point.questionCount()).isEqualTo(2);
+        assertThat(point.expressionLevel()).isNull();
+    }
+
+    @Test
+    void teachTrendExposesExpressionLevelAndRecentMarkingPreservesIt() {
+        var teach = List.of(
+                new DiagnosticReportDtos.TeachEvidence(
+                        "conversation-1", "money-count", "explain", "taught", "H0", "L4", Map.of("slot", true), START),
+                new DiagnosticReportDtos.TeachEvidence(
+                        "conversation-2", "money-count", "explain", "taught", "H1", "L2", Map.of("slot", true), START.plusDays(1)));
+
+        var points = DiagnosticMetrics.analyze(List.of(), teach, List.of()).teachTrends().getFirst().points();
+
+        assertThat(points).extracting(TrendPoint::expressionLevel).containsExactly("L4", "L2");
+        assertThat(points).extracting(TrendPoint::attemptCount).containsOnlyNulls();
+        assertThat(points).extracting(TrendPoint::recent).containsExactly(true, true);
+    }
+
+    @Test
     void currentWindowUsesNewestFiveButNeedsAtLeastThreeComparableRecords() {
         assertThat(DiagnosticMetrics.status(points(90, 80))).isEqualTo(OBSERVING);
         assertThat(DiagnosticMetrics.status(points(30, 85, 90, 80, 95, 100))).isEqualTo(STABLE);

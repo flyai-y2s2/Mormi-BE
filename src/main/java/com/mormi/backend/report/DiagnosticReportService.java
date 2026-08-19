@@ -149,8 +149,14 @@ public class DiagnosticReportService {
 
         List<DomainTrend> homeTrends = new ArrayList<>();
         homeTrends.addAll(presentTrends(analysis.homeDrillTrends(), "drill"));
-        homeTrends.addAll(presentTrends(analysis.teachTrends(), "teach"));
-        List<DomainTrend> lifeTrends = presentTrends(analysis.lifeTrends(), "life");
+        List<DomainTrend> presentedTeachTrends = presentTrends(analysis.teachTrends(), "teach");
+        homeTrends.addAll(presentedTeachTrends.stream()
+                .filter(trend -> HOME_LABELS.containsKey(trend.domainId()))
+                .toList());
+        List<DomainTrend> lifeTrends = new ArrayList<>(presentTrends(analysis.lifeTrends(), "life"));
+        lifeTrends.addAll(presentedTeachTrends.stream()
+                .filter(trend -> LIFE_LABELS.containsKey(trend.domainId()))
+                .toList());
         List<DomainStatus> statuses = presentStatuses(analysis.domainStatuses());
         List<ReportFact> facts = presentationFacts(analysis, records, aiEvidence.orElse(null), period);
 
@@ -181,7 +187,7 @@ public class DiagnosticReportService {
                         records.sessions().size(),
                         records.visits().size()),
                 narrative.currentSummary(),
-                List.of(new ModeReport(HOME, List.copyOf(homeTrends)), new ModeReport(LIFE, lifeTrends)),
+                List.of(new ModeReport(HOME, List.copyOf(homeTrends)), new ModeReport(LIFE, List.copyOf(lifeTrends))),
                 statuses,
                 narrative.improvedPoint(),
                 narrative.observePoint(),

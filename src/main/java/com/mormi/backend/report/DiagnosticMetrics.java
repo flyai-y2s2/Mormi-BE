@@ -110,6 +110,9 @@ final class DiagnosticMetrics {
                     point.occurredAt(),
                     point.independentScore(),
                     point.supportedScore(),
+                    point.attemptCount(),
+                    point.questionCount(),
+                    point.expressionLevel(),
                     index >= recentStart));
         }
         return List.copyOf(marked);
@@ -203,6 +206,9 @@ final class DiagnosticMetrics {
                         evidence.occurredAt(),
                         independentTeachScore(evidence),
                         supportedTeachScore(evidence),
+                        null,
+                        null,
+                        evidence.expressionLevel(),
                         false));
     }
 
@@ -241,12 +247,16 @@ final class DiagnosticMetrics {
     private static TrendPoint homePoint(HomeEvidence evidence, DrillMetric metric) {
         double rawFirstTryAccuracy = rawPercent(metric.firstTryCorrectCount(), metric.questionCount());
         double rawSupportedCompletion = 100.0 - rawPercent(metric.incorrectAttemptCount(), metric.attemptCount());
+        AttemptsToCorrect attemptsToCorrect = attemptsToCorrect(safeList(evidence.attempts()));
         return new TrendPoint(
                 evidence.sessionPublicId(),
                 "drill",
                 evidence.completedAt(),
                 rawFirstTryAccuracy,
                 rawSupportedCompletion,
+                attemptsToCorrect.attemptCount(),
+                attemptsToCorrect.questionCount(),
+                null,
                 false);
     }
 
@@ -257,13 +267,45 @@ final class DiagnosticMetrics {
                 .toList();
         LifeEvidence first = ordered.getFirst();
         boolean completed = ordered.stream().anyMatch(LifeEvidence::correct);
+        int attemptsToCorrect = java.util.stream.IntStream.range(0, ordered.size())
+                .filter(index -> ordered.get(index).correct())
+                .findFirst()
+                .orElse(-1) + 1;
         return new TrendPoint(
                 first.visitPublicId(),
                 "life",
                 first.occurredAt(),
                 first.correct() && !first.scaffoldUsed() ? 100.0 : 0.0,
                 completed ? 100.0 : 0.0,
+                completed ? attemptsToCorrect : null,
+                completed ? 1 : null,
+                null,
                 false);
+    }
+
+    private static AttemptsToCorrect attemptsToCorrect(List<AttemptEvidence> attempts) {
+        Map<String, List<AttemptEvidence>> byQuestion = safeList(attempts).stream()
+                .filter(Objects::nonNull)
+                .sorted(attemptOrder())
+                .collect(Collectors.groupingBy(
+                        DiagnosticMetrics::questionKey,
+                        LinkedHashMap::new,
+                        Collectors.toList()));
+        int attemptCount = 0;
+        int questionCount = 0;
+        for (List<AttemptEvidence> questionAttempts : byQuestion.values()) {
+            for (int index = 0; index < questionAttempts.size(); index++) {
+                if (questionAttempts.get(index).correct()) {
+                    attemptCount += index + 1;
+                    questionCount++;
+                    break;
+                }
+            }
+        }
+        return new AttemptsToCorrect(attemptCount, questionCount);
+    }
+
+    private record AttemptsToCorrect(int attemptCount, int questionCount) {
     }
 
     private static Map<String, DrillMetric> cumulativeHomeDrillMetrics(List<HomeEvidence> home) {
