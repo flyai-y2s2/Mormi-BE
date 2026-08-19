@@ -1,5 +1,6 @@
 package com.mormi.backend.session;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -20,6 +21,9 @@ public interface LearningSessionRepository extends JpaRepository<LearningSession
     Optional<LearningSession> findFirstByLearnerIdAndCompletedAtIsNullOrderByIdDesc(Long learnerId);
 
     List<LearningSession> findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(Long learnerId);
+
+    List<LearningSession> findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+            Long learnerId, OffsetDateTime startInclusive, OffsetDateTime endExclusive);
 
     Optional<LearningSession> findFirstByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(Long learnerId);
 }

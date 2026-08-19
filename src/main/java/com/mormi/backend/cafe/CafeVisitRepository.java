@@ -1,5 +1,6 @@
 package com.mormi.backend.cafe;
 
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -14,6 +15,9 @@ public interface CafeVisitRepository extends JpaRepository<CafeVisit, Long> {
     Optional<CafeVisit> findFirstByLearnerIdOrderByIdDesc(Long learnerId);
 
     List<CafeVisit> findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtAsc(Long learnerId);
+
+    List<CafeVisit> findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+            Long learnerId, OffsetDateTime startInclusive, OffsetDateTime endExclusive);
 
     int countByLearnerIdAndCompletedAtIsNotNull(Long learnerId);
 }
