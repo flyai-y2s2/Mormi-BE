@@ -237,6 +237,54 @@
 }
 ```
 
+**고정 질문 앵커(`turn.task_anchor`)**: 아이가 지금 답해야 할 질문입니다. 모르미 대사는
+도움 카드·브리지 반응으로 계속 바뀌므로 FE는 대사에서 원래 질문을 복원할 수 없습니다.
+AI가 LLM이 아닌 결정적 규칙으로 계산해 매 턴 실어 보내고, **BE는 이 값을 읽지도 바꾸지도
+않고 그대로 통과**시킵니다. 모르미 대사나 placeholder를 분석해 BE가 질문을 새로 만들지
+않습니다. 지어낸 값은 화면에 그럴듯하게 뜨면서 AI 상태와만 어긋나므로 탐지되지 않습니다.
+
+```json
+{
+  "turn": {
+    "task_anchor": {
+      "anchor_id": "cafe_queue:guided_count",
+      "title": "지금 모르미에게 알려줄 것",
+      "prompt": "사람을 한 명씩 눌러 두 줄을 같이 세어 볼까?",
+      "completed_items": [
+        { "slot_id": "left_count", "label": "왼쪽 줄 사람 수",
+          "value": 3, "display_text": "왼쪽 줄에는 3명이 있어." }
+      ],
+      "target_slots": ["right_count"]
+    }
+  }
+}
+```
+
+- **선택 필드입니다.** AI는 진행 중(`status=active`)이고 입력을 받는 턴에만 채웁니다.
+  완료된 턴과 `input.kind=none` 인 턴에는 `null` 로 옵니다.
+- 값이 **없는 모양이 두 가지**입니다. 신버전 AI 가 앵커를 뺀 턴은 `"task_anchor": null`,
+  아직 배포되지 않은 구버전 AI 응답은 **키 자체가 없습니다.** BE는 둘을 뭉개지 않고
+  받은 모양 그대로 넘깁니다. FE는 두 경우 모두 앵커 영역을 렌더링하지 않습니다.
+- `completed_items` 는 아이가 이미 검증된 값으로 알려 준 항목입니다. AI 가 검증한 슬롯만
+  들어가며, 자유 발화 원문은 들어가지 않습니다.
+- **스트리밍 경로는 현재 BE 에 없습니다.** AI 에는
+  `POST /v1/conversations/{id}/responses/stream` SSE 엔드포인트가 있고 앵커를
+  `mormi.delta` 보다 **먼저** `turn.metadata { turn_id, task_anchor }` 이벤트로 흘립니다.
+  대사가 흐르기 전에 질문이 화면에 고정되도록 한 순서입니다. 다만 BE 가 호출하는 AI 경로는
+  `POST /v1/conversations`, `POST /v1/conversations/{id}/responses`,
+  `GET /v1/conversations/{id}` 셋뿐이라 BE 프록시에는 스트리밍 구간이 없습니다. 나중에
+  BE 가 스트림을 중계하게 되면 `turn.metadata` 를 이 순서 그대로 전달해야 합니다.
+- 전 경로 무손실 전달은 `TaskAnchorContractIntegrationTest` 가 지킵니다. 대화 응답은
+  상류 스키마를 복제하지 않으려고 `JsonNode` 로 투명 전달하므로 자바 타입이 없고,
+  따라서 이 계약을 강제하는 것은 컴파일러가 아니라 그 테스트입니다.
+- **이 경로의 응답은 `/v3/api-docs` 로 타입 생성을 하면 안 됩니다.** 자동 생성 명세가
+  `GET /v1/dialogue/conversations/{id}` 와 `POST /v1/cafe-visits/{id}/dialogues` 는
+  빈 `{"type":"object"}` 로, `POST /v1/learning-sessions/{id}/teaching` 은
+  `JsonNode` 스키마로 내보내는데, 그 `JsonNode` 스키마의 속성은 실제 응답 필드가 아니라
+  Jackson 내부 판별 메서드(`array`, `empty`, `null`, `nodeType` …)입니다. 이 경로의
+  응답 형태는 AI 문서(`Mormi-AI/docs/API_SPEC.md`)의 `SessionEnvelope` 가 원본이고,
+  BE 가 카페에서 덧붙이는 필드는 이 문서가 원본입니다.
+
 **궁금해사전 중계**: 사전 카드는 AI가 소유한 승인·버전 관리 콘텐츠입니다. BE는
 인증과 소유권만 확인하고 카드 본문(`reference` + `card`)을 **무손실로 통과**시킵니다.
 문장을 보정하거나 자체 fallback 문구를 만들지 않으므로, 응답 스키마는 AI 문서
