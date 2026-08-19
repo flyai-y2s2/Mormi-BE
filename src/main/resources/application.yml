@@ -22,6 +22,9 @@ spring:
 mormi:
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
+  local-report-admin:
+    enabled: ${MORMI_LOCAL_REPORT_ADMIN_ENABLED:false}
+    key: ${MORMI_LOCAL_REPORT_ADMIN_KEY:}
   observation:
     # AI가 관찰 이벤트를 보낼 때 쓰는 공유 키. 비어 있으면 /internal/** 은 전부 401 이다.
     ingest-key: ${MORMI_OBSERVATION_INGEST_KEY:}

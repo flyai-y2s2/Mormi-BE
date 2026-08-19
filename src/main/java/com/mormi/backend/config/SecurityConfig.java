@@ -58,6 +58,7 @@ public class SecurityConfig {
                         // 연구 코드 단독 온보딩. FE 전환 후 아래 두 줄과 함께 제거한다.
                         .requestMatchers(HttpMethod.POST, "/v1/learners").permitAll()
                         .requestMatchers(HttpMethod.POST, "/v1/learners/auth").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/v1/local-report-admin/**").permitAll()
                         // 내부 서버 전용. 학습자 토큰이 아니라 서비스 키로만 통과한다.
                         .requestMatchers("/internal/**")
                         .hasAuthority(InternalServiceKeyFilter.SERVICE_AUTHORITY)

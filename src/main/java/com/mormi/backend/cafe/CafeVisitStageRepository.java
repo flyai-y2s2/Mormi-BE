@@ -11,5 +11,7 @@ public interface CafeVisitStageRepository extends JpaRepository<CafeVisitStage, 
 
     List<CafeVisitStage> findByCafeVisitIdOrderByIdAsc(Long cafeVisitId);
 
+    List<CafeVisitStage> findByCafeVisitIdInOrderByCreatedAtAscIdAsc(List<Long> cafeVisitIds);
+
     int countByCafeVisitIdAndStage(Long cafeVisitId, String stage);
 }

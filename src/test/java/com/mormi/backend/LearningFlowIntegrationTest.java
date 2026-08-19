@@ -7,6 +7,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.mormi.backend.curriculum.CurriculumCatalog;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.temporal.TemporalAdjusters;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -376,6 +380,130 @@ class LearningFlowIntegrationTest {
                 .andExpect(jsonPath("$.drill_coins").value(1000));
     }
 
+    @Test
+    void 진단_리포트는_인증한_학습자의_기록만_읽고_AI_오프라인_폴백을_반환한다() throws Exception {
+        JsonNode owner = createLearner("지우", "MORMI-G01");
+        JsonNode other = createLearner("수아", "MORMI-G02");
+        String ownerToken = "Bearer " + owner.get("access_token").asText();
+        String otherToken = "Bearer " + other.get("access_token").asText();
+        String sessionId = startSession(ownerToken, "money-count");
+
+        recordDrill(ownerToken, sessionId, 1, false);
+        recordDrill(ownerToken, sessionId, 2, true);
+        completeSessionByPublicId(ownerToken, sessionId);
+
+        mockMvc.perform(get("/v1/reports/diagnostic")
+                        .header("Authorization", ownerToken)
+                        .param("learner_id", String.valueOf(other.get("id").asLong())))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.learner.learner_id").value(owner.get("id").asLong()))
+                .andExpect(jsonPath("$.learner.display_name").value("지우"))
+                .andExpect(jsonPath("$.data_range.total_home_sessions").value(1))
+                .andExpect(jsonPath("$.evidence_counts.drill_attempts").value(2))
+                .andExpect(jsonPath("$.narrative_fallback").value(true));
+
+        mockMvc.perform(get("/v1/reports/diagnostic").header("Authorization", otherToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.learner.learner_id").value(other.get("id").asLong()))
+                .andExpect(jsonPath("$.learner.display_name").value("수아"))
+                .andExpect(jsonPath("$.data_range.total_home_sessions").value(0))
+                .andExpect(jsonPath("$.evidence_counts.drill_attempts").value(0));
+    }
+
+    @Test
+    void 진단_리포트는_새로_완료한_세션을_저장_없이_다음_조회에_반영한다() throws Exception {
+        String token = "Bearer " + createLearner("다온", "MORMI-G03").get("access_token").asText();
+        completeSession(token, "money-count");
+
+        mockMvc.perform(get("/v1/reports/diagnostic").header("Authorization", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data_range.total_home_sessions").value(1));
+
+        completeSession(token, "money-count");
+
+        mockMvc.perform(get("/v1/reports/diagnostic").header("Authorization", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data_range.total_home_sessions").value(2))
+                .andExpect(jsonPath("$.modes[0].domains[0].total_count").value(2));
+    }
+
+    @Test
+    void 진단_리포트는_인증_없이는_읽을_수_없다() throws Exception {
+        mockMvc.perform(get("/v1/reports/diagnostic"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void 진단_리포트는_서울_월요일_주차를_검증하고_메타데이터를_반환한다() throws Exception {
+        String token = "Bearer " + createLearner("하린", "MORMI-G05").get("access_token").asText();
+        LocalDate monday = LocalDate.now(ZoneId.of("Asia/Seoul"))
+                .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+
+        mockMvc.perform(get("/v1/reports/diagnostic")
+                        .header("Authorization", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.period.week_start").value(monday.toString()))
+                .andExpect(jsonPath("$.period.week_end").value(monday.plusDays(6).toString()))
+                .andExpect(jsonPath("$.period.timezone").value("Asia/Seoul"));
+
+        mockMvc.perform(get("/v1/reports/diagnostic")
+                        .header("Authorization", token)
+                        .param("week_start", monday.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.period.week_start").value(monday.toString()))
+                .andExpect(jsonPath("$.period.week_end").value(monday.plusDays(6).toString()))
+                .andExpect(jsonPath("$.period.timezone").value("Asia/Seoul"));
+
+        mockMvc.perform(get("/v1/reports/diagnostic")
+                        .header("Authorization", token)
+                        .param("week_start", monday.plusDays(1).toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("week_start"));
+
+        mockMvc.perform(get("/v1/reports/diagnostic")
+                        .header("Authorization", token)
+                        .param("week_start", monday.plusWeeks(1).toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("week_start"));
+
+        mockMvc.perform(get("/v1/reports/diagnostic")
+                        .header("Authorization", token)
+                        .param("week_start", monday.minusWeeks(1).toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("week_start"));
+
+        mockMvc.perform(get("/v1/reports/diagnostic/speech-evidence")
+                        .header("Authorization", token)
+                        .param("domain_id", "money-count")
+                        .param("week_start", monday.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.domain_id").value("money-count"));
+    }
+
+    @Test
+    void 발화_근거는_알려진_비어있지_않은_영역만_인증한_학습자에게_반환한다() throws Exception {
+        String token = "Bearer " + createLearner("유진", "MORMI-G04").get("access_token").asText();
+
+        mockMvc.perform(get("/v1/reports/diagnostic/speech-evidence")
+                        .header("Authorization", token)
+                        .param("domain_id", "money-count"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.domain_id").value("money-count"))
+                .andExpect(jsonPath("$.available").value(false));
+
+        mockMvc.perform(get("/v1/reports/diagnostic/speech-evidence")
+                        .header("Authorization", token)
+                        .param("domain_id", "unknown-domain"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("domain_id"));
+
+        mockMvc.perform(get("/v1/reports/diagnostic/speech-evidence")
+                        .header("Authorization", token)
+                        .param("domain_id", "   "))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("domain_id"));
+    }
+
     private String startSession(String token, String curriculumSessionId) throws Exception {
         String body = mockMvc.perform(post("/v1/learning-sessions")
                         .header("Authorization", token)
@@ -385,6 +513,33 @@ class LearningFlowIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         return objectMapper.readTree(body).get("learning_session_id").asText();
+    }
+
+    private void recordDrill(String token, String sessionId, int attemptNo, boolean correct) throws Exception {
+        mockMvc.perform(post("/v1/learning-sessions/{id}/attempts", sessionId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "activity", "drill",
+                                "attempt_no", attemptNo,
+                                "item_id", "money-count:0",
+                                "question_index", 0,
+                                "is_correct", correct,
+                                "elapsed_ms", 2500,
+                                "answer_meta", Map.of("selected_choice_id", correct ? "c1" : "c2")))))
+                .andExpect(status().isCreated());
+    }
+
+    private void completeSessionByPublicId(String token, String sessionId) throws Exception {
+        mockMvc.perform(post("/v1/learning-sessions/{id}/complete", sessionId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "transfer_solved", true,
+                                "timed_out", false,
+                                "scaffold_level", 3,
+                                "elapsed_seconds", 150))))
+                .andExpect(status().isOk());
     }
 
     /** 5문제를 첫 시도에 모두 맞히고 세션을 끝낸다. 드릴 보상은 1,000원 상한이다. */
