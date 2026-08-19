@@ -144,7 +144,7 @@ public class DiagnosticReportService {
         RecordContext records = loadRecords(learnerId, true, period);
         boolean includeRaw = rawEvidencePermitted(learner);
         Optional<AiReportEvidence> aiEvidence = safeEvidence(learnerId, includeRaw);
-        List<TeachEvidence> teach = normalizeTeach(records, aiEvidence.orElse(null));
+        List<TeachEvidence> teach = normalizeTeach(records, aiEvidence.orElse(null), period);
         DiagnosticAnalysis analysis = DiagnosticMetrics.analyze(records.home(), teach, records.life());
 
         List<DomainTrend> homeTrends = new ArrayList<>();
@@ -152,7 +152,7 @@ public class DiagnosticReportService {
         homeTrends.addAll(presentTrends(analysis.teachTrends(), "teach"));
         List<DomainTrend> lifeTrends = presentTrends(analysis.lifeTrends(), "life");
         List<DomainStatus> statuses = presentStatuses(analysis.domainStatuses());
-        List<ReportFact> facts = presentationFacts(analysis, records, aiEvidence.orElse(null));
+        List<ReportFact> facts = presentationFacts(analysis, records, aiEvidence.orElse(null), period);
 
         NarrativeResult narrative = narrative(learner.getAnalyticsId().toString(), facts);
         List<OffsetDateTime> occurrences = new ArrayList<>();
@@ -166,7 +166,7 @@ public class DiagnosticReportService {
                 .forEach(occurrences::add);
         occurrences.sort(Comparator.naturalOrder());
 
-        int speechSamples = aiEvidence.map(evidence -> speechCandidates(records, evidence, null).size()).orElse(0);
+        int speechSamples = aiEvidence.map(evidence -> speechCandidates(records, evidence, null, period).size()).orElse(0);
         return new DiagnosticReport(
                 new LearnerHeader(learnerId, learner.getDisplayName()),
                 new ReportPeriod(
@@ -207,7 +207,7 @@ public class DiagnosticReportService {
             return unavailableSpeech(domainId);
         }
 
-        List<SpeechCandidate> candidates = speechCandidates(records, evidence.orElseThrow(), domainId);
+        List<SpeechCandidate> candidates = speechCandidates(records, evidence.orElseThrow(), domainId, period);
         Optional<SpeechPair> pair = comparablePair(candidates);
         if (pair.isEmpty()) {
             return unavailableSpeech(domainId);
@@ -232,6 +232,7 @@ public class DiagnosticReportService {
                 .filter(session -> Objects.equals(session.getLearnerId(), learnerId))
                 .filter(session -> session.getId() != null && session.getPublicId() != null)
                 .filter(session -> session.getCompletedAt() != null)
+                .filter(session -> isWithin(period, session.getCompletedAt()))
                 .filter(session -> HOME_LABELS.containsKey(session.getCurriculumSessionId()))
                 .collect(Collectors.toMap(
                         LearningSession::getId,
@@ -280,6 +281,7 @@ public class DiagnosticReportService {
                 .filter(Objects::nonNull)
                 .filter(visit -> Objects.equals(visit.getLearnerId(), learnerId))
                 .filter(visit -> visit.getId() != null && visit.getPublicId() != null && visit.getCompletedAt() != null)
+                .filter(visit -> isWithin(period, visit.getCompletedAt()))
                 .collect(Collectors.toMap(
                         CafeVisit::getId,
                         Function.identity(),
@@ -289,7 +291,10 @@ public class DiagnosticReportService {
         List<CafeVisitStage> stageRows = loadMetricRows && !visitIds.isEmpty()
                 ? dedupeStages(cafeVisitStageRepository.findByCafeVisitIdInOrderByCreatedAtAscIdAsc(visitIds))
                 : List.of();
-        List<LifeEvidence> life = new ArrayList<>(stageRows.stream()
+        List<CafeVisitStage> weekStageRows = stageRows.stream()
+                .filter(stage -> isWithin(period, stage.getCreatedAt()))
+                .toList();
+        List<LifeEvidence> life = new ArrayList<>(weekStageRows.stream()
                 .filter(stage -> visits.containsKey(stage.getCafeVisitId()))
                 .filter(stage -> LIFE_LABELS.containsKey(stage.getStage()))
                 .map(stage -> new LifeEvidence(
@@ -303,7 +308,7 @@ public class DiagnosticReportService {
                 .toList());
         if (loadMetricRows) {
             for (CafeVisit visit : visits.values()) {
-                life.add(completionEvidence(visit, stageRows));
+                life.add(completionEvidence(visit, weekStageRows));
             }
         }
 
@@ -320,6 +325,12 @@ public class DiagnosticReportService {
                         (first, ignored) -> first,
                         LinkedHashMap::new));
         return new RecordContext(sessions, visits, dialogues, List.copyOf(home), List.copyOf(life));
+    }
+
+    private boolean isWithin(WeeklyReportPeriod period, OffsetDateTime occurredAt) {
+        return occurredAt != null
+                && !occurredAt.isBefore(period.startInclusive())
+                && occurredAt.isBefore(period.endExclusive());
     }
 
     private boolean scaffoldUsed(CafeVisitStage stage) {
@@ -368,7 +379,8 @@ public class DiagnosticReportService {
         return homeOwned || lifeOwned;
     }
 
-    private List<TeachEvidence> normalizeTeach(RecordContext records, AiReportEvidence evidence) {
+    private List<TeachEvidence> normalizeTeach(
+            RecordContext records, AiReportEvidence evidence, WeeklyReportPeriod period) {
         if (!validAiEnvelope(evidence)) {
             return List.of();
         }
@@ -381,12 +393,13 @@ public class DiagnosticReportService {
                 continue;
             }
             String domainId = ownedDomain(records, owner, conversation);
-            if (domainId == null || !completedEvidence(conversation)) {
+            if (domainId == null || !completedEvidence(conversation) || !isWithin(period, conversation.updatedAt())) {
                 continue;
             }
             AiTurnEvidence representative = safeList(conversation.turns()).stream()
                     .filter(Objects::nonNull)
                     .filter(turn -> turn.taskId() != null && !turn.taskId().isBlank())
+                    .filter(turn -> isWithin(period, turn.createdAt()))
                     .sorted(Comparator.comparing(
                             AiTurnEvidence::createdAt, Comparator.nullsLast(Comparator.naturalOrder())))
                     .reduce((first, second) -> second)
@@ -480,7 +493,8 @@ public class DiagnosticReportService {
     private List<SpeechCandidate> speechCandidates(
             RecordContext records,
             AiReportEvidence evidence,
-            String requestedDomain) {
+            String requestedDomain,
+            WeeklyReportPeriod period) {
         if (!validAiEnvelope(evidence)) {
             return List.of();
         }
@@ -490,13 +504,15 @@ public class DiagnosticReportService {
             String domainId = ownedDomain(records, owner, conversation);
             if (domainId == null
                     || (requestedDomain != null && !requestedDomain.equals(domainId))
-                    || !completedEvidence(conversation)) {
+                    || !completedEvidence(conversation)
+                    || !isWithin(period, conversation.updatedAt())) {
                 continue;
             }
             Set<String> seenTurnIds = new HashSet<>();
             List<AiTurnEvidence> orderedTurns = safeList(conversation.turns()).stream()
                     .filter(Objects::nonNull)
                     .filter(turn -> turn.turnId() != null && seenTurnIds.add(turn.turnId()))
+                    .filter(turn -> isWithin(period, turn.createdAt()))
                     .sorted(Comparator
                             .comparing(AiTurnEvidence::createdAt, Comparator.nullsLast(Comparator.naturalOrder()))
                             .thenComparing(AiTurnEvidence::turnId))
@@ -604,9 +620,9 @@ public class DiagnosticReportService {
                 .map(trend -> new DomainTrend(
                         trend.domainId(),
                         switch (kind) {
-                            case "drill" -> labelFor(trend.domainId()) + " · 문제 정답률";
-                            case "teach" -> labelFor(trend.domainId()) + " · 혼자 설명하기";
-                            default -> labelFor(trend.domainId());
+                            case "drill" -> unitLabel(trend.domainId()) + " · 반복학습";
+                            case "teach" -> unitLabel(trend.domainId()) + " · 모르미 가르치기";
+                            default -> unitLabel(trend.domainId());
                         },
                         trend.points(),
                         trend.totalCount(),
@@ -620,9 +636,9 @@ public class DiagnosticReportService {
                 .map(status -> new DomainStatus(
                         status.domainId(),
                         switch (status.label()) {
-                            case "drill" -> labelFor(status.domainId()) + " · 문제 정답률";
-                            case "teach" -> labelFor(status.domainId()) + " · 혼자 설명하기";
-                            default -> labelFor(status.domainId());
+                            case "drill" -> unitLabel(status.domainId()) + " · 반복학습";
+                            case "teach" -> unitLabel(status.domainId()) + " · 모르미 가르치기";
+                            default -> unitLabel(status.domainId());
                         },
                         status.status(),
                         status.direction(),
@@ -634,7 +650,8 @@ public class DiagnosticReportService {
     private List<ReportFact> presentationFacts(
             DiagnosticAnalysis analysis,
             RecordContext records,
-            AiReportEvidence aiEvidence) {
+            AiReportEvidence aiEvidence,
+            WeeklyReportPeriod period) {
         Map<String, DomainStatus> statuses = safeList(analysis.domainStatuses()).stream()
                 .collect(Collectors.toMap(
                         status -> status.label() + ":" + status.domainId(),
@@ -643,7 +660,7 @@ public class DiagnosticReportService {
                         LinkedHashMap::new));
         List<ReportFact> facts = new ArrayList<>();
         appendTrendFacts(facts, analysis.homeDrillTrends(), statuses, "drill", CONCEPT);
-        facts.addAll(speechFacts(records, aiEvidence));
+        facts.addAll(speechFacts(records, aiEvidence, period));
         appendTrendFacts(facts, analysis.teachTrends(), statuses, "teach", EXPLANATION);
         appendTrendFacts(facts, analysis.lifeTrends(), statuses, "life", FactCategory.LIFE);
 
@@ -669,7 +686,7 @@ public class DiagnosticReportService {
                 .map(status -> new ReportFact(
                         "observe:" + status.label() + ":" + status.domainId(),
                         OBSERVE,
-                        labelFor(status.domainId()) + "의 현재 상태는 " + koreanStatus(status.status())
+                        unitLabel(status.domainId()) + "의 현재 상태는 " + koreanStatus(status.status())
                                 + "이므로 계속 관찰합니다."))
                 .orElseGet(() -> new ReportFact(
                         "observe:next-records",
@@ -680,13 +697,14 @@ public class DiagnosticReportService {
         return List.copyOf(facts);
     }
 
-    private List<ReportFact> speechFacts(RecordContext records, AiReportEvidence aiEvidence) {
+    private List<ReportFact> speechFacts(
+            RecordContext records, AiReportEvidence aiEvidence, WeeklyReportPeriod period) {
         if (!validAiEnvelope(aiEvidence)) {
             return List.of();
         }
         List<ReportFact> facts = new ArrayList<>();
         for (String domainId : REPORT_DOMAINS) {
-            Optional<SpeechPair> pair = comparablePair(speechCandidates(records, aiEvidence, domainId));
+            Optional<SpeechPair> pair = comparablePair(speechCandidates(records, aiEvidence, domainId, period));
             if (pair.isEmpty()) {
                 continue;
             }
@@ -700,7 +718,7 @@ public class DiagnosticReportService {
             facts.add(new ReportFact(
                     "speech:" + domainId,
                     EXPLANATION,
-                    labelFor(domainId) + " 발화 비교에서 공통 검증 요소 "
+                    unitLabel(domainId) + " 발화 비교에서 공통 검증 요소 "
                             + selected.verifiedElements().size() + "개가 확인되었고 " + helpChange));
         }
         return List.copyOf(facts);
@@ -720,7 +738,6 @@ public class DiagnosticReportService {
                         statuses.get(kind + ":" + right.domainId())))
                 .toList();
         for (DomainTrend trend : salientTrends) {
-            String label = labelFor(trend.domainId());
             DomainStatus status = statuses.get(kind + ":" + trend.domainId());
             double recentAverage = trend.points().stream()
                     .filter(TrendPoint::recent)
@@ -728,11 +745,11 @@ public class DiagnosticReportService {
                     .average()
                     .orElse(0.0);
             String statement = switch (kind) {
-                case "drill" -> label + " 문제 정답률은 최근 " + display(recentAverage)
+                case "drill" -> unitLabel(trend.domainId()) + " 반복학습 수행은 최근 " + display(recentAverage)
                         + "%이며 상태는 " + koreanStatus(status.status()) + "입니다.";
-                case "teach" -> label + "를 최근 혼자 설명한 비율은 " + display(recentAverage)
+                case "teach" -> unitLabel(trend.domainId()) + " 모르미 가르치기 수행은 최근 " + display(recentAverage)
                         + "%이며 상태는 " + koreanStatus(status.status()) + "입니다.";
-                default -> label + "를 최근 혼자 해결한 비율은 " + display(recentAverage)
+                default -> unitLabel(trend.domainId()) + " 실생활 수행은 최근 " + display(recentAverage)
                         + "%이며 상태는 " + koreanStatus(status.status()) + "입니다.";
             };
             facts.add(new ReportFact(
@@ -743,11 +760,10 @@ public class DiagnosticReportService {
     }
 
     private String improvedStatement(DomainStatus status) {
-        String label = labelFor(status.domainId());
         return switch (status.label()) {
-            case "drill" -> label + " 문제 정답률은 이전 기록보다 좋아졌습니다.";
-            case "teach" -> label + "를 혼자 설명한 결과는 이전 기록보다 좋아졌습니다.";
-            default -> label + "를 혼자 해결한 결과는 이전 기록보다 좋아졌습니다.";
+            case "drill" -> unitLabel(status.domainId()) + " 반복학습 수행은 이전 기록보다 좋아졌습니다.";
+            case "teach" -> unitLabel(status.domainId()) + " 모르미 가르치기 수행은 이전 기록보다 좋아졌습니다.";
+            default -> unitLabel(status.domainId()) + " 실생활 수행은 이전 기록보다 좋아졌습니다.";
         };
     }
 
@@ -926,6 +942,11 @@ public class DiagnosticReportService {
 
     private String labelFor(String domainId) {
         return HOME_LABELS.containsKey(domainId) ? HOME_LABELS.get(domainId) : LIFE_LABELS.get(domainId);
+    }
+
+    private String unitLabel(String domainId) {
+        String label = labelFor(domainId);
+        return label == null ? null : label + " 단원";
     }
 
     private String koreanStatus(StatusLabel status) {

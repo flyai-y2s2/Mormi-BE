@@ -53,7 +53,7 @@ class DiagnosticReportServiceTest {
 
     private static final long LEARNER_ID = 7L;
     private static final OffsetDateTime JANUARY = OffsetDateTime.parse("2026-01-10T09:00:00+09:00");
-    private static final OffsetDateTime FEBRUARY = OffsetDateTime.parse("2026-02-10T09:00:00+09:00");
+    private static final OffsetDateTime FEBRUARY = JANUARY.plusHours(1);
     private static final LocalDate REPORT_WEEK = LocalDate.parse("2026-01-05");
     private static final Clock CLOCK = Clock.fixed(
             Instant.parse("2026-08-19T01:00:00Z"), ZoneId.of("Asia/Seoul"));
@@ -107,7 +107,10 @@ class DiagnosticReportServiceTest {
         when(sessionRepository
                 .findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
                         eq(LEARNER_ID), any(), any()))
-                .thenReturn(List.of(completedSession("money-count", "2026-08-18T10:00:00+09:00")));
+                .thenReturn(List.of(
+                        session(11L, LEARNER_ID, "money-count", OffsetDateTime.parse("2026-08-23T23:59:00+09:00")),
+                        session(12L, LEARNER_ID, "money-count", OffsetDateTime.parse("2026-08-24T00:00:00+09:00")),
+                        startedSession(13L, "money-count", OffsetDateTime.parse("2026-08-18T10:00:00+09:00"))));
         when(cafeVisitRepository
                 .findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
                         eq(LEARNER_ID), any(), any()))
@@ -118,6 +121,36 @@ class DiagnosticReportServiceTest {
         assertThat(report.period().weekStart()).isEqualTo(LocalDate.parse("2026-08-17"));
         assertThat(report.dataRange().totalHomeSessions()).isEqualTo(1);
         assertThat(report.dataRange().totalLifeVisits()).isZero();
+        assertThat(report.dataRange().firstAt()).isEqualTo(OffsetDateTime.parse("2026-08-23T23:59:00+09:00"));
+
+        ArgumentCaptor<OffsetDateTime> start = ArgumentCaptor.forClass(OffsetDateTime.class);
+        ArgumentCaptor<OffsetDateTime> end = ArgumentCaptor.forClass(OffsetDateTime.class);
+        verify(sessionRepository)
+                .findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                        eq(LEARNER_ID), start.capture(), end.capture());
+        verify(cafeVisitRepository)
+                .findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                        eq(LEARNER_ID), eq(start.getValue()), eq(end.getValue()));
+        assertThat(start.getValue()).isEqualTo(OffsetDateTime.parse("2026-08-17T00:00:00+09:00"));
+        assertThat(end.getValue()).isEqualTo(OffsetDateTime.parse("2026-08-24T00:00:00+09:00"));
+    }
+
+    @Test
+    void currentExcludesLaterWeekReplayStagesForAVisitCompletedInsideTheWeek() {
+        CafeVisit visit = visit(21L, LEARNER_ID, OffsetDateTime.parse("2026-08-23T20:00:00+09:00"));
+        when(cafeVisitRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any())).thenReturn(List.of(visit));
+        when(cafeVisitStageRepository.findByCafeVisitIdInOrderByCreatedAtAscIdAsc(List.of(21L))).thenReturn(List.of(
+                cafeStage(201L, 21L, CafeStage.QUEUE, 1, true, OffsetDateTime.parse("2026-08-23T23:57:00+09:00")),
+                cafeStage(202L, 21L, CafeStage.MENU, 1, true, OffsetDateTime.parse("2026-08-23T23:58:00+09:00")),
+                cafeStage(203L, 21L, CafeStage.CALCULATE, 1, true, OffsetDateTime.parse("2026-08-23T23:59:00+09:00")),
+                cafeStage(204L, 21L, CafeStage.CHANGE, 1, true, OffsetDateTime.parse("2026-08-24T00:00:00+09:00"))));
+
+        DiagnosticReport report = service.current(LEARNER_ID, LocalDate.parse("2026-08-17"));
+
+        assertThat(lifeTrend(report, "calculate").points()).extracting(point -> point.occurredAt())
+                .containsExactly(OffsetDateTime.parse("2026-08-23T23:59:00+09:00"));
+        assertThat(lifeTrend(report, "complete").points().getFirst().independentScore()).isZero();
     }
 
     @Test
@@ -127,6 +160,58 @@ class DiagnosticReportServiceTest {
         verify(sessionRepository)
                 .findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
                         eq(LEARNER_ID), any(), any());
+    }
+
+    @Test
+    void currentAndSpeechEvidenceExcludeOwnedAiEvidenceOutsideTheSelectedWeek() {
+        LearningSession first = session(11L, LEARNER_ID, "money-count", OffsetDateTime.parse("2026-08-18T10:00:00+09:00"));
+        LearningSession second = session(12L, LEARNER_ID, "money-count", OffsetDateTime.parse("2026-08-19T10:00:00+09:00"));
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any())).thenReturn(List.of(first, second));
+        when(dialogueRepository.findByLearnerIdOrderByCreatedAtAsc(LEARNER_ID)).thenReturn(List.of(
+                DialogueConversation.forLearningSession("conversation-inside", LEARNER_ID, 11L),
+                DialogueConversation.forLearningSession("conversation-later", LEARNER_ID, 12L)));
+        when(aiClient.evidence(LEARNER_ID, true)).thenReturn(Optional.of(new AiReportEvidence(
+                LEARNER_ID,
+                List.of(
+                        completedConversation("conversation-inside", first.getPublicId(), "같은 과제", "이번 주 발화", "H1",
+                                OffsetDateTime.parse("2026-08-18T11:00:00+09:00")),
+                        completedConversation("conversation-later", second.getPublicId(), "같은 과제", "다음 주 재생", "H0",
+                                OffsetDateTime.parse("2026-08-24T00:00:00+09:00"))),
+                List.of(),
+                List.of())));
+
+        DiagnosticReport report = service.current(LEARNER_ID, LocalDate.parse("2026-08-17"));
+        SpeechEvidence evidence = service.speechEvidence(LEARNER_ID, "money-count", LocalDate.parse("2026-08-17"));
+
+        assertThat(report.evidenceCounts().teachConversations()).isEqualTo(1);
+        assertThat(evidence.available()).isFalse();
+    }
+
+    @Test
+    void speechEvidenceExcludesOutOfWeekTurnsFromAnOtherwiseSelectedConversation() {
+        LearningSession first = session(11L, LEARNER_ID, "money-count", OffsetDateTime.parse("2026-08-18T10:00:00+09:00"));
+        LearningSession second = session(12L, LEARNER_ID, "money-count", OffsetDateTime.parse("2026-08-19T10:00:00+09:00"));
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any())).thenReturn(List.of(first, second));
+        when(dialogueRepository.findByLearnerIdOrderByCreatedAtAsc(LEARNER_ID)).thenReturn(List.of(
+                DialogueConversation.forLearningSession("conversation-inside", LEARNER_ID, 11L),
+                DialogueConversation.forLearningSession("conversation-later-turn", LEARNER_ID, 12L)));
+        AiConversationEvidence laterTurns = completedConversation(
+                "conversation-later-turn", second.getPublicId(), "같은 과제", "다음 주 발화", "H0",
+                OffsetDateTime.parse("2026-08-24T00:00:00+09:00"));
+        when(aiClient.evidence(LEARNER_ID, true)).thenReturn(Optional.of(new AiReportEvidence(
+                LEARNER_ID,
+                List.of(
+                        completedConversation("conversation-inside", first.getPublicId(), "같은 과제", "이번 주 발화", "H1",
+                                OffsetDateTime.parse("2026-08-18T11:00:00+09:00")),
+                        withUpdatedAt(laterTurns, OffsetDateTime.parse("2026-08-19T11:00:00+09:00"))),
+                List.of(),
+                List.of())));
+
+        SpeechEvidence evidence = service.speechEvidence(LEARNER_ID, "money-count", LocalDate.parse("2026-08-17"));
+
+        assertThat(evidence.available()).isFalse();
     }
 
     @Test
@@ -159,9 +244,9 @@ class DiagnosticReportServiceTest {
         assertThat(report.dataRange().totalLifeVisits()).isEqualTo(1);
         assertThat(report.modes()).extracting(ModeReport::mode).containsExactly(HOME, LIFE);
         assertThat(report.modes().getFirst().domains()).extracting(domain -> domain.label())
-                .contains("돈 세기 · 문제 정답률");
+                .contains("돈 세기 단원 · 반복학습");
         assertThat(report.modes().getLast().domains()).extracting(domain -> domain.label())
-                .contains("메뉴 값 계산하기");
+                .contains("메뉴 값 계산하기 단원");
         assertThat(report.evidenceCounts().drillAttempts()).isEqualTo(3);
         verify(attemptRepository).findByLearningSessionIdInOrderByCreatedAtAscIdAsc(List.of(11L, 12L));
         verify(cafeVisitStageRepository).findByCafeVisitIdInOrderByCreatedAtAscIdAsc(List.of(21L));
@@ -184,7 +269,7 @@ class DiagnosticReportServiceTest {
         assertThat(report.evidenceCounts().homeSessions()).isEqualTo(1);
         assertThat(report.evidenceCounts().drillAttempts()).isZero();
         assertThat(report.modes().getFirst().domains())
-                .noneMatch(domain -> domain.label().contains("문제 정답률"));
+                .noneMatch(domain -> domain.label().contains("반복학습"));
     }
 
     @Test
@@ -213,11 +298,11 @@ class DiagnosticReportServiceTest {
         DiagnosticReport report = service.current(LEARNER_ID, REPORT_WEEK);
 
         assertThat(report.currentSummary().conceptPerformance().text())
-                .isEqualTo("돈 세기 문제 정답률은 최근 60%이며 상태는 발달 중입니다.");
+                .isEqualTo("돈 세기 단원 반복학습 수행은 최근 60%이며 상태는 발달 중입니다.");
         assertThat(report.currentSummary().conceptPerformance().evidenceRefs())
                 .containsExactly("drill:money-count");
         assertThat(report.observePoint().text())
-                .isEqualTo("돈 세기의 현재 상태는 발달 중이므로 계속 관찰합니다.");
+                .isEqualTo("돈 세기 단원의 현재 상태는 발달 중이므로 계속 관찰합니다.");
         assertThat(report.observePoint().evidenceRefs())
                 .containsExactly("observe:drill:money-count");
 
@@ -238,7 +323,7 @@ class DiagnosticReportServiceTest {
         DiagnosticReport report = service.current(LEARNER_ID, REPORT_WEEK);
 
         assertThat(report.improvedPoint().text())
-                .isEqualTo("돈 세기 문제 정답률은 이전 기록보다 좋아졌습니다.");
+                .isEqualTo("돈 세기 단원 반복학습 수행은 이전 기록보다 좋아졌습니다.");
         assertThat(report.improvedPoint().evidenceRefs())
                 .containsExactly("improved:drill:money-count");
     }
@@ -302,7 +387,7 @@ class DiagnosticReportServiceTest {
 
         assertThat(report.evidenceCounts().teachConversations()).isEqualTo(1);
         assertThat(report.modes().getFirst().domains()).extracting(domain -> domain.label())
-                .contains("돈 세기 · 혼자 설명하기");
+                .contains("돈 세기 단원 · 모르미 가르치기");
     }
 
     @Test
@@ -328,7 +413,7 @@ class DiagnosticReportServiceTest {
 
         assertThat(report.evidenceCounts().teachConversations()).isZero();
         assertThat(report.modes().getFirst().domains())
-                .noneMatch(domain -> domain.label().contains("혼자 설명하기"));
+                .noneMatch(domain -> domain.label().contains("모르미 가르치기"));
     }
 
     @Test
@@ -350,7 +435,7 @@ class DiagnosticReportServiceTest {
 
         assertThat(report.narrativeFallback()).isFalse();
         assertThat(report.currentSummary().conceptPerformance().text())
-                .isEqualTo("돈 세기 문제 정답률은 최근 100%이며 상태는 관찰 중입니다.");
+                .isEqualTo("돈 세기 단원 반복학습 수행은 최근 100%이며 상태는 관찰 중입니다.");
     }
 
     @Test
@@ -577,7 +662,7 @@ class DiagnosticReportServiceTest {
         assertThat(facts.getValue())
                 .filteredOn(fact -> fact.evidenceId().equals("speech:money-count"))
                 .extracting(ReportFact::statement)
-                .containsExactly("돈 세기 발화 비교에서 공통 검증 요소 1개가 확인되었고 도움 수준은 H3에서 H0로 바뀌었습니다.");
+                .containsExactly("돈 세기 단원 발화 비교에서 공통 검증 요소 1개가 확인되었고 도움 수준은 H3에서 H0로 바뀌었습니다.");
         assertThat(facts.getValue()).allMatch(fact -> !fact.statement().contains(" recent "));
     }
 
@@ -624,7 +709,7 @@ class DiagnosticReportServiceTest {
         boolean[] countCorrect = {true, true, true, true, true, true, true, false, false};
         for (int index = 0; index < countCorrect.length; index++) {
             long sessionId = 12L + index;
-            OffsetDateTime completedAt = JANUARY.plusDays(index + 1L);
+            OffsetDateTime completedAt = JANUARY.plusHours(index + 1L);
             sessions.add(session(sessionId, LEARNER_ID, "money-count", completedAt));
             attempts.add(attempt(102L + index, sessionId, 1, countCorrect[index], completedAt));
         }
@@ -644,14 +729,14 @@ class DiagnosticReportServiceTest {
         long sessionId = 11L;
         long attemptId = 101L;
         for (int index = 0; index < countCorrect.length; index++) {
-            OffsetDateTime completedAt = JANUARY.plusDays(index);
+            OffsetDateTime completedAt = JANUARY.plusHours(index);
             sessions.add(session(sessionId, LEARNER_ID, "money-count", completedAt));
             attempts.add(attempt(attemptId, sessionId, 1, countCorrect[index], completedAt));
             sessionId++;
             attemptId++;
         }
         for (int index = 0; index < budgetCorrect.length; index++) {
-            OffsetDateTime completedAt = JANUARY.plusDays(10L + index);
+            OffsetDateTime completedAt = JANUARY.plusHours(10L + index);
             sessions.add(session(sessionId, LEARNER_ID, "money-budget", completedAt));
             attempts.add(attempt(attemptId, sessionId, 1, budgetCorrect[index], completedAt));
             sessionId++;
@@ -719,6 +804,13 @@ class DiagnosticReportServiceTest {
 
     private LearningSession completedSession(String domainId, String completedAt) {
         return session(11L, LEARNER_ID, domainId, OffsetDateTime.parse(completedAt));
+    }
+
+    private LearningSession startedSession(long id, String domainId, OffsetDateTime startedAt) {
+        LearningSession session = LearningSession.start(LEARNER_ID, domainId, 17);
+        ReflectionTestUtils.setField(session, "id", id);
+        ReflectionTestUtils.setField(session, "startedAt", startedAt);
+        return session;
     }
 
     private Attempt attempt(
@@ -831,6 +923,23 @@ class DiagnosticReportServiceTest {
                 List.of(turn),
                 occurredAt.minusMinutes(5),
                 occurredAt);
+    }
+
+    private AiConversationEvidence withUpdatedAt(
+            AiConversationEvidence conversation, OffsetDateTime updatedAt) {
+        return new AiConversationEvidence(
+                conversation.conversationId(),
+                conversation.learningSessionId(),
+                conversation.scene(),
+                conversation.scenarioId(),
+                conversation.status(),
+                conversation.completionOutcome(),
+                conversation.teachRewardEligible(),
+                conversation.verifiedSlots(),
+                conversation.taskMaxHint(),
+                conversation.turns(),
+                conversation.createdAt(),
+                updatedAt);
     }
 
     private AiConversationEvidence completedCafeConversation(

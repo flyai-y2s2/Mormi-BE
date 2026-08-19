@@ -7,6 +7,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.mormi.backend.curriculum.CurriculumCatalog;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.temporal.TemporalAdjusters;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -432,38 +436,46 @@ class LearningFlowIntegrationTest {
     @Test
     void 진단_리포트는_서울_월요일_주차를_검증하고_메타데이터를_반환한다() throws Exception {
         String token = "Bearer " + createLearner("하린", "MORMI-G05").get("access_token").asText();
+        LocalDate monday = LocalDate.now(ZoneId.of("Asia/Seoul"))
+                .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
 
         mockMvc.perform(get("/v1/reports/diagnostic")
                         .header("Authorization", token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.period.week_start").value("2026-08-17"))
-                .andExpect(jsonPath("$.period.week_end").value("2026-08-23"))
+                .andExpect(jsonPath("$.period.week_start").value(monday.toString()))
+                .andExpect(jsonPath("$.period.week_end").value(monday.plusDays(6).toString()))
                 .andExpect(jsonPath("$.period.timezone").value("Asia/Seoul"));
 
         mockMvc.perform(get("/v1/reports/diagnostic")
                         .header("Authorization", token)
-                        .param("week_start", "2026-08-17"))
+                        .param("week_start", monday.toString()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.period.week_start").value("2026-08-17"))
-                .andExpect(jsonPath("$.period.week_end").value("2026-08-23"))
+                .andExpect(jsonPath("$.period.week_start").value(monday.toString()))
+                .andExpect(jsonPath("$.period.week_end").value(monday.plusDays(6).toString()))
                 .andExpect(jsonPath("$.period.timezone").value("Asia/Seoul"));
 
         mockMvc.perform(get("/v1/reports/diagnostic")
                         .header("Authorization", token)
-                        .param("week_start", "2026-08-18"))
+                        .param("week_start", monday.plusDays(1).toString()))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("week_start"));
 
         mockMvc.perform(get("/v1/reports/diagnostic")
                         .header("Authorization", token)
-                        .param("week_start", "2026-08-24"))
+                        .param("week_start", monday.plusWeeks(1).toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("week_start"));
+
+        mockMvc.perform(get("/v1/reports/diagnostic")
+                        .header("Authorization", token)
+                        .param("week_start", monday.minusWeeks(1).toString()))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("week_start"));
 
         mockMvc.perform(get("/v1/reports/diagnostic/speech-evidence")
                         .header("Authorization", token)
                         .param("domain_id", "money-count")
-                        .param("week_start", "2026-08-17"))
+                        .param("week_start", monday.toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.domain_id").value("money-count"));
     }
