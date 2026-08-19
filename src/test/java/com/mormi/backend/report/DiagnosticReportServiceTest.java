@@ -3,8 +3,10 @@ package com.mormi.backend.report;
 import static com.mormi.backend.report.DiagnosticReportDtos.Mode.HOME;
 import static com.mormi.backend.report.DiagnosticReportDtos.Mode.LIFE;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -34,7 +36,11 @@ import com.mormi.backend.session.Attempt;
 import com.mormi.backend.session.AttemptRepository;
 import com.mormi.backend.session.LearningSession;
 import com.mormi.backend.session.LearningSessionRepository;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -48,6 +54,9 @@ class DiagnosticReportServiceTest {
     private static final long LEARNER_ID = 7L;
     private static final OffsetDateTime JANUARY = OffsetDateTime.parse("2026-01-10T09:00:00+09:00");
     private static final OffsetDateTime FEBRUARY = OffsetDateTime.parse("2026-02-10T09:00:00+09:00");
+    private static final LocalDate REPORT_WEEK = LocalDate.parse("2026-01-05");
+    private static final Clock CLOCK = Clock.fixed(
+            Instant.parse("2026-08-19T01:00:00Z"), ZoneId.of("Asia/Seoul"));
 
     private ReportAiClient aiClient;
     private LearnerService learnerService;
@@ -75,14 +84,18 @@ class DiagnosticReportServiceTest {
                 attemptRepository,
                 cafeVisitRepository,
                 cafeVisitStageRepository,
-                dialogueRepository);
+                dialogueRepository,
+                CLOCK);
 
         learner = Learner.create("민서", "R-007", "hash");
         ReflectionTestUtils.setField(learner, "id", LEARNER_ID);
+        ReflectionTestUtils.setField(learner, "createdAt", OffsetDateTime.parse("2026-01-01T09:00:00+09:00"));
         when(learnerService.require(LEARNER_ID)).thenReturn(learner);
-        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of());
-        when(cafeVisitRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtAsc(LEARNER_ID))
+        when(cafeVisitRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of());
         when(dialogueRepository.findByLearnerIdOrderByCreatedAtAsc(LEARNER_ID)).thenReturn(List.of());
         when(aiClient.evidence(LEARNER_ID, true)).thenReturn(Optional.empty());
@@ -90,11 +103,39 @@ class DiagnosticReportServiceTest {
     }
 
     @Test
+    void currentUsesOnlyCompletedRecordsInsideRequestedWeek() {
+        when(sessionRepository
+                .findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                        eq(LEARNER_ID), any(), any()))
+                .thenReturn(List.of(completedSession("money-count", "2026-08-18T10:00:00+09:00")));
+        when(cafeVisitRepository
+                .findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                        eq(LEARNER_ID), any(), any()))
+                .thenReturn(List.of());
+
+        DiagnosticReport report = service.current(LEARNER_ID, LocalDate.parse("2026-08-17"));
+
+        assertThat(report.period().weekStart()).isEqualTo(LocalDate.parse("2026-08-17"));
+        assertThat(report.dataRange().totalHomeSessions()).isEqualTo(1);
+        assertThat(report.dataRange().totalLifeVisits()).isZero();
+    }
+
+    @Test
+    void speechEvidenceUsesTheSameSelectedWeek() {
+        service.speechEvidence(LEARNER_ID, "money-count", LocalDate.parse("2026-08-17"));
+
+        verify(sessionRepository)
+                .findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                        eq(LEARNER_ID), any(), any());
+    }
+
+    @Test
     void currentCombinesAllCompletedAnalyzableSessionsAndCafeVisitsWithBatchReads() {
         LearningSession oldMoneySession = session(11L, LEARNER_ID, "money-count", JANUARY);
         LearningSession recentMoneySession = session(12L, LEARNER_ID, "money-count", FEBRUARY);
         CafeVisit cafeVisit = visit(21L, LEARNER_ID, FEBRUARY.plusDays(1));
-        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of(recentMoneySession, oldMoneySession));
         when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(List.of(11L, 12L)))
                 .thenAnswer(ignored -> {
@@ -105,13 +146,14 @@ class DiagnosticReportServiceTest {
                             attempt(102L, 11L, 2, true, JANUARY.plusMinutes(1)),
                             attempt(103L, 12L, 1, true, FEBRUARY));
                 });
-        when(cafeVisitRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtAsc(LEARNER_ID))
+        when(cafeVisitRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of(cafeVisit));
         when(cafeVisitStageRepository.findByCafeVisitIdInOrderByCreatedAtAscIdAsc(List.of(21L)))
                 .thenReturn(List.of(cafeStage(201L, 21L, CafeStage.CALCULATE, 1, true, FEBRUARY.plusDays(1))));
         when(aiClient.evidence(LEARNER_ID, true)).thenReturn(Optional.of(emptyAiEvidence()));
 
-        DiagnosticReport report = service.current(LEARNER_ID);
+        DiagnosticReport report = service.current(LEARNER_ID, REPORT_WEEK);
 
         assertThat(report.dataRange().totalHomeSessions()).isEqualTo(2);
         assertThat(report.dataRange().totalLifeVisits()).isEqualTo(1);
@@ -128,12 +170,13 @@ class DiagnosticReportServiceTest {
     @Test
     void currentCountsCompletedTeachOnlyHomeSessionWithoutFabricatingDrillEvidence() {
         LearningSession teachOnly = session(11L, LEARNER_ID, "money-count", JANUARY);
-        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of(teachOnly));
         when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(List.of(11L)))
                 .thenReturn(List.of());
 
-        DiagnosticReport report = service.current(LEARNER_ID);
+        DiagnosticReport report = service.current(LEARNER_ID, REPORT_WEEK);
 
         assertThat(report.dataRange().firstAt()).isEqualTo(JANUARY);
         assertThat(report.dataRange().lastAt()).isEqualTo(JANUARY);
@@ -147,14 +190,15 @@ class DiagnosticReportServiceTest {
     @Test
     void currentKeepsDeterministicMetricsWhenAiIsUnavailable() {
         LearningSession moneySession = session(11L, LEARNER_ID, "money-count", JANUARY);
-        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of(moneySession));
         when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(List.of(11L)))
                 .thenReturn(List.of(attempt(101L, 11L, 1, true, JANUARY)));
         when(aiClient.evidence(LEARNER_ID, true))
                 .thenThrow(ApiException.serviceUnavailable("ai", "offline"));
 
-        DiagnosticReport report = service.current(LEARNER_ID);
+        DiagnosticReport report = service.current(LEARNER_ID, REPORT_WEEK);
 
         assertThat(report.narrativeFallback()).isTrue();
         assertThat(report.modes()).isNotEmpty();
@@ -166,7 +210,7 @@ class DiagnosticReportServiceTest {
     void currentRanksDecliningDevelopingConceptAboveSingleObservingConceptInFactsAndFallback() {
         givenObservingBudgetAndDecliningCountEvidence();
 
-        DiagnosticReport report = service.current(LEARNER_ID);
+        DiagnosticReport report = service.current(LEARNER_ID, REPORT_WEEK);
 
         assertThat(report.currentSummary().conceptPerformance().text())
                 .isEqualTo("돈 세기 문제 정답률은 최근 60%이며 상태는 발달 중입니다.");
@@ -191,7 +235,7 @@ class DiagnosticReportServiceTest {
     void currentChoosesImprovingFactWithStrongestRecentAndTotalEvidence() {
         givenTwoImprovingDomainsWithDifferentEvidenceStrength();
 
-        DiagnosticReport report = service.current(LEARNER_ID);
+        DiagnosticReport report = service.current(LEARNER_ID, REPORT_WEEK);
 
         assertThat(report.improvedPoint().text())
                 .isEqualTo("돈 세기 문제 정답률은 이전 기록보다 좋아졌습니다.");
@@ -203,7 +247,7 @@ class DiagnosticReportServiceTest {
     void currentRequestsRawEvidenceOnlyWhenStoredConsentAndRetentionPermitIt() {
         learner.applyConsent(false, null);
 
-        service.current(LEARNER_ID);
+        service.current(LEARNER_ID, REPORT_WEEK);
 
         verify(aiClient).evidence(LEARNER_ID, false);
     }
@@ -212,7 +256,7 @@ class DiagnosticReportServiceTest {
     void currentDoesNotRequestRawEvidenceForAnInconsistentNoRawRetentionRecord() {
         ReflectionTestUtils.setField(learner, "retentionPolicy", "no_raw");
 
-        service.current(LEARNER_ID);
+        service.current(LEARNER_ID, REPORT_WEEK);
 
         verify(aiClient).evidence(LEARNER_ID, false);
     }
@@ -220,7 +264,8 @@ class DiagnosticReportServiceTest {
     @Test
     void currentUsesOnlyCompletedAiConversationsOwnedByTheSameSpringSession() {
         LearningSession moneySession = session(11L, LEARNER_ID, "money-count", JANUARY);
-        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of(moneySession));
         when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(List.of(11L)))
                 .thenReturn(List.of(attempt(101L, 11L, 1, true, JANUARY)));
@@ -253,7 +298,7 @@ class DiagnosticReportServiceTest {
                 List.of(),
                 List.of())));
 
-        DiagnosticReport report = service.current(LEARNER_ID);
+        DiagnosticReport report = service.current(LEARNER_ID, REPORT_WEEK);
 
         assertThat(report.evidenceCounts().teachConversations()).isEqualTo(1);
         assertThat(report.modes().getFirst().domains()).extracting(domain -> domain.label())
@@ -265,7 +310,8 @@ class DiagnosticReportServiceTest {
         CafeVisit cafeVisit = visit(21L, LEARNER_ID, FEBRUARY);
         DialogueConversation cafeDialogue = DialogueConversation.forCafeVisit(
                 "conversation-cafe", LEARNER_ID, 21L, "cafe_menu_total", 1, Map.of());
-        when(cafeVisitRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtAsc(LEARNER_ID))
+        when(cafeVisitRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of(cafeVisit));
         when(cafeVisitStageRepository.findByCafeVisitIdInOrderByCreatedAtAscIdAsc(List.of(21L)))
                 .thenReturn(List.of());
@@ -278,7 +324,7 @@ class DiagnosticReportServiceTest {
                 List.of(),
                 List.of())));
 
-        DiagnosticReport report = service.current(LEARNER_ID);
+        DiagnosticReport report = service.current(LEARNER_ID, REPORT_WEEK);
 
         assertThat(report.evidenceCounts().teachConversations()).isZero();
         assertThat(report.modes().getFirst().domains())
@@ -288,7 +334,8 @@ class DiagnosticReportServiceTest {
     @Test
     void currentAcceptsOnlyExactAiSelectionsOfDeterministicFacts() {
         LearningSession moneySession = session(11L, LEARNER_ID, "money-count", JANUARY);
-        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of(moneySession));
         when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(List.of(11L)))
                 .thenReturn(List.of(attempt(101L, 11L, 1, true, JANUARY)));
@@ -299,7 +346,7 @@ class DiagnosticReportServiceTest {
             return Optional.of(exactSummary(facts));
         });
 
-        DiagnosticReport report = service.current(LEARNER_ID);
+        DiagnosticReport report = service.current(LEARNER_ID, REPORT_WEEK);
 
         assertThat(report.narrativeFallback()).isFalse();
         assertThat(report.currentSummary().conceptPerformance().text())
@@ -309,7 +356,8 @@ class DiagnosticReportServiceTest {
     @Test
     void currentRejectsExactFactWhenAiUsesItInTheWrongNarrativeCategory() {
         LearningSession moneySession = session(11L, LEARNER_ID, "money-count", JANUARY);
-        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of(moneySession));
         when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(List.of(11L)))
                 .thenReturn(List.of(attempt(101L, 11L, 1, true, JANUARY)));
@@ -326,14 +374,14 @@ class DiagnosticReportServiceTest {
                     exact.observePoint()));
         });
 
-        DiagnosticReport report = service.current(LEARNER_ID);
+        DiagnosticReport report = service.current(LEARNER_ID, REPORT_WEEK);
 
         assertThat(report.narrativeFallback()).isTrue();
     }
 
     @Test
     void currentUsesAnalyticsIdForAiAndKeepsDisplayNameOnlyInLocalHeader() {
-        DiagnosticReport report = service.current(LEARNER_ID);
+        DiagnosticReport report = service.current(LEARNER_ID, REPORT_WEEK);
 
         verify(aiClient).summarize(org.mockito.ArgumentMatchers.eq(learner.getAnalyticsId().toString()), anyList());
         assertThat(report.learner().displayName()).isEqualTo("민서");
@@ -343,7 +391,8 @@ class DiagnosticReportServiceTest {
     void currentClassifiesAiAssistedCafeStagesAsScaffoldedAndAddsVisitCompletionEvidence() {
         CafeVisit directVisit = visit(21L, LEARNER_ID, JANUARY);
         CafeVisit aiVisit = visit(22L, LEARNER_ID, FEBRUARY);
-        when(cafeVisitRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtAsc(LEARNER_ID))
+        when(cafeVisitRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of(directVisit, aiVisit));
         when(cafeVisitStageRepository.findByCafeVisitIdInOrderByCreatedAtAscIdAsc(List.of(21L, 22L)))
                 .thenReturn(List.of(
@@ -356,7 +405,7 @@ class DiagnosticReportServiceTest {
                         cafeStage(207L, 22L, CafeStage.CALCULATE, 900_003, true, FEBRUARY.plusMinutes(2)),
                         cafeStage(208L, 22L, CafeStage.CHANGE, 900_004, true, FEBRUARY.plusMinutes(3))));
 
-        DiagnosticReport report = service.current(LEARNER_ID);
+        DiagnosticReport report = service.current(LEARNER_ID, REPORT_WEEK);
 
         DomainTrend menu = lifeTrend(report, "menu");
         DomainTrend calculate = lifeTrend(report, "calculate");
@@ -375,14 +424,15 @@ class DiagnosticReportServiceTest {
         LearningSession owned = session(11L, LEARNER_ID, "money-count", JANUARY);
         LearningSession otherLearner = session(12L, 99L, "money-count", JANUARY);
         LearningSession unknown = session(13L, LEARNER_ID, "unknown-domain", JANUARY);
-        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of(owned, otherLearner, unknown));
         when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(List.of(11L)))
                 .thenReturn(List.of(
                         attempt(101L, 11L, 1, true, JANUARY),
                         attempt(102L, 12L, 1, true, JANUARY)));
 
-        DiagnosticReport report = service.current(LEARNER_ID);
+        DiagnosticReport report = service.current(LEARNER_ID, REPORT_WEEK);
 
         assertThat(report.dataRange().totalHomeSessions()).isEqualTo(1);
         assertThat(report.evidenceCounts().drillAttempts()).isEqualTo(1);
@@ -393,7 +443,8 @@ class DiagnosticReportServiceTest {
     @Test
     void currentRejectsAiSummaryThatDoesNotSelectExactKnownFacts() {
         LearningSession moneySession = session(11L, LEARNER_ID, "money-count", JANUARY);
-        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of(moneySession));
         when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(List.of(11L)))
                 .thenReturn(List.of(attempt(101L, 11L, 1, true, JANUARY)));
@@ -401,7 +452,7 @@ class DiagnosticReportServiceTest {
         when(aiClient.summarize(anyString(), anyList()))
                 .thenReturn(Optional.of(new AiSummary(invented, invented, invented, invented, invented)));
 
-        DiagnosticReport report = service.current(LEARNER_ID);
+        DiagnosticReport report = service.current(LEARNER_ID, REPORT_WEEK);
 
         assertThat(report.narrativeFallback()).isTrue();
         assertThat(report.currentSummary().conceptPerformance().text()).doesNotContain("근거에 없는");
@@ -413,7 +464,8 @@ class DiagnosticReportServiceTest {
         LearningSession recentSession = session(12L, LEARNER_ID, "money-count", FEBRUARY);
         DialogueConversation pastOwner = DialogueConversation.forLearningSession("conversation-past", LEARNER_ID, 11L);
         DialogueConversation recentOwner = DialogueConversation.forLearningSession("conversation-recent", LEARNER_ID, 12L);
-        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of(recentSession, pastSession));
         when(dialogueRepository.findByLearnerIdOrderByCreatedAtAsc(LEARNER_ID))
                 .thenReturn(List.of(pastOwner, recentOwner));
@@ -427,7 +479,7 @@ class DiagnosticReportServiceTest {
                 List.of(),
                 List.of())));
 
-        SpeechEvidence evidence = service.speechEvidence(LEARNER_ID, "money-count");
+        SpeechEvidence evidence = service.speechEvidence(LEARNER_ID, "money-count", REPORT_WEEK);
 
         assertThat(evidence.available()).isTrue();
         assertThat(evidence.past().utterance()).isEqualTo("500원만 세었어");
@@ -441,7 +493,8 @@ class DiagnosticReportServiceTest {
     void speechEvidenceDoesNotUseConversationFinalSlotsWithoutAdjacentTurnSnapshots() {
         LearningSession pastSession = session(11L, LEARNER_ID, "money-count", JANUARY);
         LearningSession recentSession = session(12L, LEARNER_ID, "money-count", FEBRUARY);
-        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of(recentSession, pastSession));
         when(dialogueRepository.findByLearnerIdOrderByCreatedAtAsc(LEARNER_ID))
                 .thenReturn(List.of(
@@ -457,7 +510,7 @@ class DiagnosticReportServiceTest {
                 List.of(),
                 List.of())));
 
-        SpeechEvidence evidence = service.speechEvidence(LEARNER_ID, "money-count");
+        SpeechEvidence evidence = service.speechEvidence(LEARNER_ID, "money-count", REPORT_WEEK);
 
         assertThat(evidence.available()).isFalse();
         assertThat(evidence.message()).isEqualTo("비교 가능한 발화 근거가 부족합니다.");
@@ -467,7 +520,8 @@ class DiagnosticReportServiceTest {
     void speechEvidenceUsesEvidenceIdAsTieBreakerWhenComparableTurnsShareATimestamp() {
         LearningSession firstSession = session(11L, LEARNER_ID, "money-count", JANUARY);
         LearningSession secondSession = session(12L, LEARNER_ID, "money-count", JANUARY.plusMinutes(1));
-        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of(secondSession, firstSession));
         when(dialogueRepository.findByLearnerIdOrderByCreatedAtAsc(LEARNER_ID))
                 .thenReturn(List.of(
@@ -483,7 +537,7 @@ class DiagnosticReportServiceTest {
                 List.of(),
                 List.of())));
 
-        SpeechEvidence evidence = service.speechEvidence(LEARNER_ID, "money-count");
+        SpeechEvidence evidence = service.speechEvidence(LEARNER_ID, "money-count", REPORT_WEEK);
 
         assertThat(evidence.past().utterance()).isEqualTo("증거 ID가 앞인 발화");
         assertThat(evidence.recent().utterance()).isEqualTo("증거 ID가 뒤인 발화");
@@ -493,7 +547,8 @@ class DiagnosticReportServiceTest {
     void currentOffersAiOnlyPresentationReadyFactsIncludingComparableSpeech() {
         LearningSession pastSession = session(11L, LEARNER_ID, "money-count", JANUARY);
         LearningSession recentSession = session(12L, LEARNER_ID, "money-count", FEBRUARY);
-        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of(recentSession, pastSession));
         when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(List.of(11L, 12L)))
                 .thenReturn(List.of(
@@ -513,7 +568,7 @@ class DiagnosticReportServiceTest {
                 List.of(),
                 List.of())));
 
-        service.current(LEARNER_ID);
+        service.current(LEARNER_ID, REPORT_WEEK);
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<List<ReportFact>> facts = ArgumentCaptor.forClass(List.class);
@@ -530,7 +585,8 @@ class DiagnosticReportServiceTest {
     void speechEvidenceDoesNotCompareDifferentTasksOrUnownedAiConversations() {
         LearningSession pastSession = session(11L, LEARNER_ID, "money-count", JANUARY);
         LearningSession recentSession = session(12L, LEARNER_ID, "money-count", FEBRUARY);
-        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of(recentSession, pastSession));
         when(dialogueRepository.findByLearnerIdOrderByCreatedAtAsc(LEARNER_ID))
                 .thenReturn(List.of(
@@ -548,7 +604,7 @@ class DiagnosticReportServiceTest {
                 List.of(),
                 List.of())));
 
-        SpeechEvidence evidence = service.speechEvidence(LEARNER_ID, "money-count");
+        SpeechEvidence evidence = service.speechEvidence(LEARNER_ID, "money-count", REPORT_WEEK);
 
         assertThat(evidence.available()).isFalse();
         assertThat(evidence.message()).isEqualTo("비교 가능한 발화 근거가 부족합니다.");
@@ -572,7 +628,8 @@ class DiagnosticReportServiceTest {
             sessions.add(session(sessionId, LEARNER_ID, "money-count", completedAt));
             attempts.add(attempt(102L + index, sessionId, 1, countCorrect[index], completedAt));
         }
-        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(sessions.reversed());
         when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(
                         java.util.stream.LongStream.rangeClosed(11L, 20L).boxed().toList()))
@@ -600,7 +657,8 @@ class DiagnosticReportServiceTest {
             sessionId++;
             attemptId++;
         }
-        when(sessionRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(LEARNER_ID))
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(sessions.reversed());
         when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(
                         java.util.stream.LongStream.rangeClosed(11L, 26L).boxed().toList()))
@@ -609,7 +667,8 @@ class DiagnosticReportServiceTest {
 
     private void givenTeachAndLifeEvidence(LearningSession moneySession) {
         CafeVisit cafeVisit = visit(21L, LEARNER_ID, FEBRUARY);
-        when(cafeVisitRepository.findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtAsc(LEARNER_ID))
+        when(cafeVisitRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of(cafeVisit));
         when(cafeVisitStageRepository.findByCafeVisitIdInOrderByCreatedAtAscIdAsc(List.of(21L)))
                 .thenReturn(List.of(cafeStage(201L, 21L, CafeStage.CALCULATE, 1, true, FEBRUARY)));
@@ -656,6 +715,10 @@ class DiagnosticReportServiceTest {
         ReflectionTestUtils.setField(session, "startedAt", completedAt.minusMinutes(10));
         session.setCompletedAt(completedAt);
         return session;
+    }
+
+    private LearningSession completedSession(String domainId, String completedAt) {
+        return session(11L, LEARNER_ID, domainId, OffsetDateTime.parse(completedAt));
     }
 
     private Attempt attempt(

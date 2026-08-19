@@ -36,6 +36,7 @@ import com.mormi.backend.report.DiagnosticReportDtos.LearnerHeader;
 import com.mormi.backend.report.DiagnosticReportDtos.LifeEvidence;
 import com.mormi.backend.report.DiagnosticReportDtos.ModeReport;
 import com.mormi.backend.report.DiagnosticReportDtos.ReportFact;
+import com.mormi.backend.report.DiagnosticReportDtos.ReportPeriod;
 import com.mormi.backend.report.DiagnosticReportDtos.SpeechEvidence;
 import com.mormi.backend.report.DiagnosticReportDtos.SpeechSample;
 import com.mormi.backend.report.DiagnosticReportDtos.StatusLabel;
@@ -47,6 +48,8 @@ import com.mormi.backend.session.LearningSession;
 import com.mormi.backend.session.LearningSessionRepository;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Clock;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -113,6 +116,7 @@ public class DiagnosticReportService {
     private final CafeVisitRepository cafeVisitRepository;
     private final CafeVisitStageRepository cafeVisitStageRepository;
     private final DialogueConversationRepository dialogueRepository;
+    private final Clock reportClock;
 
     public DiagnosticReportService(
             ReportAiClient aiClient,
@@ -121,7 +125,8 @@ public class DiagnosticReportService {
             AttemptRepository attemptRepository,
             CafeVisitRepository cafeVisitRepository,
             CafeVisitStageRepository cafeVisitStageRepository,
-            DialogueConversationRepository dialogueRepository) {
+            DialogueConversationRepository dialogueRepository,
+            Clock reportClock) {
         this.aiClient = aiClient;
         this.learnerService = learnerService;
         this.sessionRepository = sessionRepository;
@@ -129,12 +134,14 @@ public class DiagnosticReportService {
         this.cafeVisitRepository = cafeVisitRepository;
         this.cafeVisitStageRepository = cafeVisitStageRepository;
         this.dialogueRepository = dialogueRepository;
+        this.reportClock = reportClock;
     }
 
     @Transactional(readOnly = true)
-    public DiagnosticReport current(long learnerId) {
+    public DiagnosticReport current(long learnerId, LocalDate weekStart) {
         Learner learner = learnerService.require(learnerId);
-        RecordContext records = loadRecords(learnerId, true);
+        WeeklyReportPeriod period = WeeklyReportPeriod.resolve(weekStart, learner.getCreatedAt(), reportClock);
+        RecordContext records = loadRecords(learnerId, true, period);
         boolean includeRaw = rawEvidencePermitted(learner);
         Optional<AiReportEvidence> aiEvidence = safeEvidence(learnerId, includeRaw);
         List<TeachEvidence> teach = normalizeTeach(records, aiEvidence.orElse(null));
@@ -162,6 +169,12 @@ public class DiagnosticReportService {
         int speechSamples = aiEvidence.map(evidence -> speechCandidates(records, evidence, null).size()).orElse(0);
         return new DiagnosticReport(
                 new LearnerHeader(learnerId, learner.getDisplayName()),
+                new ReportPeriod(
+                        period.weekStart(),
+                        period.weekEnd(),
+                        WeeklyReportPeriod.REPORT_ZONE.getId(),
+                        period.earliestWeekStart(),
+                        period.latestWeekStart()),
                 new DataRange(
                         occurrences.isEmpty() ? null : occurrences.getFirst(),
                         occurrences.isEmpty() ? null : occurrences.getLast(),
@@ -182,12 +195,13 @@ public class DiagnosticReportService {
     }
 
     @Transactional(readOnly = true)
-    public SpeechEvidence speechEvidence(long learnerId, String domainId) {
+    public SpeechEvidence speechEvidence(long learnerId, String domainId, LocalDate weekStart) {
         Learner learner = learnerService.require(learnerId);
         if (!HOME_LABELS.containsKey(domainId) && !LIFE_LABELS.containsKey(domainId)) {
             return unavailableSpeech(domainId);
         }
-        RecordContext records = loadRecords(learnerId, false);
+        WeeklyReportPeriod period = WeeklyReportPeriod.resolve(weekStart, learner.getCreatedAt(), reportClock);
+        RecordContext records = loadRecords(learnerId, false, period);
         Optional<AiReportEvidence> evidence = safeEvidence(learnerId, rawEvidencePermitted(learner));
         if (evidence.isEmpty()) {
             return unavailableSpeech(domainId);
@@ -209,9 +223,10 @@ public class DiagnosticReportService {
                 changeSummary(selected.past().sample(), selected.recent().sample()));
     }
 
-    private RecordContext loadRecords(long learnerId, boolean loadMetricRows) {
+    private RecordContext loadRecords(long learnerId, boolean loadMetricRows, WeeklyReportPeriod period) {
         Map<Long, LearningSession> sessions = safeList(sessionRepository
-                        .findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(learnerId))
+                        .findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                                learnerId, period.startInclusive(), period.endExclusive()))
                 .stream()
                 .filter(Objects::nonNull)
                 .filter(session -> Objects.equals(session.getLearnerId(), learnerId))
@@ -259,7 +274,8 @@ public class DiagnosticReportService {
         home.sort(Comparator.comparing(HomeEvidence::completedAt).thenComparing(HomeEvidence::sessionPublicId));
 
         Map<Long, CafeVisit> visits = safeList(cafeVisitRepository
-                        .findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtAsc(learnerId))
+                        .findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                                learnerId, period.startInclusive(), period.endExclusive()))
                 .stream()
                 .filter(Objects::nonNull)
                 .filter(visit -> Objects.equals(visit.getLearnerId(), learnerId))

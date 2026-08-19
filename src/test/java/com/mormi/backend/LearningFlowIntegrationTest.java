@@ -430,6 +430,45 @@ class LearningFlowIntegrationTest {
     }
 
     @Test
+    void 진단_리포트는_서울_월요일_주차를_검증하고_메타데이터를_반환한다() throws Exception {
+        String token = "Bearer " + createLearner("하린", "MORMI-G05").get("access_token").asText();
+
+        mockMvc.perform(get("/v1/reports/diagnostic")
+                        .header("Authorization", token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.period.week_start").value("2026-08-17"))
+                .andExpect(jsonPath("$.period.week_end").value("2026-08-23"))
+                .andExpect(jsonPath("$.period.timezone").value("Asia/Seoul"));
+
+        mockMvc.perform(get("/v1/reports/diagnostic")
+                        .header("Authorization", token)
+                        .param("week_start", "2026-08-17"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.period.week_start").value("2026-08-17"))
+                .andExpect(jsonPath("$.period.week_end").value("2026-08-23"))
+                .andExpect(jsonPath("$.period.timezone").value("Asia/Seoul"));
+
+        mockMvc.perform(get("/v1/reports/diagnostic")
+                        .header("Authorization", token)
+                        .param("week_start", "2026-08-18"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("week_start"));
+
+        mockMvc.perform(get("/v1/reports/diagnostic")
+                        .header("Authorization", token)
+                        .param("week_start", "2026-08-24"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("week_start"));
+
+        mockMvc.perform(get("/v1/reports/diagnostic/speech-evidence")
+                        .header("Authorization", token)
+                        .param("domain_id", "money-count")
+                        .param("week_start", "2026-08-17"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.domain_id").value("money-count"));
+    }
+
+    @Test
     void 발화_근거는_알려진_비어있지_않은_영역만_인증한_학습자에게_반환한다() throws Exception {
         String token = "Bearer " + createLearner("유진", "MORMI-G04").get("access_token").asText();
 

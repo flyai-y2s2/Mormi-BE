@@ -4,6 +4,7 @@ import com.mormi.backend.auth.LearnerPrincipal;
 import com.mormi.backend.common.ApiException;
 import com.mormi.backend.report.DiagnosticReportDtos.DiagnosticReport;
 import com.mormi.backend.report.DiagnosticReportDtos.SpeechEvidence;
+import java.time.LocalDate;
 import java.util.Set;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -35,16 +36,19 @@ public class DiagnosticReportController {
     }
 
     @GetMapping
-    public DiagnosticReport current(@AuthenticationPrincipal LearnerPrincipal principal) {
-        return diagnosticReportService.current(principal.learnerId());
+    public DiagnosticReport current(
+            @AuthenticationPrincipal LearnerPrincipal principal,
+            @RequestParam(name = "week_start", required = false) LocalDate weekStart) {
+        return diagnosticReportService.current(principal.learnerId(), weekStart);
     }
 
     @GetMapping("/speech-evidence")
     public SpeechEvidence speechEvidence(
             @AuthenticationPrincipal LearnerPrincipal principal,
-            @RequestParam("domain_id") String domainId) {
+            @RequestParam("domain_id") String domainId,
+            @RequestParam(name = "week_start", required = false) LocalDate weekStart) {
         requireSupportedDomain(domainId);
-        return diagnosticReportService.speechEvidence(principal.learnerId(), domainId);
+        return diagnosticReportService.speechEvidence(principal.learnerId(), domainId, weekStart);
     }
 
     private void requireSupportedDomain(String domainId) {

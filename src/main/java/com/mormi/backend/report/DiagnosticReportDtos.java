@@ -1,5 +1,6 @@
 package com.mormi.backend.report;
 
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.Map;
@@ -17,6 +18,7 @@ public final class DiagnosticReportDtos {
 
     public record DiagnosticReport(
             LearnerHeader learner,
+            ReportPeriod period,
             DataRange dataRange,
             CurrentSummary currentSummary,
             List<ModeReport> modes,
@@ -34,6 +36,14 @@ public final class DiagnosticReportDtos {
     public enum FactCategory { CONCEPT, EXPLANATION, LIFE, IMPROVED, OBSERVE }
 
     public record LearnerHeader(long learnerId, String displayName) {
+    }
+
+    public record ReportPeriod(
+            LocalDate weekStart,
+            LocalDate weekEnd,
+            String timezone,
+            LocalDate earliestWeekStart,
+            LocalDate latestWeekStart) {
     }
 
     public record DataRange(
