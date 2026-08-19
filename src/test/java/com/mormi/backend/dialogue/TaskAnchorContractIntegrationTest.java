@@ -5,6 +5,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.mormi.backend.curriculum.CurriculumCatalog;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
@@ -48,9 +49,6 @@ import tools.jackson.databind.ObjectMapper;
 @Testcontainers
 class TaskAnchorContractIntegrationTest {
 
-    /** 픽스처가 담고 있는 대화 ID. 가짜 AI 는 대화마다 이 자리를 새 값으로 바꿔 발급한다. */
-    private static final String FIXTURE_CONVERSATION_ID = "conversation_hometeachanchor01";
-
     @Container
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
@@ -58,6 +56,7 @@ class TaskAnchorContractIntegrationTest {
     /** 실제 HTTP 를 타야 JsonNode 수신부터 응답 직렬화까지 전 구간이 검증된다. */
     static HttpServer fakeAi;
     static String homeTeachEnvelope;
+    static String cafeQueueEnvelope;
     static final Map<String, AtomicInteger> hits = new ConcurrentHashMap<>();
     /** 발급한 대화 ID 별로 그때 내려준 봉투 원문. 조회·응답도 같은 것을 돌려준다. */
     static final Map<String, String> servedByConversationId = new ConcurrentHashMap<>();
@@ -66,6 +65,7 @@ class TaskAnchorContractIntegrationTest {
 
     static {
         homeTeachEnvelope = readFixture("/fixtures/dialogue-home-teach-anchor-envelope.json");
+        cafeQueueEnvelope = readFixture("/fixtures/dialogue-cafe-queue-anchor-envelope.json");
         try {
             fakeAi = HttpServer.create(new InetSocketAddress(0), 0);
             fakeAi.createContext("/v1", TaskAnchorContractIntegrationTest::handle);
@@ -90,7 +90,13 @@ class TaskAnchorContractIntegrationTest {
         // 진짜 AI 는 대화마다 새 conversation_id 를 발급한다. 고정 ID 를 돌려주면
         // dialogue_conversations 의 UNIQUE 제약에 걸려 두 번째 테스트부터 500 이 난다.
         if (path.equals("/v1/conversations")) {
-            respond(exchange, 201, issueConversation());
+            // BE 가 보낸 scene 으로 어떤 화면의 대화인지 가른다. 실제 AI 도 같은 값으로
+            // 시나리오를 고르므로, 가짜가 요청을 무시하면 검증이 헐거워진다.
+            String scene = FIXTURE_JSON
+                    .readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8))
+                    .path("scene").asString();
+            respond(exchange, 201,
+                    issueConversation("cafe".equals(scene) ? cafeQueueEnvelope : homeTeachEnvelope));
             return;
         }
         // 조회와 응답 모두 그 대화에 내려준 봉투를 그대로 돌려준다. 여기서 확인할 것은
@@ -105,9 +111,10 @@ class TaskAnchorContractIntegrationTest {
     }
 
     /** 픽스처의 대화 ID 자리만 새 값으로 바꿔 발급한다. 나머지 필드는 손대지 않는다. */
-    static String issueConversation() {
-        String conversationId = FIXTURE_CONVERSATION_ID + "-" + conversationSequence.incrementAndGet();
-        ObjectNode envelope = (ObjectNode) FIXTURE_JSON.readTree(homeTeachEnvelope);
+    static String issueConversation(String fixture) {
+        ObjectNode envelope = (ObjectNode) FIXTURE_JSON.readTree(fixture);
+        String conversationId = envelope.path("conversation_id").asString()
+                + "-" + conversationSequence.incrementAndGet();
         envelope.put("conversation_id", conversationId);
         String body = FIXTURE_JSON.writeValueAsString(envelope);
         servedByConversationId.put(conversationId, body);
@@ -227,6 +234,145 @@ class TaskAnchorContractIntegrationTest {
 
         assertThat(response).isEqualTo(served(conversationId));
         assertThat(anchorOf(response)).isEqualTo(expectedAnchor());
+    }
+
+
+    // ---------------------------------------------------------------- 카페 경로
+    // 집과 달리 카페는 BE 가 AI 봉투를 재조립한다. conversation_id 와 turn 만 옮겨 담고
+    // scenario_context, stage_progress 를 얹기 때문에 봉투 전체 비교가 성립하지 않는다.
+    // 대신 turn 노드가 통째로 같은지, 그 안의 앵커가 온전한지를 본다.
+
+    @Test
+    void 카페_대화_시작_응답에_앵커가_그대로_실린다() throws Exception {
+        String token = createLearner("연우", "MORMI-TA05");
+        String visitId = unlockCafeAndStartVisit(token);
+
+        JsonNode response = startQueueDialogue(token, visitId, false);
+        String conversationId = response.path("conversation_id").asString();
+
+        assertThat(response.path("turn")).isEqualTo(served(conversationId).path("turn"));
+        assertThat(anchorOf(response)).isEqualTo(expectedCafeAnchor());
+        // 재조립이 정상 동작했는지도 함께 본다. 앵커만 살고 나머지가 죽으면 안 된다.
+        assertThat(response.path("scenario_context").path("queue_context").path("left_count").asInt())
+                .isEqualTo(3);
+        assertThat(response.path("stage_progress").path("stage").asString()).isEqualTo("queue");
+    }
+
+    @Test
+    void 카페_대화_조회에_앵커가_그대로_실린다() throws Exception {
+        String token = createLearner("지호", "MORMI-TA06");
+        String visitId = unlockCafeAndStartVisit(token);
+        String conversationId = startQueueDialogue(token, visitId, false)
+                .path("conversation_id").asString();
+
+        String body = mockMvc.perform(get("/v1/dialogue/conversations/{id}", conversationId)
+                        .header("Authorization", token))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        JsonNode response = objectMapper.readTree(body);
+
+        assertThat(response.path("turn")).isEqualTo(served(conversationId).path("turn"));
+        assertThat(anchorOf(response)).isEqualTo(expectedCafeAnchor());
+    }
+
+    @Test
+    void 카페_아이_응답_뒤에도_앵커가_그대로_실린다() throws Exception {
+        String token = createLearner("수아", "MORMI-TA07");
+        String visitId = unlockCafeAndStartVisit(token);
+        JsonNode created = startQueueDialogue(token, visitId, false);
+        String conversationId = created.path("conversation_id").asString();
+
+        String body = mockMvc.perform(
+                        post("/v1/dialogue/conversations/{id}/responses", conversationId)
+                                .header("Authorization", token)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(Map.of(
+                                        "turn_id", created.path("turn").path("turn_id").asString(),
+                                        "type", "text",
+                                        "text", "오른쪽은 다섯 명이야"))))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        JsonNode response = objectMapper.readTree(body);
+
+        assertThat(response.path("turn")).isEqualTo(served(conversationId).path("turn"));
+        assertThat(anchorOf(response)).isEqualTo(expectedCafeAnchor());
+    }
+
+    @Test
+    void 카페_새로고침_복구에도_같은_앵커가_온다() throws Exception {
+        String token = createLearner("루아", "MORMI-TA08");
+        String visitId = unlockCafeAndStartVisit(token);
+        String conversationId = startQueueDialogue(token, visitId, false)
+                .path("conversation_id").asString();
+
+        // restart 가 false 면 새 회차를 열지 않고 마지막 회차를 그대로 이어 준다.
+        JsonNode recovered = startQueueDialogue(token, visitId, false);
+
+        assertThat(recovered.path("conversation_id").asString()).isEqualTo(conversationId);
+        assertThat(recovered.path("turn")).isEqualTo(served(conversationId).path("turn"));
+        assertThat(anchorOf(recovered)).isEqualTo(expectedCafeAnchor());
+        assertThat(hits.get("/v1/conversations").get()).isEqualTo(1);
+    }
+
+    @Test
+    void 카페_다시_연습은_새_회차에도_앵커를_싣는다() throws Exception {
+        String token = createLearner("가온", "MORMI-TA09");
+        String visitId = unlockCafeAndStartVisit(token);
+        String firstRound = startQueueDialogue(token, visitId, false)
+                .path("conversation_id").asString();
+
+        // restart 가 true 면 BE 가 새 회차 대화를 연다. 새 대화에도 앵커가 실려야 한다.
+        JsonNode replay = startQueueDialogue(token, visitId, true);
+        String secondRound = replay.path("conversation_id").asString();
+
+        assertThat(secondRound).isNotEqualTo(firstRound);
+        assertThat(replay.path("turn")).isEqualTo(served(secondRound).path("turn"));
+        assertThat(anchorOf(replay)).isEqualTo(expectedCafeAnchor());
+        assertThat(hits.get("/v1/conversations").get()).isEqualTo(2);
+    }
+
+    private JsonNode expectedCafeAnchor() {
+        return objectMapper.readTree(cafeQueueEnvelope).path("turn").path("task_anchor");
+    }
+
+    /** 화면 문제는 픽스처의 visual 과 같은 3명 대 5명으로 맞춘다. */
+    private JsonNode startQueueDialogue(String token, String visitId, boolean restart)
+            throws Exception {
+        String body = mockMvc.perform(post("/v1/cafe-visits/{id}/dialogues", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "scenario_id", "cafe_queue",
+                                "queue_context", Map.of("left_count", 3, "right_count", 5),
+                                "restart", restart))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(body);
+    }
+
+    /** 카페는 필수 세션 5개를 모두 마쳐야 열린다. 방문을 만들면 첫 단계가 줄 서기다. */
+    private String unlockCafeAndStartVisit(String token) throws Exception {
+        for (String sessionKey : CurriculumCatalog.CAFE_REQUIRED_SESSION_IDS) {
+            completeSession(token, sessionKey);
+        }
+        String body = mockMvc.perform(post("/v1/cafe-visits").header("Authorization", token))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return objectMapper.readTree(body).get("cafe_visit_id").asString();
+    }
+
+    /** 반복 5문제를 모두 맞히고 세션을 끝낸다. 카페 해금 조건을 채우는 용도다. */
+    private void completeSession(String token, String curriculumSessionId) throws Exception {
+        String sessionId = startSessionWithFiveCorrectDrills(token, curriculumSessionId);
+        mockMvc.perform(post("/v1/learning-sessions/{id}/complete", sessionId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "transfer_solved", true,
+                                "timed_out", false,
+                                "scaffold_level", 3,
+                                "elapsed_seconds", 150))))
+                .andExpect(status().isOk());
     }
 
     /** 필드 몇 개가 아니라 노드 전체를 비교해야 "누락이 없다"가 증명된다. */
