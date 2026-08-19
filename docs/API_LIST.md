@@ -65,6 +65,7 @@
 |---|---|---|---|
 | `GET` | `/v1/learners/{learner_id}` | ✓ | 프로필 조회 (본인만) |
 | `PATCH` | `/v1/learners/me/conversation-consent` | ✓ | 자유 발화 암호화 저장 동의·보존기간 변경 |
+| `GET` | `/v1/learners/{learner_id}/star-notes` | ✓ | 별노트 목록 (본인만). 상세는 G-3 |
 | ~~`POST`~~ | ~~`/v1/learners`~~ | — | **deprecated.** 연구 코드 온보딩. `/v1/auth/signup` 을 씁니다 |
 | ~~`POST`~~ | ~~`/v1/learners/auth`~~ | — | **deprecated.** 연구 코드 복구. `/v1/auth/login` 을 씁니다 |
 
@@ -349,6 +350,89 @@ AI가 LLM이 아닌 결정적 규칙으로 계산해 매 턴 실어 보내고, *
 | `422 unsupported_schema_version` 등 | 내용 자체가 문제 | 재전송 금지. 이벤트는 `failed` 로 보존됨 |
 | `401` | 서비스 키 없음/불일치 | 설정 확인. 이벤트는 저장되지 않음 |
 
+### G-3. 별노트 수집·조회 (이슈 #12)
+
+AI가 발행하는 `star_note_created` 이벤트를 위 G-2 와 같은 엔드포인트에서 수집해
+BE 가 소유하는 별노트 원장(`star_notes`)에 저장하고, FE 에 목록 API 를 제공합니다.
+FE 는 AI 의 별노트 API 를 직접 호출하지 않습니다.
+
+#### 수집 (내부 전용)
+
+`POST /internal/v1/observations/events` — `event_type: "star_note_created"` 로 구분합니다.
+인증·수신함 멱등성(`event_id` unique)은 G-2 와 동일하고, 원장에서 `note_id` unique 로
+한 번 더 막습니다(다른 event_id 로 재전송된 같은 노트도 한 행만 남음).
+
+```jsonc
+// 요청 — 계약 원본: Mormi-AI/docs/OBSERVATION_EVENTS.md "별노트 독립 이벤트(B안)"
+{ "event_id": "event_...", "schema_version": 1, "event_type": "star_note_created",
+  "star_note": { "note_id": "note_...", "note_version": 1, "learner_id": 17,
+                 "conversation_id": "conversation_...", "skill_id": "number-count",
+                 "text": "색칠된 칸을 하나씩 세면 모두 3개야.",
+                 "attribution": "child", "attribution_label": "아이가 알려줌",
+                 "evidence": "direct_explanation",
+                 "evidence_links": [{ "observation_id": "observation_...", "source_slot_ids": ["tracking"] }],
+                 "active": true, "created_at": "2026-08-19T00:00:00+00:00" } }
+// 200 — 재전송이어도 오류가 아니다
+{ "event_id": "event_...", "status": "processed", "duplicate": false, "star_note_id": 1 }
+```
+
+| 응답 | 의미 | AI 전송기가 할 일 |
+|---|---|---|
+| `200` | 반영 완료 (`duplicate: true` 포함) | 없음 |
+| `409 unknown_conversation` | 대화 커밋 전에 별노트가 먼저 도착 | **잠시 후 재전송** |
+| `422 invalid_payload` 등 | 필수값 누락·형식 오류 | 재전송 금지. 이벤트는 `failed` 로 보존됨 |
+| `422 star_note_owner_mismatch` | 이벤트의 `learner_id` ≠ 대화 소유자 | 재전송 금지 |
+| `401` | 서비스 키 없음/불일치 | 설정 확인. 이벤트는 저장되지 않음 |
+
+- 필수 필드: `note_id`, `note_version`(1 이상), `conversation_id`, `text`, `attribution`, `created_at`.
+- 소유권은 G-2 와 같이 `conversation_id` 로 역참조합니다. 이벤트의 `learner_id` 는 검증에만 씁니다.
+- **순서 역전 허용**: `evidence_links` 의 관찰이 아직 도착하지 않았어도 수용합니다(FK 없이 ID 만 보존).
+  따라서 AI 재시도 표의 `unknown_learner` / `unknown_observation` / `missing_evidence_observation` 은
+  **예약만 되어 있고 BE 가 실제로 반환하지 않습니다.**
+- 같은 `note_id` 재발행은 `note_version` 이 올랐을 때만 반영합니다. 같은 버전으로 내용만 바꾸면
+  조용히 무시되므로, AI 는 수정 시 반드시 버전을 올려야 합니다. `active: false` 재발행 = 목록에서 숨김.
+- `learning_task_outcomes.star_note_*` 컬럼은 이 계약과 무관하게 아직 NULL 입니다(이슈 #14).
+
+#### 조회 (학습자용)
+
+| Method | Path | 인증 | 설명 |
+|---|---|---|---|
+| `GET` | `/v1/learners/{learner_id}/star-notes` | ✓ | 별노트 목록 (본인만). 커서 페이지네이션 |
+
+```jsonc
+// GET /v1/learners/1/star-notes?limit=20            — limit 1~50, 기본 20
+// GET /v1/learners/1/star-notes?limit=20&cursor=... — cursor 는 직전 응답의 next_cursor
+// 200
+{
+  "star_notes": [
+    { "note_id": "note_...", "skill_id": "number-count",
+      "text": "색칠된 칸을 하나씩 세면 모두 3개야.",   // AI 원문 그대로. BE 가 재작성하지 않는다
+      "attribution": "child", "attribution_label": "아이가 알려줌",
+      "evidence": "direct_explanation",
+      "scene": "home_teach", "scenario_id": "home_teach", "task_id": "home_teaching",
+      "created_at": "2026-08-19T00:00:00Z" }           // AI 가 노트를 만든 시각
+  ],
+  "next_cursor": "note_..."   // 마지막 페이지면 필드 자체가 없음
+}
+```
+
+- 정렬: `created_at` 내림차순, 동률이면 `note_id` 내림차순. 커서(keyset) 방식이라
+  조회 사이에 새 노트가 생겨도 중복·누락 없이 이어집니다. FE 는 `next_cursor` 를 그대로 넘깁니다.
+- 비활성(`active: false`) 노트는 목록에서 제외됩니다.
+- 모르는 커서(남의 노트 ID 포함)는 `422 invalid_cursor`. 남의 목록은 `403 forbidden`, 무토큰은 `401`.
+
+#### 배포 순서와 backfill
+
+1. BE 배포 (수신 분기 + 원장 + 목록 API)
+2. AI 에 `MORMI_STAR_NOTE_EVENTS_ENABLED=true` 적용 후 재시작
+3. AI outbox 의 pending 별노트 적체가 줄어드는지 확인
+4. FE 목록 연동 활성화 (Mormi-FE#27)
+
+**backfill 없음**: 플래그를 켜기 전에 AI outbox 에 쌓인 pending 분은 일반 재시도로 유입되지만,
+outbox 이전의 역사 별노트는 자동 생성되지 않습니다. 필요해지면 별도 이슈로 진행합니다.
+롤백: BE 를 이전 버전으로 되돌리면 별노트 이벤트가 `422 unsupported_event_type` 으로 실패하므로,
+**먼저 AI 플래그를 `false` 로 되돌린 뒤** BE 를 롤백합니다(pending 보존, 유실 없음).
+
 ### H. 운영
 
 | Method | Path | 설명 |
@@ -465,7 +549,7 @@ DB_USERNAME=mormi DB_PASSWORD=mormi ./gradlew bootRun
 | 1 | RDS 안에서 Spring / Mormi-AI 데이터 분리 | **미정.** Mormi-AI 는 `create_schema()` 로 직접 테이블을 만들고 Spring 은 Flyway + `ddl-auto: validate` 라 같은 스키마에 두면 충돌 위험. 스키마 또는 DB 분리 권장 |
 | 2 | 지갑 vs 카페 10,000원 | 분리 유지. 카페는 고정 실습 소지금이고 지갑에서 차감하지 않음 |
 | 3 | `ladder` 0~3 ↔ `L4~L0` 매핑 | **여전히 미정.** BE 는 변환하지 않기로 함 — attempts.support_level 은 FE 0~3, 관찰은 발화 L4~L0·힌트 H0~H3 을 각자 원본 척도로 저장. 매핑 확정 시 조회 계층에서만 잇는다 |
-| 4 | 별노트 저장 주체 | Mormi-AI 보유. Spring 은 TurnContract를 전달 |
-| 4-1 | 별노트 → BE 이벤트 계약 | **미정.** `learning_task_outcomes.star_note_*` 컬럼은 준비돼 있으나 AI 가 별노트를 어떤 이벤트로 보낼지 계약이 없어 당분간 NULL |
+| 4 | 별노트 저장 주체 | AI 가 생성·발행하고 **Spring 이 서비스 원장(`star_notes`)을 소유** (이슈 #12, G-3 참조). FE 는 Spring 목록 API 만 사용 |
+| 4-1 | 별노트 → BE 이벤트 계약 | **확정.** `star_note_created` 이벤트로 수집 (G-3). `learning_task_outcomes.star_note_*` 컬럼 연결은 후속 이슈 #14, 그때까지 NULL |
 | 5 | `conversation_storage_consent` 관리 주체 | Spring `learners` 및 동의 변경 API. AI가 실제 암호화·삭제 수행 |
 | 6 | 참여 번호 발급 방식 | 연구자가 사전 발급해 전달하는 것으로 가정 |
