@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -57,15 +58,19 @@ class TaskAnchorContractIntegrationTest {
     static HttpServer fakeAi;
     static String homeTeachEnvelope;
     static String cafeQueueEnvelope;
+    static String legacyNoAnchorEnvelope;
     static final Map<String, AtomicInteger> hits = new ConcurrentHashMap<>();
     /** 발급한 대화 ID 별로 그때 내려준 봉투 원문. 조회·응답도 같은 것을 돌려준다. */
     static final Map<String, String> servedByConversationId = new ConcurrentHashMap<>();
     static final AtomicInteger conversationSequence = new AtomicInteger();
+    /** 값이 있으면 scene 과 무관하게 이 봉투를 내려준다. 구버전 AI 를 흉내낼 때 쓴다. */
+    static final AtomicReference<String> forcedEnvelope = new AtomicReference<>();
     static final ObjectMapper FIXTURE_JSON = new ObjectMapper();
 
     static {
         homeTeachEnvelope = readFixture("/fixtures/dialogue-home-teach-anchor-envelope.json");
         cafeQueueEnvelope = readFixture("/fixtures/dialogue-cafe-queue-anchor-envelope.json");
+        legacyNoAnchorEnvelope = readFixture("/fixtures/dialogue-legacy-no-anchor-envelope.json");
         try {
             fakeAi = HttpServer.create(new InetSocketAddress(0), 0);
             fakeAi.createContext("/v1", TaskAnchorContractIntegrationTest::handle);
@@ -95,8 +100,9 @@ class TaskAnchorContractIntegrationTest {
             String scene = FIXTURE_JSON
                     .readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8))
                     .path("scene").asString();
-            respond(exchange, 201,
-                    issueConversation("cafe".equals(scene) ? cafeQueueEnvelope : homeTeachEnvelope));
+            String forced = forcedEnvelope.get();
+            respond(exchange, 201, issueConversation(forced != null ? forced
+                    : "cafe".equals(scene) ? cafeQueueEnvelope : homeTeachEnvelope));
             return;
         }
         // 조회와 응답 모두 그 대화에 내려준 봉투를 그대로 돌려준다. 여기서 확인할 것은
@@ -160,6 +166,7 @@ class TaskAnchorContractIntegrationTest {
     @BeforeEach
     void resetFakeAi() {
         hits.clear();
+        forcedEnvelope.set(null);
     }
 
     /** 가짜 AI 가 그 대화에 실제로 내려준 봉투. BE 응답을 이것과 통째로 비교한다. */
@@ -329,6 +336,76 @@ class TaskAnchorContractIntegrationTest {
         assertThat(replay.path("turn")).isEqualTo(served(secondRound).path("turn"));
         assertThat(anchorOf(replay)).isEqualTo(expectedCafeAnchor());
         assertThat(hits.get("/v1/conversations").get()).isEqualTo(2);
+    }
+
+
+    // ------------------------------------------------------- 구버전 AI 하위 호환
+    // 앵커는 나중에 추가된 필드다. 신버전 AI 가 아직 배포되지 않은 서버로 요청이 가면
+    // 필드가 아예 없는 응답이 온다. 이때 BE 가 할 일은 두 가지다.
+    // 1) 기존 응답을 깨뜨리지 않는다  2) 없는 앵커를 대사에서 지어내지 않는다
+
+    @Test
+    void 구버전_AI_응답에_앵커가_없어도_카페_대화가_열린다() throws Exception {
+        String token = createLearner("아린", "MORMI-TA10");
+        String visitId = unlockCafeAndStartVisit(token);
+        forcedEnvelope.set(legacyNoAnchorEnvelope);
+
+        JsonNode response = startQueueDialogue(token, visitId, false);
+        String conversationId = response.path("conversation_id").asString();
+
+        assertThat(response.path("turn")).isEqualTo(served(conversationId).path("turn"));
+        assertThat(response.path("turn").has("task_anchor"))
+                .as("BE 가 없는 앵커를 지어냈습니다")
+                .isFalse();
+        // 앵커가 없다고 나머지가 죽으면 안 된다. 재조립은 그대로 동작해야 한다.
+        assertThat(response.path("scenario_context").path("queue_context").path("right_count").asInt())
+                .isEqualTo(5);
+        assertThat(response.path("stage_progress").path("stage").asString()).isEqualTo("queue");
+    }
+
+    @Test
+    void 구버전_AI_응답에_앵커가_없어도_가르치기가_열린다() throws Exception {
+        String token = createLearner("시우", "MORMI-TA11");
+        String sessionId = startSessionWithFiveCorrectDrills(token, "number-count");
+        forcedEnvelope.set(withoutAnchor(homeTeachEnvelope));
+
+        JsonNode response = startTeaching(token, sessionId);
+
+        assertThat(response).isEqualTo(served(response.path("conversation_id").asString()));
+        assertThat(response.path("turn").has("task_anchor"))
+                .as("BE 가 없는 앵커를 지어냈습니다")
+                .isFalse();
+        assertThat(response.path("turn").path("mormi").path("text").asString()).isNotBlank();
+    }
+
+    @Test
+    void 앵커가_null_이면_null_그대로_전달한다() throws Exception {
+        String token = createLearner("하율", "MORMI-TA12");
+        String visitId = unlockCafeAndStartVisit(token);
+        // 신버전 AI 도 완료된 턴이나 입력이 없는 턴에는 앵커를 넣지 않는다. 그때는 키가
+        // 사라지는 것이 아니라 null 로 온다. 이 차이까지 그대로 넘어가야 한다.
+        forcedEnvelope.set(withNullAnchor(cafeQueueEnvelope));
+
+        JsonNode response = startQueueDialogue(token, visitId, false);
+        JsonNode anchor = response.path("turn").path("task_anchor");
+
+        assertThat(response.path("turn").has("task_anchor")).isTrue();
+        assertThat(anchor.isNull()).as("null 이 객체로 바뀌었습니다: %s", anchor).isTrue();
+        assertThat(response.path("stage_progress").path("completed").asBoolean()).isFalse();
+    }
+
+    /** 구버전 AI 처럼 키 자체를 지운 봉투. */
+    private String withoutAnchor(String fixture) {
+        ObjectNode envelope = (ObjectNode) objectMapper.readTree(fixture);
+        ((ObjectNode) envelope.path("turn")).remove("task_anchor");
+        return objectMapper.writeValueAsString(envelope);
+    }
+
+    /** 키는 두고 값만 null 로 둔 봉투. */
+    private String withNullAnchor(String fixture) {
+        ObjectNode envelope = (ObjectNode) objectMapper.readTree(fixture);
+        ((ObjectNode) envelope.path("turn")).putNull("task_anchor");
+        return objectMapper.writeValueAsString(envelope);
     }
 
     private JsonNode expectedCafeAnchor() {
