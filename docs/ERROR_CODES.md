@@ -88,6 +88,7 @@
 | `budget` | 400 | 허용 목록(8000/9000/10000)에 없는 예산값 | 화면 버그. 문제 다시 뽑기 |
 | `denomination` | 400 | 존재하지 않는 화폐 액면가 | 화면 버그. 화폐 목록 확인 |
 | `count_range` | 400 | 화폐 개수가 0~20 범위를 벗어남 | 입력 UI에서 미리 제한 |
+| `invalid_cursor` | 422 | 별노트 목록에 모르는 `cursor` 를 보냄 | 커서 버리고 첫 페이지부터 다시 조회 |
 | `queue_context_required` | 400 | 줄 서기 대화 시작에 `queue_context` 누락 | 화면 버그. 좌우 인원 함께 전송 |
 | `cafe_context_required` | 400 | 메뉴 대화 시작에 `cafe_context` 누락 | 화면 버그. 메뉴 목록 함께 전송 |
 | `dialogue_scenario_invalid` | 400 | 지원하지 않는 카페 시나리오 id | 화면 버그. 시나리오 id 확인 |

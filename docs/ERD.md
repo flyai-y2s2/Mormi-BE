@@ -1,6 +1,6 @@
 # 데이터 모델과 학습자 격리
 
-`V1__init.sql` ~ `V10__report_snapshots.sql` 기준. 스키마를 바꾸면 이 문서도 같이 고친다.
+`V1__init.sql` ~ `V11__star_notes.sql` 기준. 스키마를 바꾸면 이 문서도 같이 고친다.
 
 ## ERD
 
@@ -116,7 +116,10 @@ erDiagram
 ```mermaid
 erDiagram
     observation_events ||--o{ learning_observations : "id → observation_event_id"
+    observation_events ||--o{ star_notes : "id → observation_event_id"
     learners ||--o{ learning_observations : "id → learner_id"
+    learners ||--o{ star_notes : "id → learner_id"
+    learning_sessions ||--o{ star_notes : "id → learning_session_id (nullable)"
     learners ||--o{ learning_task_outcomes : "id → learner_id"
     learning_sessions ||--o{ learning_task_outcomes : "id → learning_session_id"
     organizations ||--o{ educators : "id → organization_id"
@@ -173,6 +176,25 @@ erDiagram
         bigint_arr source_attempt_ids "근거 추적"
         bigint_arr source_observation_ids
         varchar   aggregation_rule_version
+    }
+
+    star_notes {
+        bigserial id PK
+        bigint    observation_event_id FK "마지막으로 반영된 수신 이벤트"
+        varchar   note_id UK "AI 원본 추적. 다른 event_id 로 재전송돼도 한 행"
+        integer   note_version "같거나 낮은 버전의 재발행은 무시"
+        bigint    learner_id FK "대화 기록에서 역참조. 이벤트 값을 믿지 않는다"
+        bigint    learning_session_id FK "null 가능"
+        varchar   conversation_id
+        varchar   skill_id
+        text      note_text "AI 원문 그대로. BE 가 재작성하지 않는다"
+        varchar   attribution "child 등. AI 원문 그대로"
+        varchar   attribution_label
+        varchar   evidence
+        jsonb     evidence_links "의도적으로 FK 없음. 관찰보다 먼저 도착해도 수용(순서 역전)"
+        boolean   active "false = 목록에서 숨김. 행은 지우지 않는다"
+        timestamptz note_created_at "AI 생성 시각. 목록 정렬 키"
+        timestamptz created_at
     }
 
     consent_records {
