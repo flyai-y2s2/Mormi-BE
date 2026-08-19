@@ -51,6 +51,7 @@ public class SecurityConfig {
                         .requestMatchers("/health").permitAll()
                         .requestMatchers(HttpMethod.POST, "/v1/learners").permitAll()
                         .requestMatchers(HttpMethod.POST, "/v1/learners/auth").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/v1/local-report-admin/**").permitAll()
                         .requestMatchers("/v1/**").authenticated()
                         .anyRequest().permitAll())
                 .addFilterBefore(learnerTokenFilter, UsernamePasswordAuthenticationFilter.class);
