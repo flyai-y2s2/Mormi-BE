@@ -24,7 +24,7 @@ RED=$'\033[31m'; GREEN=$'\033[32m'; DIM=$'\033[2m'; OFF=$'\033[0m'
 # QUEUE_LEFT/QUEUE_RIGHT 로 바꿔가며 경계값을 확인할 수 있다.
 LEFT="${QUEUE_LEFT:-3}"; RIGHT="${QUEUE_RIGHT:-5}"
 SHORTER=$((LEFT < RIGHT ? LEFT : RIGHT))
-BUDGET=9000                     # 허용 예산 8000/9000/10000 중 하나
+BUDGET=8000                     # 허용 예산 7000/8000 중 하나 (구버전 9000/10000 은 한시 허용)
 MORMI_MENU="americano"          # 3000원
 CHILD_MENU="milk"               # 2000원  → 합계 5000 ≤ 9000
 PAY_TOTAL=5000                  # 계산 단계 정답

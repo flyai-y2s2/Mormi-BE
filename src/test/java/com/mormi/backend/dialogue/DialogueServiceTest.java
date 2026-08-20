@@ -459,7 +459,7 @@ class DialogueServiceTest {
                                 new CafeMenuItem("americano", "아메리카노", 3000),
                                 new CafeMenuItem("cookie", "쿠키", 2000)),
                         "americano",
-                        7000),
+                        6000),
                 false);
 
         assertThatThrownBy(

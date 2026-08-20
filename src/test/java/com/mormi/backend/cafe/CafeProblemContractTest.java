@@ -113,10 +113,15 @@ class CafeProblemContractTest {
 
     @Test
     void budgetMustBeOnTheAllowList() {
+        assertThatCode(() -> CafeProblemContract.requireKnownBudget(7000))
+                .doesNotThrowAnyException();
         assertThatCode(() -> CafeProblemContract.requireKnownBudget(8000))
                 .doesNotThrowAnyException();
+        // 배포 전 저장된 대화가 깨지지 않도록 구버전 예산은 한시 허용한다.
+        assertThatCode(() -> CafeProblemContract.requireKnownBudget(9000))
+                .doesNotThrowAnyException();
 
-        assertThatThrownBy(() -> CafeProblemContract.requireKnownBudget(7000))
+        assertThatThrownBy(() -> CafeProblemContract.requireKnownBudget(6000))
                 .isInstanceOf(ApiException.class)
                 .hasFieldOrPropertyWithValue("code", "budget");
         assertThatThrownBy(() -> CafeProblemContract.requireKnownBudget(null))
