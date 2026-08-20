@@ -20,9 +20,9 @@ RED=$'\033[31m'; GREEN=$'\033[32m'; DIM=$'\033[2m'; OFF=$'\033[0m'
 
 # 카페 판정에 쓰이는 서버 고정값 (CurriculumCatalog 와 같아야 한다)
 #
-# 줄 인원은 1~9. BE DTO(@Max 9)·AI 스키마(le=9)·AI KOREAN_COUNTS 가 모두 같은
-# 범위를 덮는다. QUEUE_LEFT/QUEUE_RIGHT 로 바꿔가며 경계값을 확인할 수 있다.
-LEFT="${QUEUE_LEFT:-3}"; RIGHT="${QUEUE_RIGHT:-7}"
+# 줄 인원은 1~5 이고 좌우가 서로 달라야 한다(이슈 #21 문제 컨텍스트 계약).
+# QUEUE_LEFT/QUEUE_RIGHT 로 바꿔가며 경계값을 확인할 수 있다.
+LEFT="${QUEUE_LEFT:-3}"; RIGHT="${QUEUE_RIGHT:-5}"
 SHORTER=$((LEFT < RIGHT ? LEFT : RIGHT))
 BUDGET=9000                     # 허용 예산 8000/9000/10000 중 하나
 MORMI_MENU="americano"          # 3000원
