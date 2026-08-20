@@ -12,6 +12,9 @@ import com.mormi.backend.cafe.CafeVisitRepository;
 import com.mormi.backend.cafe.CafeVisit;
 import com.mormi.backend.cafe.CafeService;
 import com.mormi.backend.cafe.CafeStage;
+import com.mormi.backend.cafe.CafeDtos.CafeContext;
+import com.mormi.backend.cafe.CafeDtos.CafeMenuItem;
+import com.mormi.backend.cafe.CafeDtos.QueueContext;
 import com.mormi.backend.cafe.CafeDtos.QueueRequest;
 import com.mormi.backend.cafe.CafeDtos.StageResultResponse;
 import com.mormi.backend.common.ApiException;
@@ -152,7 +155,7 @@ class DialogueServiceTest {
                 visit.getPublicId(),
                 new StartCafeDialogueRequest(
                         "cafe_queue",
-                        Map.of("left_count", 4, "right_count", 1),
+                        new QueueContext(4, 1),
                         null,
                         false));
 
@@ -202,7 +205,7 @@ class DialogueServiceTest {
                 7L,
                 visit.getPublicId(),
                 new StartCafeDialogueRequest(
-                        "cafe_queue", Map.of("left_count", 4, "right_count", 1), null, false));
+                        "cafe_queue", new QueueContext(4, 1), null, false));
 
         assertThat(result.get("conversation_id")).isEqualTo("conversation-queue-2");
         verify(dialogueRepository).save(any(DialogueConversation.class));
@@ -231,7 +234,13 @@ class DialogueServiceTest {
                 .thenReturn(Optional.empty());
 
         StartCafeDialogueRequest request = new StartCafeDialogueRequest(
-                "cafe_change", null, Map.of("mormi_menu_id", "americano"), false);
+                "cafe_change",
+                null,
+                new CafeContext(
+                        List.of(new CafeMenuItem("americano", "아메리카노", 3000)),
+                        "americano",
+                        null),
+                false);
 
         assertThatThrownBy(() -> service.startCafeDialogue(7L, visit.getPublicId(), request))
                 .isInstanceOf(ApiException.class)
@@ -289,7 +298,7 @@ class DialogueServiceTest {
                 7L,
                 visit.getPublicId(),
                 new StartCafeDialogueRequest(
-                        "cafe_queue", Map.of("left_count", 4, "right_count", 1), null, true));
+                        "cafe_queue", new QueueContext(4, 1), null, true));
 
         assertThat(result.get("conversation_id")).isEqualTo("conversation-queue-2");
         // 1회차의 옛 문제가 아니라 화면이 방금 뽑은 새 문제가 저장되어야 한다.
@@ -369,6 +378,123 @@ class DialogueServiceTest {
         verify(cafeService).submitQueue(any(), any(), request.capture());
         assertThat(request.getValue().attemptNo()).isEqualTo(901_003);
         assertThat(secondRound.getClearedAt()).isNotNull();
+    }
+
+    @Test
+    void equalQueueCountsAreRejectedBeforeCreatingADialogue() {
+        StartFixture fixture = startFixture("cafe_queue", CafeStage.QUEUE);
+        StartCafeDialogueRequest request = new StartCafeDialogueRequest(
+                "cafe_queue", new QueueContext(3, 3), null, false);
+
+        assertThatThrownBy(
+                () -> fixture.service().startCafeDialogue(7L, fixture.visit().getPublicId(), request))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "queue_count_equal");
+        verify(fixture.dialogueClient(), never()).createConversation(any());
+    }
+
+    @Test
+    void outOfRangeQueueCountsAreRejectedBeforeCreatingADialogue() {
+        StartFixture fixture = startFixture("cafe_queue", CafeStage.QUEUE);
+        StartCafeDialogueRequest request = new StartCafeDialogueRequest(
+                "cafe_queue", new QueueContext(7, 2), null, false);
+
+        assertThatThrownBy(
+                () -> fixture.service().startCafeDialogue(7L, fixture.visit().getPublicId(), request))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "queue_count_range");
+        verify(fixture.dialogueClient(), never()).createConversation(any());
+    }
+
+    @Test
+    void menuPriceMismatchIsRejectedBeforeCreatingADialogue() {
+        StartFixture fixture = startFixture("cafe_budget_menu", CafeStage.MENU);
+        StartCafeDialogueRequest request = new StartCafeDialogueRequest(
+                "cafe_budget_menu",
+                null,
+                new CafeContext(
+                        List.of(
+                                new CafeMenuItem("americano", "아메리카노", 3500),
+                                new CafeMenuItem("cookie", "쿠키", 2000)),
+                        "americano",
+                        8000),
+                false);
+
+        assertThatThrownBy(
+                () -> fixture.service().startCafeDialogue(7L, fixture.visit().getPublicId(), request))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "menu_price_mismatch");
+        verify(fixture.dialogueClient(), never()).createConversation(any());
+    }
+
+    @Test
+    void mormiMenuOutsideTheBoardIsRejectedBeforeCreatingADialogue() {
+        StartFixture fixture = startFixture("cafe_budget_menu", CafeStage.MENU);
+        StartCafeDialogueRequest request = new StartCafeDialogueRequest(
+                "cafe_budget_menu",
+                null,
+                new CafeContext(
+                        List.of(
+                                new CafeMenuItem("americano", "아메리카노", 3000),
+                                new CafeMenuItem("cookie", "쿠키", 2000)),
+                        "milk",
+                        8000),
+                false);
+
+        assertThatThrownBy(
+                () -> fixture.service().startCafeDialogue(7L, fixture.visit().getPublicId(), request))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "mormi_menu_unknown");
+        verify(fixture.dialogueClient(), never()).createConversation(any());
+    }
+
+    @Test
+    void unknownBudgetIsRejectedBeforeCreatingADialogue() {
+        StartFixture fixture = startFixture("cafe_budget_menu", CafeStage.MENU);
+        StartCafeDialogueRequest request = new StartCafeDialogueRequest(
+                "cafe_budget_menu",
+                null,
+                new CafeContext(
+                        List.of(
+                                new CafeMenuItem("americano", "아메리카노", 3000),
+                                new CafeMenuItem("cookie", "쿠키", 2000)),
+                        "americano",
+                        7000),
+                false);
+
+        assertThatThrownBy(
+                () -> fixture.service().startCafeDialogue(7L, fixture.visit().getPublicId(), request))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "budget");
+        verify(fixture.dialogueClient(), never()).createConversation(any());
+    }
+
+    /** 대화 시작 거절 테스트 공통 준비물. 계약 위반이 AI 호출 전에 걸리는지 본다. */
+    private record StartFixture(
+            DialogueService service, DialogueClient dialogueClient, CafeVisit visit) {
+    }
+
+    private StartFixture startFixture(String scenarioId, CafeStage reachedStage) {
+        DialogueClient dialogueClient = mock(DialogueClient.class);
+        DialogueConversationRepository dialogueRepository = mock(DialogueConversationRepository.class);
+        CafeVisitRepository cafeVisitRepository = mock(CafeVisitRepository.class);
+        DialogueService service = new DialogueService(
+                dialogueClient,
+                dialogueRepository,
+                mock(LearningSessionRepository.class),
+                mock(AttemptRepository.class),
+                cafeVisitRepository,
+                mock(CafeService.class),
+                mock(LearnerService.class),
+                mock(RewardService.class));
+
+        CafeVisit visit = CafeVisit.start(7L);
+        ReflectionTestUtils.setField(visit, "id", 21L);
+        visit.advanceTo(reachedStage);
+        when(cafeVisitRepository.findByPublicId(visit.getPublicId())).thenReturn(Optional.of(visit));
+        when(dialogueRepository.findFirstByCafeVisitIdAndScenarioIdOrderByRoundDesc(21L, scenarioId))
+                .thenReturn(Optional.empty());
+        return new StartFixture(service, dialogueClient, visit);
     }
 
     @Test

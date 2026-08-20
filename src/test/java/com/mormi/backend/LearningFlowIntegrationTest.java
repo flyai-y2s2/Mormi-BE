@@ -337,6 +337,119 @@ class LearningFlowIntegrationTest {
     }
 
     @Test
+    void 카페_문제_계약_위반은_4xx로_거절되고_기록이_남지_않는다() throws Exception {
+        String token = "Bearer " + createLearner("이든", "MORMI-C03").get("access_token").asText();
+        for (String sessionKey : CurriculumCatalog.CAFE_REQUIRED_SESSION_IDS) {
+            completeSession(token, sessionKey);
+        }
+        String visitBody = mockMvc.perform(post("/v1/cafe-visits").header("Authorization", token))
+                .andReturn().getResponse().getContentAsString();
+        String visitId = objectMapper.readTree(visitBody).get("cafe_visit_id").asText();
+
+        // 좌우 줄 인원이 같으면 "더 짧은 줄" 문제가 성립하지 않는다.
+        mockMvc.perform(post("/v1/cafe-visits/{id}/queue", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "left_count", 3, "right_count", 3, "chosen_count", 3,
+                                "scaffold_used", false, "attempt_no", 1))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("queue_count_equal"));
+
+        // 계약 범위(1~5)를 벗어난 인원은 DTO 검증이 422로 거절한다.
+        mockMvc.perform(post("/v1/cafe-visits/{id}/queue", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "left_count", 7, "right_count", 2, "chosen_count", 2,
+                                "scaffold_used", false, "attempt_no", 1))))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("validation_failed"));
+
+        // AI 대화 시작도 같은 계약으로 막혀 대화 자체가 만들어지지 않는다.
+        mockMvc.perform(post("/v1/cafe-visits/{id}/dialogues", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "scenario_id", "cafe_queue",
+                                "queue_context", Map.of("left_count", 4, "right_count", 4),
+                                "restart", false))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("queue_count_equal"));
+
+        // 계약을 지킨 문제는 그대로 채점되어 다음 단계가 열린다.
+        mockMvc.perform(post("/v1/cafe-visits/{id}/queue", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "left_count", 2, "right_count", 5, "chosen_count", 2,
+                                "scaffold_used", false, "attempt_no", 1))))
+                .andExpect(jsonPath("$.is_correct").value(true))
+                .andExpect(jsonPath("$.next_stage").value("menu"));
+
+        // 같은 메뉴 두 개는 제출 단계에서도 거절한다.
+        mockMvc.perform(post("/v1/cafe-visits/{id}/menu", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "menu_ids", List.of("cookie", "cookie"),
+                                "budget", 8000, "attempt_no", 1))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("menu_duplicate"));
+
+        // 카탈로그에 없는 메뉴도 안정적인 코드로 거절한다.
+        mockMvc.perform(post("/v1/cafe-visits/{id}/menu", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "menu_ids", List.of("cookie", "latte"),
+                                "budget", 8000, "attempt_no", 1))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("menu_unknown"));
+
+        // 메뉴 대화 시작은 화면이 보낸 가격을 서버 카탈로그와 대조한다.
+        mockMvc.perform(post("/v1/cafe-visits/{id}/dialogues", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "scenario_id", "cafe_budget_menu",
+                                "cafe_context", Map.of(
+                                        "menu_items", List.of(
+                                                Map.of("id", "americano", "name", "아메리카노", "price", 3500),
+                                                Map.of("id", "cookie", "name", "쿠키", "price", 2000)),
+                                        "mormi_menu_id", "americano",
+                                        "budget", 8000),
+                                "restart", false))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("menu_price_mismatch"));
+
+        // 서로 다른 두 메뉴는 정상 채점된다.
+        mockMvc.perform(post("/v1/cafe-visits/{id}/menu", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "menu_ids", List.of("americano", "cookie"),
+                                "budget", 8000, "attempt_no", 1))))
+                .andExpect(jsonPath("$.is_correct").value(true))
+                .andExpect(jsonPath("$.next_stage").value("calculate"));
+
+        // 계산 제출도 같은 메뉴 중복을 거절한다.
+        mockMvc.perform(post("/v1/cafe-visits/{id}/payments", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "menu_ids", List.of("milk", "milk"),
+                                "answer_amount", 4000, "attempt_no", 1))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("menu_duplicate"));
+
+        // 거절된 시도는 학습 기록으로 남지 않는다. 남은 것은 정답 두 건뿐이다.
+        mockMvc.perform(get("/v1/cafe-visits/{id}", visitId).header("Authorization", token))
+                .andExpect(jsonPath("$.stage").value("calculate"))
+                .andExpect(jsonPath("$.attempts.length()").value(2));
+    }
+
+    @Test
     void 다른_학습자의_세션에는_접근할_수_없다() throws Exception {
         String ownerToken = "Bearer " + createLearner("은우", "MORMI-D01").get("access_token").asText();
         String otherToken = "Bearer " + createLearner("수아", "MORMI-D02").get("access_token").asText();
