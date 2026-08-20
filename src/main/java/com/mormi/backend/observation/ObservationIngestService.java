@@ -3,6 +3,7 @@ package com.mormi.backend.observation;
 import tools.jackson.databind.JsonNode;
 import com.mormi.backend.dialogue.DialogueConversation;
 import com.mormi.backend.dialogue.DialogueConversationRepository;
+import com.mormi.backend.outcome.StarNoteOutcomeLinker;
 import com.mormi.backend.outcome.TaskOutcomeService;
 import com.mormi.backend.observation.ObservationDtos.IngestObservationRequest;
 import com.mormi.backend.observation.ObservationDtos.IngestObservationResponse;
@@ -53,6 +54,7 @@ public class ObservationIngestService {
     private final DialogueConversationRepository dialogueConversationRepository;
     private final StarNoteRepository starNoteRepository;
     private final TaskOutcomeService taskOutcomeService;
+    private final StarNoteOutcomeLinker starNoteLinker;
     private final JsonMapper jsonMapper;
 
     public ObservationIngestService(
@@ -61,12 +63,14 @@ public class ObservationIngestService {
             DialogueConversationRepository dialogueConversationRepository,
             StarNoteRepository starNoteRepository,
             TaskOutcomeService taskOutcomeService,
+            StarNoteOutcomeLinker starNoteLinker,
             JsonMapper jsonMapper) {
         this.eventRepository = eventRepository;
         this.observationRepository = observationRepository;
         this.dialogueConversationRepository = dialogueConversationRepository;
         this.starNoteRepository = starNoteRepository;
         this.taskOutcomeService = taskOutcomeService;
+        this.starNoteLinker = starNoteLinker;
         this.jsonMapper = jsonMapper;
     }
 
@@ -228,9 +232,11 @@ public class ObservationIngestService {
         StarNoteFields fields = readStarNoteFields(body);
         StarNote existing = starNoteRepository.findByNoteId(noteId).orElse(null);
         if (existing == null) {
-            return starNoteRepository
-                    .save(StarNote.from(event.getId(), noteId, conversation, fields))
-                    .getId();
+            StarNote saved = starNoteRepository
+                    .save(StarNote.from(event.getId(), noteId, conversation, fields));
+            // outcome 행이 이미 있으면 바로 연결한다. 아직 없으면 recompute 가 나중에 채운다.
+            starNoteLinker.relink(saved.getLearningSessionId(), saved.getTaskId());
+            return saved.getId();
         }
         if (!existing.getLearnerId().equals(conversation.getLearnerId())) {
             throw new ObservationRejectedException(
@@ -240,7 +246,13 @@ public class ObservationIngestService {
         if (fields.noteVersion() <= existing.getNoteVersion()) {
             return existing.getId();
         }
+        String previousTaskId = existing.getTaskId();
         existing.apply(event.getId(), fields);
+        starNoteLinker.relink(existing.getLearningSessionId(), existing.getTaskId());
+        // 재발행으로 과제가 바뀌었으면 이전 과제에 남은 연결도 원장 기준으로 다시 계산해 푼다.
+        if (previousTaskId != null && !previousTaskId.equals(existing.getTaskId())) {
+            starNoteLinker.relink(existing.getLearningSessionId(), previousTaskId);
+        }
         return existing.getId();
     }
 

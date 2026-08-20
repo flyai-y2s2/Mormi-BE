@@ -43,4 +43,19 @@ public interface StarNoteRepository extends JpaRepository<StarNote, Long> {
             @Param("cursorCreatedAt") OffsetDateTime cursorCreatedAt,
             @Param("cursorNoteId") String cursorNoteId,
             Pageable pageable);
+
+    /**
+     * 과제(outcome 행)에 연결할 대표 별노트 후보. 목록과 같은 정렬을 써서
+     * 같은 과제에 노트가 여러 개면 항상 최신 활성 노트 하나로 결정된다.
+     */
+    @Query("""
+            SELECT n FROM StarNote n
+            WHERE n.learningSessionId = :learningSessionId
+              AND n.taskId = :taskId AND n.active = true
+            ORDER BY n.noteCreatedAt DESC, n.noteId DESC
+            """)
+    List<StarNote> findActiveByTask(
+            @Param("learningSessionId") Long learningSessionId,
+            @Param("taskId") String taskId,
+            Pageable pageable);
 }

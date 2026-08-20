@@ -391,7 +391,11 @@ FE 는 AI 의 별노트 API 를 직접 호출하지 않습니다.
   **예약만 되어 있고 BE 가 실제로 반환하지 않습니다.**
 - 같은 `note_id` 재발행은 `note_version` 이 올랐을 때만 반영합니다. 같은 버전으로 내용만 바꾸면
   조용히 무시되므로, AI 는 수정 시 반드시 버전을 올려야 합니다. `active: false` 재발행 = 목록에서 숨김.
-- `learning_task_outcomes.star_note_*` 컬럼은 이 계약과 무관하게 아직 NULL 입니다(이슈 #14).
+- **과제 집계 연결(이슈 #14)**: 별노트에 `task_id` 가 있으면 같은 세션·과제의
+  `learning_task_outcomes.star_note_id / star_note_attribution / star_note_evidence` 에 연결됩니다.
+  연결은 원장에서 파생되며, 같은 과제에 노트가 여러 개면 최신(`created_at` 내림차순, 동률이면
+  `note_id` 내림차순) 활성 노트 하나를 가리킵니다. 별노트가 집계 행보다 먼저 도착하면 원장에서
+  기다렸다가 집계가 만들어질 때 채워지고(순서 역전 허용), `active: false` 재발행이 오면 풀립니다.
 
 #### 조회 (학습자용)
 
@@ -550,6 +554,6 @@ DB_USERNAME=mormi DB_PASSWORD=mormi ./gradlew bootRun
 | 2 | 지갑 vs 카페 10,000원 | 분리 유지. 카페는 고정 실습 소지금이고 지갑에서 차감하지 않음 |
 | 3 | `ladder` 0~3 ↔ `L4~L0` 매핑 | **여전히 미정.** BE 는 변환하지 않기로 함 — attempts.support_level 은 FE 0~3, 관찰은 발화 L4~L0·힌트 H0~H3 을 각자 원본 척도로 저장. 매핑 확정 시 조회 계층에서만 잇는다 |
 | 4 | 별노트 저장 주체 | AI 가 생성·발행하고 **Spring 이 서비스 원장(`star_notes`)을 소유** (이슈 #12, G-3 참조). FE 는 Spring 목록 API 만 사용 |
-| 4-1 | 별노트 → BE 이벤트 계약 | **확정.** `star_note_created` 이벤트로 수집 (G-3). `learning_task_outcomes.star_note_*` 컬럼 연결은 후속 이슈 #14, 그때까지 NULL |
+| 4-1 | 별노트 → BE 이벤트 계약 | **확정.** `star_note_created` 이벤트로 수집 (G-3). `learning_task_outcomes.star_note_*` 컬럼은 원장에서 파생해 연결됨 (이슈 #14, G-3 "과제 집계 연결" 참조) |
 | 5 | `conversation_storage_consent` 관리 주체 | Spring `learners` 및 동의 변경 API. AI가 실제 암호화·삭제 수행 |
 | 6 | 참여 번호 발급 방식 | 연구자가 사전 발급해 전달하는 것으로 가정 |
