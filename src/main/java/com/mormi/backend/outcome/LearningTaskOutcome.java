@@ -89,7 +89,10 @@ public class LearningTaskOutcome {
     @Column(name = "bottleneck_evidence_count")
     private Integer bottleneckEvidenceCount;
 
-    /** 별노트는 Mormi-AI 가 보유한다. 집계에서 파생하지 않으므로 재계산이 건드리지 않는다. */
+    /**
+     * 별노트 컬럼은 attempts·observations 집계가 아니라 star_notes 원장에서 파생한다.
+     * apply() 는 건드리지 않고 StarNoteOutcomeLinker 가 linkStarNote() 로만 갱신한다.
+     */
     @Column(name = "star_note_id", length = 100)
     private String starNoteId;
 
@@ -145,6 +148,16 @@ public class LearningTaskOutcome {
         this.sourceObservationIds = toArray(fields.sourceObservationIds());
         this.aggregationRuleVersion = ruleVersion;
         this.computedAt = OffsetDateTime.now();
+    }
+
+    /**
+     * 별노트 컬럼을 star_notes 원장 기준으로 다시 쓴다. StarNoteOutcomeLinker 만 호출한다.
+     * 활성 노트가 없으면 null 로 되돌려 원장과 어긋난 연결을 남기지 않는다.
+     */
+    public void linkStarNote(String noteId, String attribution, String evidence) {
+        this.starNoteId = noteId;
+        this.starNoteAttribution = attribution;
+        this.starNoteEvidence = evidence;
     }
 
     private Long[] toArray(List<Long> values) {

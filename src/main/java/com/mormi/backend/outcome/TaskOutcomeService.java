@@ -39,16 +39,19 @@ public class TaskOutcomeService {
     private final AttemptRepository attemptRepository;
     private final LearningObservationRepository observationRepository;
     private final LearningTaskOutcomeRepository outcomeRepository;
+    private final StarNoteOutcomeLinker starNoteLinker;
 
     public TaskOutcomeService(
             LearningSessionRepository sessionRepository,
             AttemptRepository attemptRepository,
             LearningObservationRepository observationRepository,
-            LearningTaskOutcomeRepository outcomeRepository) {
+            LearningTaskOutcomeRepository outcomeRepository,
+            StarNoteOutcomeLinker starNoteLinker) {
         this.sessionRepository = sessionRepository;
         this.attemptRepository = attemptRepository;
         this.observationRepository = observationRepository;
         this.outcomeRepository = outcomeRepository;
+        this.starNoteLinker = starNoteLinker;
     }
 
     @Transactional
@@ -90,6 +93,8 @@ public class TaskOutcomeService {
                             observationsByTask.getOrDefault(taskKey, List.of())),
                     RULE_VERSION);
             outcomeRepository.save(outcome);
+            // 별노트가 outcome 행보다 먼저 도착해 원장에서 기다리고 있었으면 여기서 채워진다.
+            starNoteLinker.relink(learningSessionId, taskKey);
         }
     }
 
