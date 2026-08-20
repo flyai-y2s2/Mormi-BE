@@ -233,6 +233,10 @@ MORMI_DIALOGUE_READ_TIMEOUT_SECONDS=45
 # AI -> BE 관찰 이벤트 수신 키 (이슈 #6). AI 전송기 설정과 같은 값이어야 한다.
 # 생성: openssl rand -hex 32
 MORMI_OBSERVATION_INGEST_KEY=<AI 전송기와 같은 값>
+# Vercel 교사용 리포트 프록시만 사용하는 서버 간 키.
+# 생성: openssl rand -hex 32
+MORMI_LOCAL_REPORT_ADMIN_ENABLED=true
+MORMI_LOCAL_REPORT_ADMIN_KEY=<Vercel LOCAL_REPORT_ADMIN_KEY와 같은 값>
 EOF
 ```
 
@@ -250,6 +254,14 @@ sudo chmod 640 /etc/mormi-backend/mormi.env
 `MORMI_OBSERVATION_INGEST_KEY`가 없으면 앱은 정상 동작하지만 `/internal/**`이 전부 401이 되어
 AI 관찰 이벤트를 받을 수 없습니다. 일부러 이렇게 만들었습니다 — 설정 누락이 인증 해제가 되면 안 되므로,
 빠뜨리면 잠기는 쪽이 기본값입니다. 키 값 변경 후에는 `docker restart mormi-backend`.
+
+교사용 학습자 검색은 `MORMI_LOCAL_REPORT_ADMIN_ENABLED=true`와
+`MORMI_LOCAL_REPORT_ADMIN_KEY`가 모두 설정된 경우에만 열립니다. 같은 키를 Vercel의
+서버 전용 `LOCAL_REPORT_ADMIN_KEY`에 등록하고, 브라우저에는 절대 노출하지 마세요.
+교사용 비밀번호 원문은 Vercel에만 저장합니다. Vercel은 신뢰할 수 있는 접속자 IP를 HMAC으로
+익명화한 식별값과 성공 여부만 백엔드에 보내며, 백엔드는 식별값별 5회 실패 시 10분 동안
+추가 로그인을 차단합니다. 백엔드를 여러 인스턴스로 확장할 때는 이 제한 상태를 Redis 같은
+공유 저장소로 옮겨야 합니다.
 
 ### 3-4. 8080 포트 방화벽
 

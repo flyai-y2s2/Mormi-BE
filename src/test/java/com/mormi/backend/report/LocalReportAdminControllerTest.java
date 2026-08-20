@@ -12,12 +12,14 @@ import jakarta.servlet.http.HttpServletRequest;
 import java.time.LocalDate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 
 class LocalReportAdminControllerTest {
 
     private LocalReportAdminGuard guard;
     private LocalReportAdminService localReportAdminService;
     private DiagnosticReportService diagnosticReportService;
+    private LocalReportLoginAttemptLimiter loginAttemptLimiter;
     private LocalReportAdminController controller;
 
     @BeforeEach
@@ -25,7 +27,22 @@ class LocalReportAdminControllerTest {
         guard = mock(LocalReportAdminGuard.class);
         localReportAdminService = mock(LocalReportAdminService.class);
         diagnosticReportService = mock(DiagnosticReportService.class);
-        controller = new LocalReportAdminController(guard, localReportAdminService, diagnosticReportService);
+        loginAttemptLimiter = mock(LocalReportLoginAttemptLimiter.class);
+        controller = new LocalReportAdminController(
+                guard, localReportAdminService, diagnosticReportService, loginAttemptLimiter);
+    }
+
+    @Test
+    void loginAttemptUsesTheSharedLimiterAfterGuarding() {
+        when(loginAttemptLimiter.evaluate("opaque-client", false))
+                .thenReturn(LocalReportLoginAttemptLimiter.Decision.BLOCKED);
+
+        var response = controller.authAttempt(
+                new LocalReportAdminController.AuthAttempt(false, "opaque-client"), requestWithLoopbackAndKey());
+
+        verify(guard).requireAllowed("local-secret", "127.0.0.1");
+        verify(loginAttemptLimiter).evaluate("opaque-client", false);
+        org.assertj.core.api.Assertions.assertThat(response.getStatusCode()).isEqualTo(HttpStatus.TOO_MANY_REQUESTS);
     }
 
     @Test
