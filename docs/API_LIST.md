@@ -218,7 +218,7 @@
 `stage` 를 되돌리지는 않습니다.
 
 ```jsonc
-// POST .../queue   정답은 min(left,right)
+// POST .../queue   정답은 min(left,right). 좌우 인원은 1~5 이고 서로 달라야 한다
 { "left_count": 4, "right_count": 2, "chosen_count": 2,
   "scaffold_used": false, "attempt_no": 1 }
 
@@ -240,6 +240,37 @@
 - 메뉴 합계는 클라이언트 값이 아니라 **서버 가격표**로 계산합니다. 가격표는 `CafeJourney.tsx` 와 같아야 합니다.
 - 화폐별 최종 구성만 저장하고 −/＋ 버튼 클릭 로그는 저장하지 않습니다.
 - 예산 초과 주문도 **오답으로 기록**합니다(`menu_over_budget`). 다음 단계는 열리지 않습니다.
+- **문제 계약 위반은 채점이 아니라 4xx 거절**이고 시도 기록도 남지 않습니다. 줄 인원이
+  1~5 를 벗어나거나(`queue_count_range`) 좌우가 같으면(`queue_count_equal`), 같은 메뉴 두 개를
+  내면(`menu_duplicate`), 카탈로그에 없는 메뉴면(`menu_unknown`) 거절됩니다.
+  코드는 `ERROR_CODES.md` 를 참고합니다.
+
+`POST .../dialogues` 의 문제 컨텍스트는 타입 있는 계약으로 검증합니다. 줄 서기는
+`queue_context`, 나머지 세 단계는 `cafe_context` 를 싣습니다. 계약 위반은 **AI 대화를
+만들기 전에 400 으로 거절**하므로, 대화를 끝까지 진행한 뒤 완료 동기화에서 5xx 로
+실패하는 일이 없습니다. 메뉴 ID·가격은 서버 카탈로그와 대조하고(`menu_unknown`,
+`menu_price_mismatch`, `menu_items_duplicate`), `mormi_menu_id` 는 메뉴판 안에 있어야
+하며(`mormi_menu_unknown`), `budget` 은 `cafe_budget_menu` 에서만 필수입니다(`budget`).
+
+```jsonc
+// POST .../dialogues  줄 서기
+{ "scenario_id": "cafe_queue",
+  "queue_context": { "left_count": 3, "right_count": 5 },
+  "start_mode": "resume" }
+
+// POST .../dialogues  메뉴·계산·거스름돈
+{ "scenario_id": "cafe_budget_menu",
+  "cafe_context": {
+    "menu_items": [
+      { "id": "americano", "name": "아메리카노", "price": 3000 },
+      { "id": "cookie", "name": "쿠키", "price": 2000 }
+    ],
+    "mormi_menu_id": "americano",
+    "budget": 8000
+  },
+  "start_mode": "restart",
+  "request_id": "9f4c…(요청마다 새 UUID)" }
+```
 
 ### F. 인증된 AI 대화 프록시
 

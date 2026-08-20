@@ -1,12 +1,16 @@
 package com.mormi.backend.dialogue;
 
+import com.mormi.backend.cafe.CafeProblemContract;
 import com.mormi.backend.cafe.CafeStage;
 import com.mormi.backend.cafe.CafeService;
 import com.mormi.backend.cafe.CafeVisit;
 import com.mormi.backend.cafe.CafeVisitRepository;
+import com.mormi.backend.cafe.CafeDtos.CafeContext;
+import com.mormi.backend.cafe.CafeDtos.CafeMenuItem;
 import com.mormi.backend.cafe.CafeDtos.ChangeRequest;
 import com.mormi.backend.cafe.CafeDtos.MenuRequest;
 import com.mormi.backend.cafe.CafeDtos.PaymentRequest;
+import com.mormi.backend.cafe.CafeDtos.QueueContext;
 import com.mormi.backend.cafe.CafeDtos.QueueRequest;
 import com.mormi.backend.cafe.CafeDtos.StageResultResponse;
 import com.mormi.backend.common.ApiException;
@@ -165,22 +169,35 @@ public class DialogueService {
         }
         int round = latest == null ? 1 : latest.getRound() + 1;
 
-        Learner learner = learnerService.require(learnerId);
-        Map<String, Object> body = baseRequest(learner, "cafe", request.scenarioId());
-        Map<String, Object> scenarioContext = new LinkedHashMap<>();
+        // 문제 계약 위반은 AI 대화를 만들기 전에 4xx 로 거절한다. 여기서 통과한 컨텍스트만
+        // 회차에 저장되므로, 대화 완료 뒤 동기화가 계약 불일치로 5xx 를 내는 일이 없다.
+        String contextKey;
+        Map<String, Object> contextValue;
         if ("cafe_queue".equals(request.scenarioId())) {
-            if (request.queueContext() == null || request.queueContext().isEmpty()) {
+            if (request.queueContext() == null) {
                 throw ApiException.badRequest("queue_context_required", "줄 화면 정보가 필요합니다.");
             }
-            body.put("queue_context", request.queueContext());
-            scenarioContext.put("queue_context", new LinkedHashMap<>(request.queueContext()));
+            CafeProblemContract.requireQueueCounts(
+                    request.queueContext().leftCount(), request.queueContext().rightCount());
+            contextKey = "queue_context";
+            contextValue = queueContextMap(request.queueContext());
         } else {
-            if (request.cafeContext() == null || request.cafeContext().isEmpty()) {
+            if (request.cafeContext() == null) {
                 throw ApiException.badRequest("cafe_context_required", "메뉴 화면 정보가 필요합니다.");
             }
-            body.put("cafe_context", request.cafeContext());
-            scenarioContext.put("cafe_context", new LinkedHashMap<>(request.cafeContext()));
+            CafeProblemContract.requireMenuBoard(request.cafeContext());
+            if ("cafe_budget_menu".equals(request.scenarioId())) {
+                CafeProblemContract.requireKnownBudget(request.cafeContext().budget());
+            }
+            contextKey = "cafe_context";
+            contextValue = cafeContextMap(request.cafeContext());
         }
+
+        Learner learner = learnerService.require(learnerId);
+        Map<String, Object> body = baseRequest(learner, "cafe", request.scenarioId());
+        body.put(contextKey, contextValue);
+        Map<String, Object> scenarioContext = new LinkedHashMap<>();
+        scenarioContext.put(contextKey, contextValue);
 
         JsonNode envelope = requireEnvelope(dialogueClient.createConversation(body));
         String conversationId = envelope.path("conversation_id").asString();
@@ -415,6 +432,32 @@ public class DialogueService {
                 cafeVisitPublicId(dialogue),
                 new ChangeRequest(
                         contextString(context, "mormi_menu_id"), counts, attemptNo, null));
+    }
+
+    /** AI 요청과 회차 저장에 같은 snake_case 계약 키를 쓴다. sync* 가 이 키로 다시 읽는다. */
+    private Map<String, Object> queueContextMap(QueueContext context) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("left_count", context.leftCount());
+        map.put("right_count", context.rightCount());
+        return map;
+    }
+
+    private Map<String, Object> cafeContextMap(CafeContext context) {
+        List<Map<String, Object>> menuItems = new ArrayList<>();
+        for (CafeMenuItem item : context.menuItems()) {
+            Map<String, Object> menuItem = new LinkedHashMap<>();
+            menuItem.put("id", item.id());
+            menuItem.put("name", item.name());
+            menuItem.put("price", item.price());
+            menuItems.add(menuItem);
+        }
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("menu_items", menuItems);
+        map.put("mormi_menu_id", context.mormiMenuId());
+        if (context.budget() != null) {
+            map.put("budget", context.budget());
+        }
+        return map;
     }
 
     private String cafeVisitPublicId(DialogueConversation dialogue) {

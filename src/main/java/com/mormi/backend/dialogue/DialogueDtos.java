@@ -1,9 +1,11 @@
 package com.mormi.backend.dialogue;
 
+import com.mormi.backend.cafe.CafeDtos.CafeContext;
+import com.mormi.backend.cafe.CafeDtos.QueueContext;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
-import java.util.Map;
 
 public final class DialogueDtos {
 
@@ -11,7 +13,9 @@ public final class DialogueDtos {
     }
 
     /**
-     * 화면에 고정된 카페 문제 사실만 받는다. learner_id와 보존 동의는 BE가 채운다.
+     * 화면에 고정된 카페 문제 사실만 타입 있는 계약으로 받는다. learner_id와 보존 동의는 BE가 채운다.
+     * 값 규칙(줄 인원 범위·카탈로그 대조)은 대화 시작 시 CafeProblemContract 가 검증해,
+     * 잘못된 문제로 AI 대화를 끝까지 진행한 뒤 5xx로 실패하는 일을 막는다.
      *
      * @param startMode restart 면 기존 기록을 보존한 채 새 회차 대화를 만들고,
      *                  resume 이면 마지막 회차를 그대로 이어 준다(없으면 새로 만든다).
@@ -23,8 +27,8 @@ public final class DialogueDtos {
             @NotBlank
             @Pattern(regexp = "cafe_queue|cafe_budget_menu|cafe_menu_total|cafe_change")
             String scenarioId,
-            @Size(max = 10) Map<String, Object> queueContext,
-            @Size(max = 10) Map<String, Object> cafeContext,
+            @Valid QueueContext queueContext,
+            @Valid CafeContext cafeContext,
             @Pattern(regexp = "restart|resume") String startMode,
             @Size(max = 100) String requestId,
             boolean restart) {

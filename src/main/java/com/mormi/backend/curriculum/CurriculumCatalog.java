@@ -28,6 +28,10 @@ public final class CurriculumCatalog {
     /** 카페 실습용 고정 소지금. 지갑과 분리된 별도 화폐이며 거스름돈 기준액이다. */
     public static final int CAFE_TARGET_AMOUNT = 10000;
 
+    /** 줄 서기 좌우 인원의 계약 범위. FE 화면·AI 컨텍스트가 같은 범위를 써야 한다. */
+    public static final int CAFE_QUEUE_MIN_COUNT = 1;
+    public static final int CAFE_QUEUE_MAX_COUNT = 5;
+
     /** 메뉴 고르기 예산. 프런트가 방문마다 이 중 하나를 뽑아 보내고, 서버는 목록에 있는 값만 받는다. */
     public static final Set<Integer> CAFE_MENU_BUDGETS = Set.of(7000, 8000);
 
