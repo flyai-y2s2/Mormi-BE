@@ -54,6 +54,7 @@ public class CafeService {
     public StageResultResponse submitQueue(Long learnerId, String publicId, QueueRequest request) {
         CafeVisit visit = requireOwned(learnerId, publicId);
         requireStageReached(visit, CafeStage.QUEUE);
+        CafeProblemContract.requireQueueCounts(request.leftCount(), request.rightCount());
 
         int expected = CurriculumCatalog.queueCorrectCount(request.leftCount(), request.rightCount());
         boolean correct = expected == request.chosenCount();
@@ -80,7 +81,8 @@ public class CafeService {
         if (menuIds.size() != CurriculumCatalog.CAFE_MENU_PICK_COUNT) {
             throw ApiException.badRequest("menu_count", "메뉴는 두 개를 골라야 합니다.");
         }
-        int budget = requireKnownBudget(request.budget());
+        CafeProblemContract.requireKnownDistinctMenus(menuIds);
+        int budget = CafeProblemContract.requireKnownBudget(request.budget());
         int orderTotal = CurriculumCatalog.orderTotal(menuIds);
         boolean withinBudget = orderTotal <= budget;
 
@@ -105,6 +107,7 @@ public class CafeService {
         requireStageReached(visit, CafeStage.CALCULATE);
 
         List<String> menuIds = request.menuIds();
+        CafeProblemContract.requireKnownDistinctMenus(menuIds);
         int expected = CurriculumCatalog.orderTotal(menuIds);
         int answer = request.answerAmount();
         boolean correct = answer == expected;
@@ -129,6 +132,7 @@ public class CafeService {
         CafeVisit visit = requireOwned(learnerId, publicId);
         requireStageReached(visit, CafeStage.CHANGE);
 
+        CafeProblemContract.requireKnownDistinctMenus(List.of(request.menuId()));
         int menuPrice = CurriculumCatalog.orderTotal(List.of(request.menuId()));
         int expected = visit.getTargetAmount() - menuPrice;
         int submitted = totalOf(request.counts(), CurriculumCatalog.CHANGE_DENOMINATIONS);
@@ -222,14 +226,6 @@ public class CafeService {
                 submittedAmount,
                 expectedAmount == null || submittedAmount == null ? null : submittedAmount - expectedAmount,
                 feedbackCode);
-    }
-
-    /** 예산은 화면이 뽑아 보내지만, 서버는 허용 목록(구버전 저장분 포함)에 있는 값만 인정한다. */
-    private int requireKnownBudget(Integer budget) {
-        if (budget == null || !CurriculumCatalog.isAllowedMenuBudget(budget)) {
-            throw ApiException.badRequest("budget", "사용할 수 없는 예산입니다: " + budget);
-        }
-        return budget;
     }
 
     private int totalOf(Map<Integer, Integer> counts, Set<Integer> allowed) {
