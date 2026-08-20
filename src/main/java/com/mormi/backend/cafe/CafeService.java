@@ -224,9 +224,9 @@ public class CafeService {
                 feedbackCode);
     }
 
-    /** 예산은 화면이 뽑아 보내지만, 서버는 허용 목록에 있는 값만 인정한다. */
+    /** 예산은 화면이 뽑아 보내지만, 서버는 허용 목록(구버전 저장분 포함)에 있는 값만 인정한다. */
     private int requireKnownBudget(Integer budget) {
-        if (budget == null || !CurriculumCatalog.CAFE_MENU_BUDGETS.contains(budget)) {
+        if (budget == null || !CurriculumCatalog.isAllowedMenuBudget(budget)) {
             throw ApiException.badRequest("budget", "사용할 수 없는 예산입니다: " + budget);
         }
         return budget;

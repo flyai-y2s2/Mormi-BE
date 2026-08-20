@@ -191,8 +191,8 @@
 { "left_count": 4, "right_count": 2, "chosen_count": 2,
   "scaffold_used": false, "attempt_no": 1 }
 
-// POST .../menu    budget 은 8000 | 9000 | 10000 만 허용
-{ "menu_ids": ["americano", "cookie"], "budget": 8000, "attempt_no": 1 }
+// POST .../menu    budget 은 7000 | 8000 만 허용 (구버전 저장분 9000 | 10000 은 한시 허용)
+{ "menu_ids": ["americano", "cookie"], "budget": 7000, "attempt_no": 1 }
 
 // POST .../payments   두 메뉴값의 합을 아이가 적어 낸다
 { "menu_ids": ["strawberry-cake", "sandwich"], "answer_amount": 9000, "attempt_no": 1 }
