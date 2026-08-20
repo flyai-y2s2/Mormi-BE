@@ -23,6 +23,7 @@ mormi:
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
   local-report-admin:
+    # 서버 간 공유 키로 보호되는 교사용 리포트 조회. 키나 enabled가 없으면 닫힌다.
     enabled: ${MORMI_LOCAL_REPORT_ADMIN_ENABLED:false}
     key: ${MORMI_LOCAL_REPORT_ADMIN_KEY:}
   observation:

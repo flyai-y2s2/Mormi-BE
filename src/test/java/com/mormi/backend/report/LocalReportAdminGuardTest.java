@@ -9,14 +9,16 @@ import org.junit.jupiter.api.Test;
 class LocalReportAdminGuardTest {
 
     @Test
-    void acceptsOnlyLoopbackWithTheConfiguredKey() {
+    void acceptsTheConfiguredServerKeyFromTheRemoteFrontend() {
         var guard = new LocalReportAdminGuard("local-secret");
 
         assertThatCode(() -> guard.requireAllowed("local-secret", "127.0.0.1"))
                 .doesNotThrowAnyException();
+        assertThatCode(() -> guard.requireAllowed("local-secret", "10.0.0.8"))
+                .doesNotThrowAnyException();
         assertThatThrownBy(() -> guard.requireAllowed("wrong", "127.0.0.1"))
                 .isInstanceOf(ApiException.class);
-        assertThatThrownBy(() -> guard.requireAllowed("local-secret", "10.0.0.8"))
+        assertThatThrownBy(() -> guard.requireAllowed(null, "10.0.0.8"))
                 .isInstanceOf(ApiException.class);
     }
 }
