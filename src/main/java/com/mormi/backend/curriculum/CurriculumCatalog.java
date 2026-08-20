@@ -29,7 +29,17 @@ public final class CurriculumCatalog {
     public static final int CAFE_TARGET_AMOUNT = 10000;
 
     /** 메뉴 고르기 예산. 프런트가 방문마다 이 중 하나를 뽑아 보내고, 서버는 목록에 있는 값만 받는다. */
-    public static final Set<Integer> CAFE_MENU_BUDGETS = Set.of(8000, 9000, 10000);
+    public static final Set<Integer> CAFE_MENU_BUDGETS = Set.of(7000, 8000);
+
+    /**
+     * 예전 배포에서 뽑혀 DB에 저장돼 있을 수 있는 예산. 새 대화에서는 쓰지 않지만,
+     * 저장된 대화의 재진입·동기화가 깨지지 않도록 검증에서만 한시적으로 허용한다.
+     */
+    public static final Set<Integer> LEGACY_CAFE_MENU_BUDGETS = Set.of(9000, 10000);
+
+    public static boolean isAllowedMenuBudget(int budget) {
+        return CAFE_MENU_BUDGETS.contains(budget) || LEGACY_CAFE_MENU_BUDGETS.contains(budget);
+    }
 
     /** 카페 해금에 필요한 5개 세션. journey-config.ts 의 cafeRequiredSessionIds 와 같다. */
     public static final List<String> CAFE_REQUIRED_SESSION_IDS =

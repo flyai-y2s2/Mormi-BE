@@ -185,6 +185,86 @@ class LearningFlowIntegrationTest {
     }
 
     @Test
+    void 메뉴_예산은_7000원과_8000원이_공식이고_기존_저장분_9000원_10000원도_한시_허용한다() throws Exception {
+        String token = "Bearer " + createLearner("소민", "MORMI-C03").get("access_token").asText();
+        for (String sessionKey : CurriculumCatalog.CAFE_REQUIRED_SESSION_IDS) {
+            completeSession(token, sessionKey);
+        }
+
+        String visitBody = mockMvc.perform(post("/v1/cafe-visits").header("Authorization", token))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        String visitId = objectMapper.readTree(visitBody).get("cafe_visit_id").asText();
+
+        // 줄 서기를 먼저 통과해 메뉴 단계를 연다.
+        mockMvc.perform(post("/v1/cafe-visits/{id}/queue", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "left_count", 3, "right_count", 1, "chosen_count", 1,
+                                "scaffold_used", false, "attempt_no", 1))))
+                .andExpect(jsonPath("$.is_correct").value(true));
+
+        // 예산 7,000원: 우유 2,000 + 딸기주스 4,000 = 6,000 은 예산 안이라 성공.
+        mockMvc.perform(post("/v1/cafe-visits/{id}/menu", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "menu_ids", List.of("milk", "strawberry-juice"),
+                                "budget", 7000, "attempt_no", 1))))
+                .andExpect(jsonPath("$.is_correct").value(true))
+                .andExpect(jsonPath("$.submitted_amount").value(6000))
+                .andExpect(jsonPath("$.feedback_code").value("menu_selected"));
+
+        // 경계값: 쿠키 2,000 + 샌드위치 5,000 = 7,000 은 예산과 같으므로 성공.
+        mockMvc.perform(post("/v1/cafe-visits/{id}/menu", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "menu_ids", List.of("cookie", "sandwich"),
+                                "budget", 7000, "attempt_no", 2))))
+                .andExpect(jsonPath("$.is_correct").value(true))
+                .andExpect(jsonPath("$.submitted_amount").value(7000));
+
+        // 합계가 예산을 넘을 때만 초과 처리: 아메리카노 3,000 + 케이크 4,500 = 7,500 > 7,000.
+        mockMvc.perform(post("/v1/cafe-visits/{id}/menu", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "menu_ids", List.of("americano", "strawberry-cake"),
+                                "budget", 7000, "attempt_no", 3))))
+                .andExpect(jsonPath("$.is_correct").value(false))
+                .andExpect(jsonPath("$.feedback_code").value("menu_over_budget"));
+
+        // 허용 목록 밖 예산은 합계 판정 전에 400 으로 거부된다.
+        mockMvc.perform(post("/v1/cafe-visits/{id}/menu", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "menu_ids", List.of("milk", "cookie"),
+                                "budget", 6000, "attempt_no", 4))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("budget"));
+
+        // 배포 전 저장 대화 호환: 9,000원·10,000원은 아직 유효한 예산으로 인정한다.
+        mockMvc.perform(post("/v1/cafe-visits/{id}/menu", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "menu_ids", List.of("milk", "cookie"),
+                                "budget", 9000, "attempt_no", 5))))
+                .andExpect(jsonPath("$.is_correct").value(true));
+
+        mockMvc.perform(post("/v1/cafe-visits/{id}/menu", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "menu_ids", List.of("milk", "cookie"),
+                                "budget", 10000, "attempt_no", 6))))
+                .andExpect(jsonPath("$.is_correct").value(true));
+    }
+
+    @Test
     void 필수_5개를_마쳐야_카페가_열리고_해금_전에는_방문이_막힌다() throws Exception {
         String token = "Bearer " + createLearner("나윤", "MORMI-C01").get("access_token").asText();
 
