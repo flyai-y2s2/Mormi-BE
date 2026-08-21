@@ -1,5 +1,6 @@
 package com.mormi.backend.outcome;
 
+import com.mormi.backend.common.ExpressionLevels;
 import com.mormi.backend.observation.LearningObservation;
 import com.mormi.backend.observation.LearningObservationRepository;
 import com.mormi.backend.session.Attempt;
@@ -30,8 +31,6 @@ public class TaskOutcomeService {
     /** 규칙이 바뀌면 올린다. 예전 규칙으로 계산된 행을 찾아 다시 돌리기 위한 표식이다. */
     public static final String RULE_VERSION = "v1";
 
-    /** 낮은 인덱스일수록 지원이 크다. L0 = 최대 지원, L4 = 독립 수행. */
-    private static final List<String> EXPRESSION_LEVELS = List.of("L0", "L1", "L2", "L3", "L4");
     /** 높은 인덱스일수록 힌트가 크다. H0 = 없음, H3 = 최대. */
     private static final List<String> HINT_LEVELS = List.of("H0", "H1", "H2", "H3");
 
@@ -121,8 +120,10 @@ public class TaskOutcomeService {
                 hasAttempts ? attempts.get(0).isCorrect() : null,
                 hasAttempts ? retrySuccess(attempts) : null,
                 successAfterHelp(hasAttempts, anyCorrect, helpUsed),
-                firstNonNull(observations.stream().map(LearningObservation::getExpressionBefore).toList()),
-                lastNonNull(observations.stream().map(LearningObservation::getExpressionAfter).toList()),
+                ExpressionLevels.canonicalForRead(
+                        firstNonNull(observations.stream().map(LearningObservation::getExpressionBefore).toList())),
+                ExpressionLevels.canonicalForRead(
+                        lastNonNull(observations.stream().map(LearningObservation::getExpressionAfter).toList())),
                 expressionLowest(observations),
                 firstNonNull(observations.stream().map(LearningObservation::getHintBefore).toList()),
                 lastNonNull(observations.stream().map(LearningObservation::getHintAfter).toList()),
@@ -208,9 +209,13 @@ public class TaskOutcomeService {
                 if (value == null) {
                     continue;
                 }
-                int rank = EXPRESSION_LEVELS.indexOf(value);
-                if (rank >= 0 && (lowest == null || rank < EXPRESSION_LEVELS.indexOf(lowest))) {
-                    lowest = value;
+                String canonical = ExpressionLevels.activeOrNull(value);
+                if (canonical == null) {
+                    continue;
+                }
+                int rank = ExpressionLevels.ACTIVE_SUPPORT_ORDER.indexOf(canonical);
+                if (lowest == null || rank < ExpressionLevels.ACTIVE_SUPPORT_ORDER.indexOf(lowest)) {
+                    lowest = canonical;
                 }
             }
         }

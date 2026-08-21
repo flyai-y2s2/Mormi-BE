@@ -85,6 +85,25 @@ class DiagnosticMetricsTest {
     }
 
     @Test
+    void legacyL1TeachEvidenceIsReportedAsL2WithoutCreatingAFifthBucket() {
+        var teach = List.of(new DiagnosticReportDtos.TeachEvidence(
+                "conversation-legacy",
+                "money-count",
+                "explain",
+                "taught",
+                "H1",
+                "L1",
+                Map.of("slot", true),
+                START));
+
+        var point = DiagnosticMetrics.analyze(List.of(), teach, List.of())
+                .teachTrends().getFirst().points().getFirst();
+
+        assertThat(point.expressionLevel()).isEqualTo("L2");
+        assertThat(teach.getFirst().expressionLevel()).isEqualTo("L1");
+    }
+
+    @Test
     void currentWindowUsesNewestFiveButNeedsAtLeastThreeComparableRecords() {
         assertThat(DiagnosticMetrics.status(points(90, 80))).isEqualTo(OBSERVING);
         assertThat(DiagnosticMetrics.status(points(30, 85, 90, 80, 95, 100))).isEqualTo(STABLE);

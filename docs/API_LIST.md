@@ -448,8 +448,9 @@ AI가 LLM이 아닌 결정적 규칙으로 계산해 매 턴 실어 보내고, *
 
 - 인증: `X-Mormi-Service-Key` 헤더 (`MORMI_OBSERVATION_INGEST_KEY`). 학습자 토큰·CORS 대상이 아닙니다.
 - 계약 원본: `Mormi-AI/docs/OBSERVATION_EVENTS.md`. `schema_version` 은 숫자 `1` 입니다.
-- 발화사다리(`expression_before/after`, L4~L0)와 힌트사다리(`hint_before/after`, H0~H3)는
-  별개 상태값으로 받습니다. FE 의 0~3 사다리와 변환하지 않습니다.
+- 발화사다리(`expression_before/after`) 신규 값은 `L4/L3/L2/L0`, 힌트사다리
+  (`hint_before/after`)는 `H0~H3`로 별개 상태값입니다. 과거 `L1` 관찰은 원본을
+  보존하되 조회·집계에서 `L2`로 해석하며 단계 번호를 다시 매기지 않습니다.
 - 소유권은 이벤트의 `learner_id` 가 아니라 `conversation_id` 로 BE 대화 기록에서 역참조합니다.
 
 ```jsonc
@@ -677,7 +678,7 @@ DB_USERNAME=mormi DB_PASSWORD=mormi ./gradlew bootRun
 |---|---|---|
 | 1 | RDS 안에서 Spring / Mormi-AI 데이터 분리 | **미정.** Mormi-AI 는 `create_schema()` 로 직접 테이블을 만들고 Spring 은 Flyway + `ddl-auto: validate` 라 같은 스키마에 두면 충돌 위험. 스키마 또는 DB 분리 권장 |
 | 2 | 지갑 vs 카페 10,000원 | 분리 유지. 카페는 고정 실습 소지금이고 지갑에서 차감하지 않음 |
-| 3 | `ladder` 0~3 ↔ `L4~L0` 매핑 | **여전히 미정.** BE 는 변환하지 않기로 함 — attempts.support_level 은 FE 0~3, 관찰은 발화 L4~L0·힌트 H0~H3 을 각자 원본 척도로 저장. 매핑 확정 시 조회 계층에서만 잇는다 |
+| 3 | 기존 `attempts.support_level` ↔ 발화사다리 매핑 | 직접 변환하지 않음. 신규 관찰은 `L4/L3/L2/L0`, 과거 `L1`은 원본 보존 후 조회·집계에서 `L2`로만 합산. 재번호화하지 않음 |
 | 4 | 별노트 저장 주체 | AI 가 생성·발행하고 **Spring 이 서비스 원장(`star_notes`)을 소유** (이슈 #12, G-3 참조). FE 는 Spring 목록 API 만 사용 |
 | 4-1 | 별노트 → BE 이벤트 계약 | **확정.** `star_note_created` 이벤트로 수집 (G-3). `learning_task_outcomes.star_note_*` 컬럼은 원장에서 파생해 연결됨 (이슈 #14, G-3 "과제 집계 연결" 참조) |
 | 5 | `conversation_storage_consent` 관리 주체 | Spring `learners` 및 동의 변경 API. AI가 실제 암호화·삭제 수행 |

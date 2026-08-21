@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.mormi.backend.dialogue.DialogueConversation;
 import com.mormi.backend.dialogue.DialogueConversationRepository;
+import com.mormi.backend.observation.LearningObservationRepository;
 import com.mormi.backend.session.LearningSessionRepository;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -58,6 +59,9 @@ class TaskOutcomeIntegrationTest {
 
     @Autowired
     LearningTaskOutcomeRepository outcomeRepository;
+
+    @Autowired
+    LearningObservationRepository observationRepository;
 
     @Test
     void 시도_기록만으로도_집계가_만들어진다() throws Exception {
@@ -111,6 +115,27 @@ class TaskOutcomeIntegrationTest {
         assertThat(outcome.getExpressionLowest()).isEqualTo("L2");
         assertThat(outcome.getHintMax()).isEqualTo("H2");
         assertThat(outcome.getSourceObservationIds()).hasSize(1);
+    }
+
+    @Test
+    void 과거_L1_관찰은_원본을_보존하고_집계에서_L2로_읽는다() throws Exception {
+        학습 학습 = 학습을_시작한다("MORMI-OUT-L1");
+        시도(학습, 1, true);
+        완료(학습);
+        관찰(학습, "obs-legacy-l1", Map.of(
+                "expression_before", "L1",
+                "expression_after", "L1",
+                "hint_before", "H1",
+                "hint_after", "H1"));
+
+        LearningTaskOutcome outcome = 집계(학습);
+        assertThat(outcome.getExpressionStart()).isEqualTo("L2");
+        assertThat(outcome.getExpressionEnd()).isEqualTo("L2");
+        assertThat(outcome.getExpressionLowest()).isEqualTo("L2");
+
+        var raw = observationRepository.findByLearningSessionIdOrderByIdAsc(학습.sessionId()).getFirst();
+        assertThat(raw.getExpressionBefore()).isEqualTo("L1");
+        assertThat(raw.getExpressionAfter()).isEqualTo("L1");
     }
 
     @Test
