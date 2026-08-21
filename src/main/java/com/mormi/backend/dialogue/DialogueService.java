@@ -16,6 +16,8 @@ import com.mormi.backend.cafe.CafeDtos.StageResultResponse;
 import com.mormi.backend.common.ApiException;
 import com.mormi.backend.curriculum.CurriculumCatalog;
 import com.mormi.backend.dialogue.DialogueDtos.StartCafeDialogueRequest;
+import com.mormi.backend.dialogue.DialogueDtos.StartTeachingRequest;
+import java.util.Objects;
 import com.mormi.backend.learner.Learner;
 import com.mormi.backend.learner.LearnerService;
 import com.mormi.backend.reward.RewardService;
@@ -76,17 +78,28 @@ public class DialogueService {
 
     /** 마지막 drill 저장 이후 호출한다. 반복 결과 저장과 가르치기 시작을 한 API로 묶는다. */
     @Transactional
-    public JsonNode startHomeTeaching(Long learnerId, String publicSessionId) {
+    public JsonNode startHomeTeaching(
+            Long learnerId, String publicSessionId, StartTeachingRequest request) {
         LearningSession session = requireSessionOwned(learnerId, publicSessionId);
         if (session.isCompleted()) {
             throw ApiException.conflict("session_completed", "이미 완료된 세션입니다.");
         }
 
-        DialogueConversation existing = dialogueRepository
-                .findByLearningSessionId(session.getId())
+        String requestId = request == null ? null : request.requestId();
+        DialogueConversation replayed = findReplayedRequest(learnerId, requestId);
+        if (replayed != null) {
+            if (!session.getId().equals(replayed.getLearningSessionId())) {
+                throw requestIdConflict();
+            }
+            return dialogueClient.getConversation(replayed.getConversationId());
+        }
+
+        DialogueConversation latest = dialogueRepository
+                .findFirstByLearningSessionIdOrderByRoundDesc(session.getId())
                 .orElse(null);
-        if (existing != null) {
-            return dialogueClient.getConversation(existing.getConversationId());
+        // 명시적 restart 가 아니면 새로고침 복구로 보고 마지막 회차를 그대로 이어 준다.
+        if (latest != null && (request == null || !request.wantsRestart())) {
+            return dialogueClient.getConversation(latest.getConversationId());
         }
 
         int solvedQuestions = attemptRepository.countDistinctCorrectQuestions(
@@ -97,22 +110,24 @@ public class DialogueService {
                     "반복 문제 %d개를 마친 뒤 모르미를 가르칠 수 있습니다."
                             .formatted(CurriculumCatalog.MASTERY_TARGET));
         }
+        int round = latest == null ? 1 : latest.getRound() + 1;
 
         Learner learner = learnerService.require(learnerId);
         String practiceResultId = practiceResultId(session);
 
-        Map<String, Object> request = baseRequest(learner, "home_teach", "home_teach");
-        request.put("learning_session_id", session.getPublicId());
-        request.put("practice_result_id", practiceResultId);
-        request.put("practice_summary", buildPracticeSummary(session));
+        Map<String, Object> body = baseRequest(learner, "home_teach", "home_teach");
+        body.put("learning_session_id", session.getPublicId());
+        body.put("practice_result_id", practiceResultId);
+        body.put("practice_summary", buildPracticeSummary(session));
 
-        JsonNode envelope = requireEnvelope(dialogueClient.createConversation(request));
+        JsonNode envelope = requireEnvelope(dialogueClient.createConversation(body));
         String conversationId = envelope.path("conversation_id").asString();
 
         session.setPracticeResultId(practiceResultId);
+        // 세션이 신뢰하는 대화는 항상 마지막 회차. 이전 회차는 분석용으로만 남는다.
         session.setConversationId(conversationId);
         dialogueRepository.save(DialogueConversation.forLearningSession(
-                conversationId, learnerId, session.getId()));
+                conversationId, learnerId, session.getId(), round, requestId));
         return envelope;
     }
 
@@ -121,11 +136,22 @@ public class DialogueService {
     public Map<String, Object> startCafeDialogue(
             Long learnerId, String publicVisitId, StartCafeDialogueRequest request) {
         CafeVisit visit = requireCafeOwned(learnerId, publicVisitId);
+
+        DialogueConversation replayed = findReplayedRequest(learnerId, request.requestId());
+        if (replayed != null) {
+            if (!visit.getId().equals(replayed.getCafeVisitId())
+                    || !Objects.equals(request.scenarioId(), replayed.getScenarioId())) {
+                throw requestIdConflict();
+            }
+            return envelopeWithContext(
+                    replayed, dialogueClient.getConversation(replayed.getConversationId()));
+        }
+
         DialogueConversation latest = dialogueRepository
                 .findFirstByCafeVisitIdAndScenarioIdOrderByRoundDesc(visit.getId(), request.scenarioId())
                 .orElse(null);
-        // 다시 연습이 아니면 새로고침 복구로 보고 마지막 회차를 그대로 이어 준다.
-        if (latest != null && !request.restart()) {
+        // 명시적 이어하기(또는 옛 restart=false)면 마지막 회차를 그대로 이어 준다.
+        if (latest != null && !request.wantsRestart()) {
             return envelopeWithContext(
                     latest, dialogueClient.getConversation(latest.getConversationId()));
         }
@@ -176,9 +202,28 @@ public class DialogueService {
         JsonNode envelope = requireEnvelope(dialogueClient.createConversation(body));
         String conversationId = envelope.path("conversation_id").asString();
         DialogueConversation dialogue = DialogueConversation.forCafeVisit(
-                conversationId, learnerId, visit.getId(), request.scenarioId(), round, scenarioContext);
+                conversationId, learnerId, visit.getId(), request.scenarioId(), round,
+                scenarioContext, request.requestId());
         dialogueRepository.save(dialogue);
         return envelopeWithContext(dialogue, envelope);
+    }
+
+    /**
+     * 같은 request_id 로 이미 만든 회차가 있으면 그 회차를 돌려준다.
+     * 동시에 두 요청이 들어와 조회를 모두 비껴가는 극단 상황은
+     * (learner_id, request_id) 유니크 인덱스가 두 번째 INSERT 를 막는다.
+     */
+    private DialogueConversation findReplayedRequest(Long learnerId, String requestId) {
+        if (requestId == null || requestId.isBlank()) {
+            return null;
+        }
+        return dialogueRepository.findByLearnerIdAndRequestId(learnerId, requestId).orElse(null);
+    }
+
+    private ApiException requestIdConflict() {
+        return ApiException.conflict(
+                "dialogue_request_id_conflict",
+                "같은 request_id 가 다른 대화 시작에 이미 사용되었습니다.");
     }
 
     @Transactional

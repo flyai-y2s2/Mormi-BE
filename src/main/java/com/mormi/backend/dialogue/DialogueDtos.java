@@ -5,6 +5,7 @@ import com.mormi.backend.cafe.CafeDtos.QueueContext;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
 public final class DialogueDtos {
 
@@ -16,8 +17,11 @@ public final class DialogueDtos {
      * 값 규칙(줄 인원 범위·카탈로그 대조)은 대화 시작 시 CafeProblemContract 가 검증해,
      * 잘못된 문제로 AI 대화를 끝까지 진행한 뒤 5xx로 실패하는 일을 막는다.
      *
-     * @param restart 이미 끝낸 스테이지를 다시 연습하려는 요청. true 면 새 회차 대화를 만들고,
-     *                false 면 새로고침 복구로 보아 마지막 회차를 그대로 돌려준다.
+     * @param startMode restart 면 기존 기록을 보존한 채 새 회차 대화를 만들고,
+     *                  resume 이면 마지막 회차를 그대로 이어 준다(없으면 새로 만든다).
+     * @param requestId FE가 요청마다 새로 뽑는 멱등키. 네트워크 재시도로 같은 요청이
+     *                  중복 도착해도 회차가 여러 개 생기지 않게 한다.
+     * @param restart 폐기 예정. start_mode 가 없을 때만 해석한다(true=restart, false=resume).
      */
     public record StartCafeDialogueRequest(
             @NotBlank
@@ -25,6 +29,28 @@ public final class DialogueDtos {
             String scenarioId,
             @Valid QueueContext queueContext,
             @Valid CafeContext cafeContext,
+            @Pattern(regexp = "restart|resume") String startMode,
+            @Size(max = 100) String requestId,
             boolean restart) {
+
+        /** start_mode 가 오면 그 값을 따르고, 없으면 옛 restart boolean 을 해석한다. */
+        public boolean wantsRestart() {
+            return startMode != null ? "restart".equals(startMode) : restart;
+        }
+    }
+
+    /**
+     * 홈 가르치기 시작 요청. body 없이 부르면 기존 동작(resume)과 같다.
+     *
+     * @param startMode restart 면 기존 대화를 보존한 채 새 회차의 첫 턴부터 시작한다.
+     * @param requestId FE가 요청마다 새로 뽑는 멱등키.
+     */
+    public record StartTeachingRequest(
+            @Pattern(regexp = "restart|resume") String startMode,
+            @Size(max = 100) String requestId) {
+
+        public boolean wantsRestart() {
+            return "restart".equals(startMode);
+        }
     }
 }

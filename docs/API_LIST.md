@@ -157,7 +157,17 @@
 
 가르치기 대화는 `.../teaching` 호출 때 BE가 생성하고 세션에 귀속합니다. 완료 요청이 임의의 `conversation_id`를 지정할 수 없으며, BE가 저장한 대화의 `completion.teach_reward_eligible`만 확인합니다. 보상 멱등키는 세션당 하나인 `teach-reward:{session}`입니다.
 
-`.../teaching`은 정답 처리된 서로 다른 반복 문제 5개가 모두 저장된 뒤에만 성공합니다. 시도에서 `PracticeSummary`를 집계하고, 결정형 `practice_result_id`와 인라인 요약을 AI에 전달한 뒤 최초 전체 `TurnContract`를 반환합니다. 같은 요청을 다시 보내면 기존 대화를 복구합니다.
+`.../teaching`은 정답 처리된 서로 다른 반복 문제 5개가 모두 저장된 뒤에만 성공합니다. 시도에서 `PracticeSummary`를 집계하고, 결정형 `practice_result_id`와 인라인 요약을 AI에 전달한 뒤 최초 전체 `TurnContract`를 반환합니다. body 없이(또는 `start_mode` 없이) 다시 보내면 마지막 회차 대화를 복구합니다.
+
+```jsonc
+// POST .../teaching  — body 는 선택
+{ "start_mode": "restart", "request_id": "9f4c…(요청마다 새 UUID)" }
+```
+
+`start_mode: "restart"` 는 기존 대화를 보존한 채 새 회차(`round` 증가)의 새 대화를 만들어
+첫 턴부터 시작합니다. 세션이 신뢰하는 대화(`learning_sessions.conversation_id`)는 항상
+마지막 회차를 가리키고, 가르치기 보상 멱등키는 세션당 하나라 재시작해도 보상이 중복되지
+않습니다. `request_id` 규칙은 카페 재시작(E 절)과 같습니다.
 
 ### E. 카페
 
@@ -180,11 +190,32 @@
 다시 열면 BE가 저장된 맥락을 `scenario_context`로 돌려주므로, 새로고침 뒤 화면 숫자와 AI가
 기억하는 숫자가 달라지지 않습니다.
 
-**재연습**: 한 번 통과한 스테이지도 몇 번이든 다시 풀 수 있습니다. `POST .../dialogues` 에
-`"restart": true` 를 실으면 BE가 새 회차(`dialogue_conversations.round`) 대화를 열고, 그때
-화면이 뽑은 새 문제를 그 회차의 `scenario_context` 로 저장합니다. `restart` 를 빼면(기본 false)
-새로고침 복구로 보고 마지막 회차를 그대로 돌려줍니다. 방문이 `complete` 여도 네 단계 모두
-제출·대화가 열립니다. 진행도는 전진 전용이라 재연습이 `stage` 를 되돌리지는 않습니다.
+**재시작과 이어하기**: `POST .../dialogues` 는 `start_mode` 로 의도를 구분합니다(#22).
+
+```jsonc
+// POST .../dialogues
+{
+  "scenario_id": "cafe_queue",
+  "queue_context": { "left_count": 4, "right_count": 1 },
+  "start_mode": "restart",              // restart | resume
+  "request_id": "9f4c…(요청마다 새 UUID)"  // 멱등키, 선택이지만 restart 에 권장
+}
+```
+
+- `start_mode: "restart"` — 새로고침·다시 연습. 기존 기록은 분석용으로 보존한 채 새
+  회차(`dialogue_conversations.round` 증가)의 새 `conversation_id` 를 만들고, 그때 화면이
+  뽑은 새 문제를 그 회차의 `scenario_context` 로 고정합니다.
+- `start_mode: "resume"` — 명시적 이어하기. 마지막 회차를 그대로 돌려줍니다(없으면 새로
+  만듭니다).
+- `request_id` — FE가 시작 요청마다 새로 뽑는 멱등키. 같은 요청이 네트워크 재시도로 중복
+  도착하면 이미 만든 회차를 그대로 돌려주고, `(learner_id, request_id)` 유니크 제약이 중복
+  INSERT 를 막습니다. 같은 `request_id` 를 다른 방문·시나리오에 재사용하면 409
+  (`dialogue_request_id_conflict`)입니다.
+- **폐기 예정**: 옛 `"restart": true|false` boolean 은 `start_mode` 가 없을 때만
+  해석합니다(true→restart, false→resume). FE가 `start_mode` 로 전환을 마치면 제거합니다.
+
+방문이 `complete` 여도 네 단계 모두 제출·대화가 열립니다. 진행도는 전진 전용이라 재시작이
+`stage` 를 되돌리지는 않습니다.
 
 ```jsonc
 // POST .../queue   정답은 min(left,right). 좌우 인원은 1~5 이고 서로 달라야 한다
@@ -224,7 +255,8 @@
 ```jsonc
 // POST .../dialogues  줄 서기
 { "scenario_id": "cafe_queue",
-  "queue_context": { "left_count": 3, "right_count": 5 }, "restart": false }
+  "queue_context": { "left_count": 3, "right_count": 5 },
+  "start_mode": "resume" }
 
 // POST .../dialogues  메뉴·계산·거스름돈
 { "scenario_id": "cafe_budget_menu",
@@ -236,7 +268,8 @@
     "mormi_menu_id": "americano",
     "budget": 8000
   },
-  "restart": false }
+  "start_mode": "restart",
+  "request_id": "9f4c…(요청마다 새 UUID)" }
 ```
 
 ### F. 인증된 AI 대화 프록시
