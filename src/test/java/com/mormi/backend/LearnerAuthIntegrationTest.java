@@ -174,7 +174,7 @@ class LearnerAuthIntegrationTest {
         expectProgress(token, 200);
 
         jdbcTemplate.update(
-                "UPDATE learner_tokens SET expires_at = NOW() - INTERVAL '1 day' WHERE token_hash = ?",
+                "UPDATE auth_tokens SET expires_at = NOW() - INTERVAL '1 day' WHERE token_hash = ?",
                 tokenHasher.hash(token));
 
         expectProgress(token, 401);

@@ -1,6 +1,6 @@
 package com.mormi.backend.report;
 
-import com.mormi.backend.auth.LearnerPrincipal;
+import com.mormi.backend.auth.AccountPrincipal;
 import com.mormi.backend.report.ReportDtos.ReportSummary;
 import java.util.List;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -20,14 +20,14 @@ public class ReportController {
     }
 
     @GetMapping("/summary")
-    public ReportSummary summary(@AuthenticationPrincipal LearnerPrincipal principal) {
-        return reportService.latest(principal.learnerId());
+    public ReportSummary summary(@AuthenticationPrincipal AccountPrincipal principal) {
+        return reportService.latest(principal.subjectId());
     }
 
     @GetMapping("/history")
     public List<ReportSummary> history(
-            @AuthenticationPrincipal LearnerPrincipal principal,
+            @AuthenticationPrincipal AccountPrincipal principal,
             @RequestParam(defaultValue = "8") int limit) {
-        return reportService.history(principal.learnerId(), limit);
+        return reportService.history(principal.subjectId(), limit);
     }
 }

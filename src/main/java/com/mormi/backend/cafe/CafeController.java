@@ -1,6 +1,6 @@
 package com.mormi.backend.cafe;
 
-import com.mormi.backend.auth.LearnerPrincipal;
+import com.mormi.backend.auth.AccountPrincipal;
 import com.mormi.backend.cafe.CafeDtos.CafeVisitView;
 import com.mormi.backend.cafe.CafeDtos.ChangeRequest;
 import com.mormi.backend.cafe.CafeDtos.MenuRequest;
@@ -30,51 +30,51 @@ public class CafeController {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    public CafeVisitView start(@AuthenticationPrincipal LearnerPrincipal principal) {
-        return cafeService.start(principal.learnerId());
+    public CafeVisitView start(@AuthenticationPrincipal AccountPrincipal principal) {
+        return cafeService.start(principal.subjectId());
     }
 
     @GetMapping("/{visitId}")
     public CafeVisitView get(
-            @AuthenticationPrincipal LearnerPrincipal principal, @PathVariable String visitId) {
-        return cafeService.view(principal.learnerId(), visitId);
+            @AuthenticationPrincipal AccountPrincipal principal, @PathVariable String visitId) {
+        return cafeService.view(principal.subjectId(), visitId);
     }
 
     @PostMapping("/{visitId}/queue")
     public StageResultResponse queue(
-            @AuthenticationPrincipal LearnerPrincipal principal,
+            @AuthenticationPrincipal AccountPrincipal principal,
             @PathVariable String visitId,
             @Valid @RequestBody QueueRequest request) {
-        return cafeService.submitQueue(principal.learnerId(), visitId, request);
+        return cafeService.submitQueue(principal.subjectId(), visitId, request);
     }
 
     @PostMapping("/{visitId}/menu")
     public StageResultResponse menu(
-            @AuthenticationPrincipal LearnerPrincipal principal,
+            @AuthenticationPrincipal AccountPrincipal principal,
             @PathVariable String visitId,
             @Valid @RequestBody MenuRequest request) {
-        return cafeService.submitMenu(principal.learnerId(), visitId, request);
+        return cafeService.submitMenu(principal.subjectId(), visitId, request);
     }
 
     @PostMapping("/{visitId}/payments")
     public StageResultResponse payments(
-            @AuthenticationPrincipal LearnerPrincipal principal,
+            @AuthenticationPrincipal AccountPrincipal principal,
             @PathVariable String visitId,
             @Valid @RequestBody PaymentRequest request) {
-        return cafeService.submitPayment(principal.learnerId(), visitId, request);
+        return cafeService.submitPayment(principal.subjectId(), visitId, request);
     }
 
     @PostMapping("/{visitId}/change")
     public StageResultResponse change(
-            @AuthenticationPrincipal LearnerPrincipal principal,
+            @AuthenticationPrincipal AccountPrincipal principal,
             @PathVariable String visitId,
             @Valid @RequestBody ChangeRequest request) {
-        return cafeService.submitChange(principal.learnerId(), visitId, request);
+        return cafeService.submitChange(principal.subjectId(), visitId, request);
     }
 
     @PostMapping("/{visitId}/complete")
     public CafeVisitView complete(
-            @AuthenticationPrincipal LearnerPrincipal principal, @PathVariable String visitId) {
-        return cafeService.complete(principal.learnerId(), visitId);
+            @AuthenticationPrincipal AccountPrincipal principal, @PathVariable String visitId) {
+        return cafeService.complete(principal.subjectId(), visitId);
     }
 }

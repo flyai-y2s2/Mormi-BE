@@ -19,6 +19,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import com.mormi.backend.AuthTestSupport;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -131,12 +132,6 @@ class CohortConsentIntegrationTest {
     }
 
     private JsonNode 학습자(String researchCode) throws Exception {
-        String body = mockMvc.perform(post("/v1/learners")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                Map.of("display_name", "학급", "research_code", researchCode))))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
-        return objectMapper.readTree(body);
+        return AuthTestSupport.signupLearner(mockMvc, objectMapper, "학급", researchCode);
     }
 }

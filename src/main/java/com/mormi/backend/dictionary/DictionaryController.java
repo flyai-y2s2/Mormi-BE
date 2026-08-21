@@ -1,6 +1,6 @@
 package com.mormi.backend.dictionary;
 
-import com.mormi.backend.auth.LearnerPrincipal;
+import com.mormi.backend.auth.AccountPrincipal;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -23,20 +23,20 @@ public class DictionaryController {
 
     @GetMapping("/v1/learning-sessions/{learningSessionId}/dictionary-card")
     public JsonNode getForLearningSession(
-            @AuthenticationPrincipal LearnerPrincipal principal,
+            @AuthenticationPrincipal AccountPrincipal principal,
             @PathVariable String learningSessionId,
             // AI 쿼리 이름을 그대로 쓴다. 중계자가 이름을 바꾸면 번역표만 하나 는다.
             @RequestParam(name = "expected_content_version", required = false)
             Integer expectedContentVersion) {
         return dictionaryService.getCardForLearningSession(
-                principal.learnerId(), learningSessionId, expectedContentVersion);
+                principal.subjectId(), learningSessionId, expectedContentVersion);
     }
 
     @GetMapping("/v1/dialogue/conversations/{conversationId}/dictionary-card")
     public JsonNode getForConversation(
-            @AuthenticationPrincipal LearnerPrincipal principal,
+            @AuthenticationPrincipal AccountPrincipal principal,
             @PathVariable String conversationId) {
         return dictionaryService.getCardForConversation(
-                principal.learnerId(), conversationId);
+                principal.subjectId(), conversationId);
     }
 }

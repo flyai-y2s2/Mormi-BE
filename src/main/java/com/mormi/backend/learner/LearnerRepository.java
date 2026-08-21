@@ -9,9 +9,8 @@ public interface LearnerRepository extends JpaRepository<Learner, Long> {
 
     Optional<Learner> findByResearchCode(String researchCode);
 
-    Optional<Learner> findByLoginId(String loginId);
-
-    boolean existsByLoginId(String loginId);
+    /** 인증된 계정에서 학습자 프로필을 찾는 매 요청 경로. account_id UNIQUE 를 탄다. */
+    Optional<Learner> findByAccountId(Long accountId);
 
     boolean existsByResearchCode(String researchCode);
 

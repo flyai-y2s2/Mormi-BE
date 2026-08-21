@@ -182,7 +182,7 @@ class DialogueServiceTest {
         CafeVisit visit = CafeVisit.start(7L);
         ReflectionTestUtils.setField(visit, "id", 21L);
         visit.advanceTo(CafeStage.CHANGE);
-        Learner learner = Learner.create("표시 이름", "R-007", "hash");
+        Learner learner = Learner.register("표시 이름", "R-007", 1L);
         ReflectionTestUtils.setField(learner, "id", 7L);
         JsonNode envelope = new ObjectMapper().readTree("""
                 {
@@ -259,7 +259,7 @@ class DialogueServiceTest {
         CafeVisit visit = CafeVisit.start(7L);
         ReflectionTestUtils.setField(visit, "id", 21L);
         visit.advanceTo(CafeStage.COMPLETE);
-        Learner learner = Learner.create("표시 이름", "R-007", "hash");
+        Learner learner = Learner.register("표시 이름", "R-007", 1L);
         ReflectionTestUtils.setField(learner, "id", 7L);
 
         DialogueConversation firstRound = DialogueConversation.forCafeVisit(
@@ -394,7 +394,7 @@ class DialogueServiceTest {
 
         LearningSession session = LearningSession.start(7L, "number-count", 42);
         ReflectionTestUtils.setField(session, "id", 11L);
-        Learner learner = Learner.create("표시 이름", "R-007", "hash");
+        Learner learner = Learner.register("표시 이름", "R-007", 1L);
         ReflectionTestUtils.setField(learner, "id", 7L);
 
         List<Attempt> attempts = new ArrayList<>();

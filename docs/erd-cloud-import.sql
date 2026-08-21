@@ -1,3 +1,21 @@
+CREATE TABLE accounts (
+    id            BIGINT      NOT NULL PRIMARY KEY COMMENT '로그인 계정. 학생·교사 공용',
+    login_id      VARCHAR(60) NOT NULL COMMENT 'UK. 전역 유니크. V12 이전 구 학습자는 legacy: 접두',
+    password_hash VARCHAR(60) NOT NULL COMMENT 'BCrypt 해시. 구 학습자는 !disabled (로그인 불가)',
+    role          VARCHAR(20) NOT NULL COMMENT 'learner, educator',
+    created_at    TIMESTAMP   NOT NULL
+);
+
+CREATE TABLE auth_tokens (
+    id         BIGINT      NOT NULL PRIMARY KEY COMMENT '로그인 세션 1건 = 1행. learner_tokens 대체',
+    account_id BIGINT      NOT NULL,
+    token_hash VARCHAR(64) NOT NULL COMMENT 'UK. 액세스 토큰의 SHA-256 해시',
+    expires_at TIMESTAMP   NOT NULL,
+    revoked_at TIMESTAMP   COMMENT '로그아웃 시각. NULL 이면 살아 있음',
+    created_at TIMESTAMP   NOT NULL,
+    FOREIGN KEY (account_id) REFERENCES accounts (id)
+);
+
 CREATE TABLE organizations (
     id         BIGINT      NOT NULL PRIMARY KEY COMMENT '기관 PK',
     name       VARCHAR(80) NOT NULL COMMENT '기관명',
@@ -14,26 +32,37 @@ CREATE TABLE cohorts (
 );
 
 CREATE TABLE educators (
-    id              BIGINT      NOT NULL PRIMARY KEY COMMENT '교사/연구자 PK. 로그인 계정이 아니라 명부',
+    id              BIGINT      NOT NULL PRIMARY KEY COMMENT '교사/연구자 1명',
     organization_id BIGINT      NOT NULL,
+    account_id      BIGINT      COMMENT 'UK. V12 추가. NULL 이면 로그인 없는 구 명부 행',
     display_name    VARCHAR(40) NOT NULL,
-    role            VARCHAR(30) COMMENT '교사, 연구자 등',
+    role            VARCHAR(30) COMMENT '직위. 교사, 연구자 등. accounts.role 과 다른 값',
     created_at      TIMESTAMP   NOT NULL,
-    FOREIGN KEY (organization_id) REFERENCES organizations (id)
+    FOREIGN KEY (organization_id) REFERENCES organizations (id),
+    FOREIGN KEY (account_id) REFERENCES accounts (id)
+);
+
+CREATE TABLE cohort_research_codes (
+    id         BIGINT      NOT NULL PRIMARY KEY COMMENT 'V13. 참여 번호 사전 발급 장부',
+    cohort_id  BIGINT      NOT NULL,
+    code       VARCHAR(40) NOT NULL COMMENT 'UK. 아이가 가입할 때 입력하는 참여 번호',
+    issued_by  BIGINT      NOT NULL COMMENT '발급 교사. consent_records.collected_by 근거',
+    created_at TIMESTAMP   NOT NULL,
+    FOREIGN KEY (cohort_id) REFERENCES cohorts (id),
+    FOREIGN KEY (issued_by) REFERENCES educators (id)
 );
 
 CREATE TABLE learners (
     id                           BIGINT      NOT NULL PRIMARY KEY COMMENT '아이 PK. 밖으로 노출하지 않음',
+    account_id                   BIGINT      NOT NULL COMMENT 'UK. V12 추가. 로그인 정보는 accounts 가 관리',
     display_name                 VARCHAR(40) NOT NULL COMMENT '화면 표시명. 실명 아님',
     research_code                VARCHAR(40) NOT NULL COMMENT 'UK. 연구 식별자 전용이며 인증에 쓰지 않음',
     analytics_id                 CHAR(36)    NOT NULL COMMENT 'UK. Postgres UUID. 외부 분석 도구용',
-    token_hash                   VARCHAR(64) COMMENT 'UK. deprecated. learner_tokens 로 이관됨',
-    login_id                     VARCHAR(30) COMMENT 'UK. 로그인 아이디. 기존 파일럿 학습자는 NULL',
-    password_hash                VARCHAR(60) COMMENT 'BCrypt 해시 60자',
     conversation_storage_consent BOOLEAN     NOT NULL COMMENT '현재 동의 상태 캐시. 근거는 consent_records',
     retention_policy             VARCHAR(20) NOT NULL COMMENT 'permanent 기본값. V3 에서 변경',
     onboarding_completed_at      TIMESTAMP,
-    created_at                   TIMESTAMP   NOT NULL
+    created_at                   TIMESTAMP   NOT NULL,
+    FOREIGN KEY (account_id) REFERENCES accounts (id)
 );
 
 CREATE TABLE learner_enrollments (
@@ -53,18 +82,8 @@ CREATE TABLE consent_records (
     policy_version VARCHAR(40) NOT NULL COMMENT '보호자에게 보여준 동의 문서 버전',
     granted        BOOLEAN     NOT NULL,
     collected_at   TIMESTAMP   NOT NULL,
-    collected_by   VARCHAR(60) COMMENT '수집 주체 표식. educators FK 로 아직 강제하지 않음',
+    collected_by   VARCHAR(60) COMMENT '수집 주체 표식. 참여 번호 발급 교사 이름이 들어가며 FK 로 강제하지 않음',
     withdrawn_at   TIMESTAMP   COMMENT '철회 시각. 행 삭제 대신 이 값을 채움',
-    FOREIGN KEY (learner_id) REFERENCES learners (id)
-);
-
-CREATE TABLE learner_tokens (
-    id         BIGINT      NOT NULL PRIMARY KEY COMMENT '로그인 세션 1건 = 1행',
-    learner_id BIGINT      NOT NULL,
-    token_hash VARCHAR(64) NOT NULL COMMENT 'UK. 액세스 토큰의 SHA-256 해시',
-    expires_at TIMESTAMP   NOT NULL,
-    revoked_at TIMESTAMP   COMMENT '로그아웃 시각. NULL 이면 살아 있음',
-    created_at TIMESTAMP   NOT NULL,
     FOREIGN KEY (learner_id) REFERENCES learners (id)
 );
 

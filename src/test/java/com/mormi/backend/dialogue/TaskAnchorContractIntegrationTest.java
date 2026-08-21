@@ -30,6 +30,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import com.mormi.backend.AuthTestSupport;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ObjectNode;
 import tools.jackson.databind.ObjectMapper;
@@ -475,13 +476,8 @@ class TaskAnchorContractIntegrationTest {
     }
 
     private String createLearner(String name, String code) throws Exception {
-        String body = mockMvc.perform(post("/v1/learners")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                Map.of("display_name", name, "research_code", code))))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
-        return "Bearer " + objectMapper.readTree(body).get("access_token").asString();
+        return "Bearer " + AuthTestSupport.signupLearner(mockMvc, objectMapper, name, code)
+                .get("access_token").asString();
     }
 
     /**

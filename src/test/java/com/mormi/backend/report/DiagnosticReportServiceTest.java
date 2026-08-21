@@ -87,7 +87,7 @@ class DiagnosticReportServiceTest {
                 dialogueRepository,
                 CLOCK);
 
-        learner = Learner.create("민서", "R-007", "hash");
+        learner = Learner.register("민서", "R-007", 1L);
         ReflectionTestUtils.setField(learner, "id", LEARNER_ID);
         ReflectionTestUtils.setField(learner, "createdAt", OffsetDateTime.parse("2026-01-01T09:00:00+09:00"));
         when(learnerService.require(LEARNER_ID)).thenReturn(learner);

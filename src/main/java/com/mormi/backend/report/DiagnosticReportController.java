@@ -1,6 +1,6 @@
 package com.mormi.backend.report;
 
-import com.mormi.backend.auth.LearnerPrincipal;
+import com.mormi.backend.auth.AccountPrincipal;
 import com.mormi.backend.report.DiagnosticReportDtos.DiagnosticReport;
 import com.mormi.backend.report.DiagnosticReportDtos.SpeechEvidence;
 import java.time.LocalDate;
@@ -23,17 +23,17 @@ public class DiagnosticReportController {
 
     @GetMapping
     public DiagnosticReport current(
-            @AuthenticationPrincipal LearnerPrincipal principal,
+            @AuthenticationPrincipal AccountPrincipal principal,
             @RequestParam(name = "week_start", required = false) LocalDate weekStart) {
-        return diagnosticReportService.current(principal.learnerId(), weekStart);
+        return diagnosticReportService.current(principal.subjectId(), weekStart);
     }
 
     @GetMapping("/speech-evidence")
     public SpeechEvidence speechEvidence(
-            @AuthenticationPrincipal LearnerPrincipal principal,
+            @AuthenticationPrincipal AccountPrincipal principal,
             @RequestParam("domain_id") String domainId,
             @RequestParam(name = "week_start", required = false) LocalDate weekStart) {
         DiagnosticReportDomains.requireSupported(domainId);
-        return diagnosticReportService.speechEvidence(principal.learnerId(), domainId, weekStart);
+        return diagnosticReportService.speechEvidence(principal.subjectId(), domainId, weekStart);
     }
 }

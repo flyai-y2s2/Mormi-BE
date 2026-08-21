@@ -1,6 +1,6 @@
 package com.mormi.backend.dialogue;
 
-import com.mormi.backend.auth.LearnerPrincipal;
+import com.mormi.backend.auth.AccountPrincipal;
 import com.mormi.backend.dialogue.DialogueDtos.StartCafeDialogueRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -26,32 +26,32 @@ public class DialogueController {
     @PostMapping("/v1/learning-sessions/{learningSessionId}/teaching")
     @ResponseStatus(HttpStatus.CREATED)
     public JsonNode startHomeTeaching(
-            @AuthenticationPrincipal LearnerPrincipal principal,
+            @AuthenticationPrincipal AccountPrincipal principal,
             @PathVariable String learningSessionId) {
-        return dialogueService.startHomeTeaching(principal.learnerId(), learningSessionId);
+        return dialogueService.startHomeTeaching(principal.subjectId(), learningSessionId);
     }
 
     @PostMapping("/v1/cafe-visits/{visitId}/dialogues")
     @ResponseStatus(HttpStatus.CREATED)
     public Object startCafeDialogue(
-            @AuthenticationPrincipal LearnerPrincipal principal,
+            @AuthenticationPrincipal AccountPrincipal principal,
             @PathVariable String visitId,
             @Valid @RequestBody StartCafeDialogueRequest request) {
-        return dialogueService.startCafeDialogue(principal.learnerId(), visitId, request);
+        return dialogueService.startCafeDialogue(principal.subjectId(), visitId, request);
     }
 
     @GetMapping("/v1/dialogue/conversations/{conversationId}")
     public Object getConversation(
-            @AuthenticationPrincipal LearnerPrincipal principal,
+            @AuthenticationPrincipal AccountPrincipal principal,
             @PathVariable String conversationId) {
-        return dialogueService.getConversation(principal.learnerId(), conversationId);
+        return dialogueService.getConversation(principal.subjectId(), conversationId);
     }
 
     @PostMapping("/v1/dialogue/conversations/{conversationId}/responses")
     public Object respond(
-            @AuthenticationPrincipal LearnerPrincipal principal,
+            @AuthenticationPrincipal AccountPrincipal principal,
             @PathVariable String conversationId,
             @RequestBody JsonNode response) {
-        return dialogueService.respond(principal.learnerId(), conversationId, response);
+        return dialogueService.respond(principal.subjectId(), conversationId, response);
     }
 }
