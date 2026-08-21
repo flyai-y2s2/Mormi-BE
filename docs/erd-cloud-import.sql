@@ -1,6 +1,6 @@
 CREATE TABLE accounts (
     id            BIGINT      NOT NULL PRIMARY KEY COMMENT '로그인 계정. 학생·교사 공용',
-    login_id      VARCHAR(60) NOT NULL COMMENT 'UK. 전역 유니크. V12 이전 구 학습자는 legacy: 접두',
+    login_id      VARCHAR(60) NOT NULL COMMENT 'UK. 전역 유니크. V13 이전 구 학습자는 legacy: 접두',
     password_hash VARCHAR(60) NOT NULL COMMENT 'BCrypt 해시. 구 학습자는 !disabled (로그인 불가)',
     role          VARCHAR(20) NOT NULL COMMENT 'learner, educator',
     created_at    TIMESTAMP   NOT NULL
@@ -34,7 +34,7 @@ CREATE TABLE cohorts (
 CREATE TABLE educators (
     id              BIGINT      NOT NULL PRIMARY KEY COMMENT '교사/연구자 1명',
     organization_id BIGINT      NOT NULL,
-    account_id      BIGINT      COMMENT 'UK. V12 추가. NULL 이면 로그인 없는 구 명부 행',
+    account_id      BIGINT      COMMENT 'UK. V13 추가. NULL 이면 로그인 없는 구 명부 행',
     display_name    VARCHAR(40) NOT NULL,
     role            VARCHAR(30) COMMENT '직위. 교사, 연구자 등. accounts.role 과 다른 값',
     created_at      TIMESTAMP   NOT NULL,
@@ -43,7 +43,7 @@ CREATE TABLE educators (
 );
 
 CREATE TABLE cohort_research_codes (
-    id         BIGINT      NOT NULL PRIMARY KEY COMMENT 'V13. 참여 번호 사전 발급 장부',
+    id         BIGINT      NOT NULL PRIMARY KEY COMMENT 'V14. 참여 번호 사전 발급 장부',
     cohort_id  BIGINT      NOT NULL,
     code       VARCHAR(40) NOT NULL COMMENT 'UK. 아이가 가입할 때 입력하는 참여 번호',
     issued_by  BIGINT      NOT NULL COMMENT '발급 교사. consent_records.collected_by 근거',
@@ -54,7 +54,7 @@ CREATE TABLE cohort_research_codes (
 
 CREATE TABLE learners (
     id                           BIGINT      NOT NULL PRIMARY KEY COMMENT '아이 PK. 밖으로 노출하지 않음',
-    account_id                   BIGINT      NOT NULL COMMENT 'UK. V12 추가. 로그인 정보는 accounts 가 관리',
+    account_id                   BIGINT      NOT NULL COMMENT 'UK. V13 추가. 로그인 정보는 accounts 가 관리',
     display_name                 VARCHAR(40) NOT NULL COMMENT '화면 표시명. 실명 아님',
     research_code                VARCHAR(40) NOT NULL COMMENT 'UK. 연구 식별자 전용이며 인증에 쓰지 않음',
     analytics_id                 CHAR(36)    NOT NULL COMMENT 'UK. Postgres UUID. 외부 분석 도구용',

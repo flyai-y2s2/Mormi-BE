@@ -2,6 +2,7 @@ package com.mormi.backend.dialogue;
 
 import com.mormi.backend.auth.AccountPrincipal;
 import com.mormi.backend.dialogue.DialogueDtos.StartCafeDialogueRequest;
+import com.mormi.backend.dialogue.DialogueDtos.StartTeachingRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -27,8 +28,9 @@ public class DialogueController {
     @ResponseStatus(HttpStatus.CREATED)
     public JsonNode startHomeTeaching(
             @AuthenticationPrincipal AccountPrincipal principal,
-            @PathVariable String learningSessionId) {
-        return dialogueService.startHomeTeaching(principal.subjectId(), learningSessionId);
+            @PathVariable String learningSessionId,
+            @Valid @RequestBody(required = false) StartTeachingRequest request) {
+        return dialogueService.startHomeTeaching(principal.subjectId(), learningSessionId, request);
     }
 
     @PostMapping("/v1/cafe-visits/{visitId}/dialogues")

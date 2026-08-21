@@ -94,7 +94,7 @@
 
 - `display_name` 은 화면 표시 전용. PostHog 와 AI 프롬프트에는 `analytics_id` 만 씁니다.
 - 구 연구 코드 온보딩(`POST /v1/learners`, `POST /v1/learners/auth`)은 **제거됐습니다.**
-  V12 이전에 그 경로로만 온보딩한 학습자는 로그인 수단이 없어 접근이 끊기지만,
+  V13 이전에 그 경로로만 온보딩한 학습자는 로그인 수단이 없어 접근이 끊기지만,
   행과 학습 기록은 연구 산출물로 남습니다.
 
 ### B-2. 학급 (교사 전용)
@@ -214,7 +214,17 @@
 
 가르치기 대화는 `.../teaching` 호출 때 BE가 생성하고 세션에 귀속합니다. 완료 요청이 임의의 `conversation_id`를 지정할 수 없으며, BE가 저장한 대화의 `completion.teach_reward_eligible`만 확인합니다. 보상 멱등키는 세션당 하나인 `teach-reward:{session}`입니다.
 
-`.../teaching`은 정답 처리된 서로 다른 반복 문제 5개가 모두 저장된 뒤에만 성공합니다. 시도에서 `PracticeSummary`를 집계하고, 결정형 `practice_result_id`와 인라인 요약을 AI에 전달한 뒤 최초 전체 `TurnContract`를 반환합니다. 같은 요청을 다시 보내면 기존 대화를 복구합니다.
+`.../teaching`은 정답 처리된 서로 다른 반복 문제 5개가 모두 저장된 뒤에만 성공합니다. 시도에서 `PracticeSummary`를 집계하고, 결정형 `practice_result_id`와 인라인 요약을 AI에 전달한 뒤 최초 전체 `TurnContract`를 반환합니다. body 없이(또는 `start_mode` 없이) 다시 보내면 마지막 회차 대화를 복구합니다.
+
+```jsonc
+// POST .../teaching  — body 는 선택
+{ "start_mode": "restart", "request_id": "9f4c…(요청마다 새 UUID)" }
+```
+
+`start_mode: "restart"` 는 기존 대화를 보존한 채 새 회차(`round` 증가)의 새 대화를 만들어
+첫 턴부터 시작합니다. 세션이 신뢰하는 대화(`learning_sessions.conversation_id`)는 항상
+마지막 회차를 가리키고, 가르치기 보상 멱등키는 세션당 하나라 재시작해도 보상이 중복되지
+않습니다. `request_id` 규칙은 카페 재시작(E 절)과 같습니다.
 
 ### E. 카페
 
@@ -237,19 +247,40 @@
 다시 열면 BE가 저장된 맥락을 `scenario_context`로 돌려주므로, 새로고침 뒤 화면 숫자와 AI가
 기억하는 숫자가 달라지지 않습니다.
 
-**재연습**: 한 번 통과한 스테이지도 몇 번이든 다시 풀 수 있습니다. `POST .../dialogues` 에
-`"restart": true` 를 실으면 BE가 새 회차(`dialogue_conversations.round`) 대화를 열고, 그때
-화면이 뽑은 새 문제를 그 회차의 `scenario_context` 로 저장합니다. `restart` 를 빼면(기본 false)
-새로고침 복구로 보고 마지막 회차를 그대로 돌려줍니다. 방문이 `complete` 여도 네 단계 모두
-제출·대화가 열립니다. 진행도는 전진 전용이라 재연습이 `stage` 를 되돌리지는 않습니다.
+**재시작과 이어하기**: `POST .../dialogues` 는 `start_mode` 로 의도를 구분합니다(#22).
 
 ```jsonc
-// POST .../queue   정답은 min(left,right)
+// POST .../dialogues
+{
+  "scenario_id": "cafe_queue",
+  "queue_context": { "left_count": 4, "right_count": 1 },
+  "start_mode": "restart",              // restart | resume
+  "request_id": "9f4c…(요청마다 새 UUID)"  // 멱등키, 선택이지만 restart 에 권장
+}
+```
+
+- `start_mode: "restart"` — 새로고침·다시 연습. 기존 기록은 분석용으로 보존한 채 새
+  회차(`dialogue_conversations.round` 증가)의 새 `conversation_id` 를 만들고, 그때 화면이
+  뽑은 새 문제를 그 회차의 `scenario_context` 로 고정합니다.
+- `start_mode: "resume"` — 명시적 이어하기. 마지막 회차를 그대로 돌려줍니다(없으면 새로
+  만듭니다).
+- `request_id` — FE가 시작 요청마다 새로 뽑는 멱등키. 같은 요청이 네트워크 재시도로 중복
+  도착하면 이미 만든 회차를 그대로 돌려주고, `(learner_id, request_id)` 유니크 제약이 중복
+  INSERT 를 막습니다. 같은 `request_id` 를 다른 방문·시나리오에 재사용하면 409
+  (`dialogue_request_id_conflict`)입니다.
+- **폐기 예정**: 옛 `"restart": true|false` boolean 은 `start_mode` 가 없을 때만
+  해석합니다(true→restart, false→resume). FE가 `start_mode` 로 전환을 마치면 제거합니다.
+
+방문이 `complete` 여도 네 단계 모두 제출·대화가 열립니다. 진행도는 전진 전용이라 재시작이
+`stage` 를 되돌리지는 않습니다.
+
+```jsonc
+// POST .../queue   정답은 min(left,right). 좌우 인원은 1~5 이고 서로 달라야 한다
 { "left_count": 4, "right_count": 2, "chosen_count": 2,
   "scaffold_used": false, "attempt_no": 1 }
 
-// POST .../menu    budget 은 8000 | 9000 | 10000 만 허용
-{ "menu_ids": ["americano", "cookie"], "budget": 8000, "attempt_no": 1 }
+// POST .../menu    budget 은 7000 | 8000 만 허용 (구버전 저장분 9000 | 10000 은 한시 허용)
+{ "menu_ids": ["americano", "cookie"], "budget": 7000, "attempt_no": 1 }
 
 // POST .../payments   두 메뉴값의 합을 아이가 적어 낸다
 { "menu_ids": ["strawberry-cake", "sandwich"], "answer_amount": 9000, "attempt_no": 1 }
@@ -266,6 +297,37 @@
 - 메뉴 합계는 클라이언트 값이 아니라 **서버 가격표**로 계산합니다. 가격표는 `CafeJourney.tsx` 와 같아야 합니다.
 - 화폐별 최종 구성만 저장하고 −/＋ 버튼 클릭 로그는 저장하지 않습니다.
 - 예산 초과 주문도 **오답으로 기록**합니다(`menu_over_budget`). 다음 단계는 열리지 않습니다.
+- **문제 계약 위반은 채점이 아니라 4xx 거절**이고 시도 기록도 남지 않습니다. 줄 인원이
+  1~5 를 벗어나거나(`queue_count_range`) 좌우가 같으면(`queue_count_equal`), 같은 메뉴 두 개를
+  내면(`menu_duplicate`), 카탈로그에 없는 메뉴면(`menu_unknown`) 거절됩니다.
+  코드는 `ERROR_CODES.md` 를 참고합니다.
+
+`POST .../dialogues` 의 문제 컨텍스트는 타입 있는 계약으로 검증합니다. 줄 서기는
+`queue_context`, 나머지 세 단계는 `cafe_context` 를 싣습니다. 계약 위반은 **AI 대화를
+만들기 전에 400 으로 거절**하므로, 대화를 끝까지 진행한 뒤 완료 동기화에서 5xx 로
+실패하는 일이 없습니다. 메뉴 ID·가격은 서버 카탈로그와 대조하고(`menu_unknown`,
+`menu_price_mismatch`, `menu_items_duplicate`), `mormi_menu_id` 는 메뉴판 안에 있어야
+하며(`mormi_menu_unknown`), `budget` 은 `cafe_budget_menu` 에서만 필수입니다(`budget`).
+
+```jsonc
+// POST .../dialogues  줄 서기
+{ "scenario_id": "cafe_queue",
+  "queue_context": { "left_count": 3, "right_count": 5 },
+  "start_mode": "resume" }
+
+// POST .../dialogues  메뉴·계산·거스름돈
+{ "scenario_id": "cafe_budget_menu",
+  "cafe_context": {
+    "menu_items": [
+      { "id": "americano", "name": "아메리카노", "price": 3000 },
+      { "id": "cookie", "name": "쿠키", "price": 2000 }
+    ],
+    "mormi_menu_id": "americano",
+    "budget": 8000
+  },
+  "start_mode": "restart",
+  "request_id": "9f4c…(요청마다 새 UUID)" }
+```
 
 ### F. 인증된 AI 대화 프록시
 
@@ -539,7 +601,7 @@ AI에서 처리가 끝났지만 응답만 유실된 경우도 있으므로, FE�
 
 ---
 
-## 4. DB 스키마 (인증·학습 핵심 테이블, `V13` 기준)
+## 4. DB 스키마 (인증·학습 핵심 테이블, `V14` 기준)
 
 ```
 accounts             id, login_id UNIQUE, password_hash, role(learner|educator), created_at

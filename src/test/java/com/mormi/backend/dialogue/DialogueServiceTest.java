@@ -12,10 +12,14 @@ import com.mormi.backend.cafe.CafeVisitRepository;
 import com.mormi.backend.cafe.CafeVisit;
 import com.mormi.backend.cafe.CafeService;
 import com.mormi.backend.cafe.CafeStage;
+import com.mormi.backend.cafe.CafeDtos.CafeContext;
+import com.mormi.backend.cafe.CafeDtos.CafeMenuItem;
+import com.mormi.backend.cafe.CafeDtos.QueueContext;
 import com.mormi.backend.cafe.CafeDtos.QueueRequest;
 import com.mormi.backend.cafe.CafeDtos.StageResultResponse;
 import com.mormi.backend.common.ApiException;
 import com.mormi.backend.dialogue.DialogueDtos.StartCafeDialogueRequest;
+import com.mormi.backend.dialogue.DialogueDtos.StartTeachingRequest;
 import com.mormi.backend.learner.Learner;
 import com.mormi.backend.learner.LearnerService;
 import com.mormi.backend.reward.RewardService;
@@ -152,7 +156,9 @@ class DialogueServiceTest {
                 visit.getPublicId(),
                 new StartCafeDialogueRequest(
                         "cafe_queue",
-                        Map.of("left_count", 4, "right_count", 1),
+                        new QueueContext(4, 1),
+                        null,
+                        "resume",
                         null,
                         false));
 
@@ -202,7 +208,7 @@ class DialogueServiceTest {
                 7L,
                 visit.getPublicId(),
                 new StartCafeDialogueRequest(
-                        "cafe_queue", Map.of("left_count", 4, "right_count", 1), null, false));
+                        "cafe_queue", new QueueContext(4, 1), null, null, null, false));
 
         assertThat(result.get("conversation_id")).isEqualTo("conversation-queue-2");
         verify(dialogueRepository).save(any(DialogueConversation.class));
@@ -231,7 +237,15 @@ class DialogueServiceTest {
                 .thenReturn(Optional.empty());
 
         StartCafeDialogueRequest request = new StartCafeDialogueRequest(
-                "cafe_change", null, Map.of("mormi_menu_id", "americano"), false);
+                "cafe_change",
+                null,
+                new CafeContext(
+                        List.of(new CafeMenuItem("americano", "아메리카노", 3000)),
+                        "americano",
+                        null),
+                null,
+                null,
+                false);
 
         assertThatThrownBy(() -> service.startCafeDialogue(7L, visit.getPublicId(), request))
                 .isInstanceOf(ApiException.class)
@@ -289,7 +303,7 @@ class DialogueServiceTest {
                 7L,
                 visit.getPublicId(),
                 new StartCafeDialogueRequest(
-                        "cafe_queue", Map.of("left_count", 4, "right_count", 1), null, true));
+                        "cafe_queue", new QueueContext(4, 1), null, null, null, true));
 
         assertThat(result.get("conversation_id")).isEqualTo("conversation-queue-2");
         // 1회차의 옛 문제가 아니라 화면이 방금 뽑은 새 문제가 저장되어야 한다.
@@ -372,6 +386,365 @@ class DialogueServiceTest {
     }
 
     @Test
+    void startModeRestartOpensANewRoundOnRefresh() throws Exception {
+        DialogueClient dialogueClient = mock(DialogueClient.class);
+        DialogueConversationRepository dialogueRepository = mock(DialogueConversationRepository.class);
+        CafeVisitRepository cafeVisitRepository = mock(CafeVisitRepository.class);
+        LearnerService learnerService = mock(LearnerService.class);
+        DialogueService service = new DialogueService(
+                dialogueClient,
+                dialogueRepository,
+                mock(LearningSessionRepository.class),
+                mock(AttemptRepository.class),
+                cafeVisitRepository,
+                mock(CafeService.class),
+                learnerService,
+                mock(RewardService.class));
+
+        // 대화를 몇 턴 진행한 뒤 새로고침. 옛 restart=false 여도 start_mode 가 우선한다.
+        CafeVisit visit = CafeVisit.start(7L);
+        ReflectionTestUtils.setField(visit, "id", 21L);
+        Learner learner = Learner.register("표시 이름", "R-007", 1L);
+        ReflectionTestUtils.setField(learner, "id", 7L);
+        DialogueConversation firstRound = DialogueConversation.forCafeVisit(
+                "conversation-queue-1",
+                7L,
+                21L,
+                "cafe_queue",
+                1,
+                Map.of("queue_context", Map.of("left_count", 2, "right_count", 5)));
+
+        JsonNode envelope = new ObjectMapper().readTree("""
+                {
+                  "conversation_id": "conversation-queue-2",
+                  "turn": {"status": "active", "completion": null}
+                }
+                """);
+
+        when(cafeVisitRepository.findByPublicId(visit.getPublicId())).thenReturn(Optional.of(visit));
+        when(cafeVisitRepository.findById(21L)).thenReturn(Optional.of(visit));
+        when(dialogueRepository.findByLearnerIdAndRequestId(7L, "req-1"))
+                .thenReturn(Optional.empty());
+        when(dialogueRepository.findFirstByCafeVisitIdAndScenarioIdOrderByRoundDesc(21L, "cafe_queue"))
+                .thenReturn(Optional.of(firstRound));
+        when(learnerService.require(7L)).thenReturn(learner);
+        when(dialogueClient.createConversation(any())).thenReturn(envelope);
+
+        Map<String, Object> result = service.startCafeDialogue(
+                7L,
+                visit.getPublicId(),
+                new StartCafeDialogueRequest(
+                        "cafe_queue", new QueueContext(4, 1), null, "restart", "req-1", false));
+
+        assertThat(result.get("conversation_id")).isEqualTo("conversation-queue-2");
+        ArgumentCaptor<DialogueConversation> saved =
+                ArgumentCaptor.forClass(DialogueConversation.class);
+        verify(dialogueRepository).save(saved.capture());
+        assertThat(saved.getValue().getRound()).isEqualTo(2);
+        assertThat(saved.getValue().getRequestId()).isEqualTo("req-1");
+    }
+
+    @Test
+    void retriedRequestIdReturnsTheAlreadyCreatedRoundWithoutANewConversation() throws Exception {
+        DialogueClient dialogueClient = mock(DialogueClient.class);
+        DialogueConversationRepository dialogueRepository = mock(DialogueConversationRepository.class);
+        CafeVisitRepository cafeVisitRepository = mock(CafeVisitRepository.class);
+        DialogueService service = new DialogueService(
+                dialogueClient,
+                dialogueRepository,
+                mock(LearningSessionRepository.class),
+                mock(AttemptRepository.class),
+                cafeVisitRepository,
+                mock(CafeService.class),
+                mock(LearnerService.class),
+                mock(RewardService.class));
+
+        CafeVisit visit = CafeVisit.start(7L);
+        ReflectionTestUtils.setField(visit, "id", 21L);
+        Map<String, Object> storedContext = Map.of(
+                "queue_context", Map.of("left_count", 4, "right_count", 1));
+        DialogueConversation created = DialogueConversation.forCafeVisit(
+                "conversation-queue-2", 7L, 21L, "cafe_queue", 2, storedContext, "req-1");
+
+        JsonNode envelope = new ObjectMapper().readTree("""
+                {
+                  "conversation_id": "conversation-queue-2",
+                  "turn": {"status": "active", "completion": null}
+                }
+                """);
+
+        when(cafeVisitRepository.findByPublicId(visit.getPublicId())).thenReturn(Optional.of(visit));
+        when(cafeVisitRepository.findById(21L)).thenReturn(Optional.of(visit));
+        when(dialogueRepository.findByLearnerIdAndRequestId(7L, "req-1"))
+                .thenReturn(Optional.of(created));
+        when(dialogueClient.getConversation("conversation-queue-2")).thenReturn(envelope);
+
+        // 첫 요청이 회차를 만든 뒤 같은 요청이 네트워크 재시도로 다시 도착했다.
+        Map<String, Object> result = service.startCafeDialogue(
+                7L,
+                visit.getPublicId(),
+                new StartCafeDialogueRequest(
+                        "cafe_queue", new QueueContext(4, 1), null, "restart", "req-1", false));
+
+        assertThat(result.get("conversation_id")).isEqualTo("conversation-queue-2");
+        assertThat(result.get("scenario_context")).isEqualTo(storedContext);
+        verify(dialogueClient, never()).createConversation(any());
+        verify(dialogueRepository, never()).save(any());
+    }
+
+    @Test
+    void requestIdReusedOnADifferentScenarioIsRejected() throws Exception {
+        DialogueClient dialogueClient = mock(DialogueClient.class);
+        DialogueConversationRepository dialogueRepository = mock(DialogueConversationRepository.class);
+        CafeVisitRepository cafeVisitRepository = mock(CafeVisitRepository.class);
+        DialogueService service = new DialogueService(
+                dialogueClient,
+                dialogueRepository,
+                mock(LearningSessionRepository.class),
+                mock(AttemptRepository.class),
+                cafeVisitRepository,
+                mock(CafeService.class),
+                mock(LearnerService.class),
+                mock(RewardService.class));
+
+        CafeVisit visit = CafeVisit.start(7L);
+        ReflectionTestUtils.setField(visit, "id", 21L);
+        DialogueConversation created = DialogueConversation.forCafeVisit(
+                "conversation-queue-2", 7L, 21L, "cafe_queue", 2,
+                Map.of("queue_context", Map.of("left_count", 4, "right_count", 1)), "req-1");
+
+        when(cafeVisitRepository.findByPublicId(visit.getPublicId())).thenReturn(Optional.of(visit));
+        when(dialogueRepository.findByLearnerIdAndRequestId(7L, "req-1"))
+                .thenReturn(Optional.of(created));
+
+        StartCafeDialogueRequest request = new StartCafeDialogueRequest(
+                "cafe_change",
+                null,
+                new CafeContext(
+                        List.of(new CafeMenuItem("americano", "아메리카노", 3000)),
+                        "americano",
+                        null),
+                "restart",
+                "req-1",
+                false);
+
+        assertThatThrownBy(() -> service.startCafeDialogue(7L, visit.getPublicId(), request))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("이미 사용");
+        verify(dialogueClient, never()).createConversation(any());
+    }
+
+    @Test
+    void homeTeachingWithoutBodyResumesTheLatestRound() {
+        DialogueClient dialogueClient = mock(DialogueClient.class);
+        DialogueConversationRepository dialogueRepository = mock(DialogueConversationRepository.class);
+        LearningSessionRepository sessionRepository = mock(LearningSessionRepository.class);
+        DialogueService service = new DialogueService(
+                dialogueClient,
+                dialogueRepository,
+                sessionRepository,
+                mock(AttemptRepository.class),
+                mock(CafeVisitRepository.class),
+                mock(CafeService.class),
+                mock(LearnerService.class),
+                mock(RewardService.class));
+
+        LearningSession session = LearningSession.start(7L, "number-count", 42);
+        ReflectionTestUtils.setField(session, "id", 11L);
+        DialogueConversation latest = DialogueConversation.forLearningSession(
+                "conversation-teach-2", 7L, 11L, 2, null);
+        JsonNode envelope = mock(JsonNode.class);
+
+        when(sessionRepository.findByPublicId(session.getPublicId())).thenReturn(Optional.of(session));
+        when(dialogueRepository.findFirstByLearningSessionIdOrderByRoundDesc(11L))
+                .thenReturn(Optional.of(latest));
+        when(dialogueClient.getConversation("conversation-teach-2")).thenReturn(envelope);
+
+        JsonNode result = service.startHomeTeaching(7L, session.getPublicId(), null);
+
+        assertThat(result).isSameAs(envelope);
+        verify(dialogueClient, never()).createConversation(any());
+    }
+
+    @Test
+    void homeTeachingRestartOpensANewRoundAndPointsTheSessionToIt() throws Exception {
+        DialogueClient dialogueClient = mock(DialogueClient.class);
+        DialogueConversationRepository dialogueRepository = mock(DialogueConversationRepository.class);
+        LearningSessionRepository sessionRepository = mock(LearningSessionRepository.class);
+        AttemptRepository attemptRepository = mock(AttemptRepository.class);
+        LearnerService learnerService = mock(LearnerService.class);
+        RewardService rewardService = mock(RewardService.class);
+        DialogueService service = new DialogueService(
+                dialogueClient,
+                dialogueRepository,
+                sessionRepository,
+                attemptRepository,
+                mock(CafeVisitRepository.class),
+                mock(CafeService.class),
+                learnerService,
+                rewardService);
+
+        LearningSession session = LearningSession.start(7L, "number-count", 42);
+        ReflectionTestUtils.setField(session, "id", 11L);
+        Learner learner = Learner.register("표시 이름", "R-007", 1L);
+        ReflectionTestUtils.setField(learner, "id", 7L);
+        DialogueConversation firstRound = DialogueConversation.forLearningSession(
+                "conversation-teach-1", 7L, 11L, 1, null);
+        JsonNode envelope = new ObjectMapper().readTree("""
+                {
+                  "conversation_id": "conversation-teach-2",
+                  "turn": {"status": "active", "completion": null}
+                }
+                """);
+
+        when(sessionRepository.findByPublicId(session.getPublicId())).thenReturn(Optional.of(session));
+        when(dialogueRepository.findByLearnerIdAndRequestId(7L, "req-7"))
+                .thenReturn(Optional.empty());
+        when(dialogueRepository.findFirstByLearningSessionIdOrderByRoundDesc(11L))
+                .thenReturn(Optional.of(firstRound));
+        when(attemptRepository.countDistinctCorrectQuestions(11L, "drill")).thenReturn(5);
+        when(attemptRepository.findByLearningSessionIdOrderByIdAsc(11L)).thenReturn(List.of());
+        when(learnerService.require(7L)).thenReturn(learner);
+        when(dialogueClient.createConversation(any())).thenReturn(envelope);
+
+        JsonNode result = service.startHomeTeaching(
+                7L, session.getPublicId(), new StartTeachingRequest("restart", "req-7"));
+
+        assertThat(result.path("conversation_id").asString()).isEqualTo("conversation-teach-2");
+        // 세션이 신뢰하는 대화가 새 회차로 바뀌어야 완료 보상 검증도 새 회차를 본다.
+        assertThat(session.getConversationId()).isEqualTo("conversation-teach-2");
+
+        ArgumentCaptor<DialogueConversation> saved =
+                ArgumentCaptor.forClass(DialogueConversation.class);
+        verify(dialogueRepository).save(saved.capture());
+        assertThat(saved.getValue().getRound()).isEqualTo(2);
+        assertThat(saved.getValue().getRequestId()).isEqualTo("req-7");
+    }
+
+    @Test
+    void equalQueueCountsAreRejectedBeforeCreatingADialogue() {
+        StartFixture fixture = startFixture("cafe_queue", CafeStage.QUEUE);
+        StartCafeDialogueRequest request = new StartCafeDialogueRequest(
+                "cafe_queue", new QueueContext(3, 3), null, null, null, false);
+
+        assertThatThrownBy(
+                () -> fixture.service().startCafeDialogue(7L, fixture.visit().getPublicId(), request))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "queue_count_equal");
+        verify(fixture.dialogueClient(), never()).createConversation(any());
+    }
+
+    @Test
+    void outOfRangeQueueCountsAreRejectedBeforeCreatingADialogue() {
+        StartFixture fixture = startFixture("cafe_queue", CafeStage.QUEUE);
+        StartCafeDialogueRequest request = new StartCafeDialogueRequest(
+                "cafe_queue", new QueueContext(7, 2), null, null, null, false);
+
+        assertThatThrownBy(
+                () -> fixture.service().startCafeDialogue(7L, fixture.visit().getPublicId(), request))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "queue_count_range");
+        verify(fixture.dialogueClient(), never()).createConversation(any());
+    }
+
+    @Test
+    void menuPriceMismatchIsRejectedBeforeCreatingADialogue() {
+        StartFixture fixture = startFixture("cafe_budget_menu", CafeStage.MENU);
+        StartCafeDialogueRequest request = new StartCafeDialogueRequest(
+                "cafe_budget_menu",
+                null,
+                new CafeContext(
+                        List.of(
+                                new CafeMenuItem("americano", "아메리카노", 3500),
+                                new CafeMenuItem("cookie", "쿠키", 2000)),
+                        "americano",
+                        8000),
+                null,
+                null,
+                false);
+
+        assertThatThrownBy(
+                () -> fixture.service().startCafeDialogue(7L, fixture.visit().getPublicId(), request))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "menu_price_mismatch");
+        verify(fixture.dialogueClient(), never()).createConversation(any());
+    }
+
+    @Test
+    void mormiMenuOutsideTheBoardIsRejectedBeforeCreatingADialogue() {
+        StartFixture fixture = startFixture("cafe_budget_menu", CafeStage.MENU);
+        StartCafeDialogueRequest request = new StartCafeDialogueRequest(
+                "cafe_budget_menu",
+                null,
+                new CafeContext(
+                        List.of(
+                                new CafeMenuItem("americano", "아메리카노", 3000),
+                                new CafeMenuItem("cookie", "쿠키", 2000)),
+                        "milk",
+                        8000),
+                null,
+                null,
+                false);
+
+        assertThatThrownBy(
+                () -> fixture.service().startCafeDialogue(7L, fixture.visit().getPublicId(), request))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "mormi_menu_unknown");
+        verify(fixture.dialogueClient(), never()).createConversation(any());
+    }
+
+    @Test
+    void unknownBudgetIsRejectedBeforeCreatingADialogue() {
+        StartFixture fixture = startFixture("cafe_budget_menu", CafeStage.MENU);
+        StartCafeDialogueRequest request = new StartCafeDialogueRequest(
+                "cafe_budget_menu",
+                null,
+                new CafeContext(
+                        List.of(
+                                new CafeMenuItem("americano", "아메리카노", 3000),
+                                new CafeMenuItem("cookie", "쿠키", 2000)),
+                        "americano",
+                        6000),
+                null,
+                null,
+                false);
+
+        assertThatThrownBy(
+                () -> fixture.service().startCafeDialogue(7L, fixture.visit().getPublicId(), request))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "budget");
+        verify(fixture.dialogueClient(), never()).createConversation(any());
+    }
+
+    /** 대화 시작 거절 테스트 공통 준비물. 계약 위반이 AI 호출 전에 걸리는지 본다. */
+    private record StartFixture(
+            DialogueService service, DialogueClient dialogueClient, CafeVisit visit) {
+    }
+
+    private StartFixture startFixture(String scenarioId, CafeStage reachedStage) {
+        DialogueClient dialogueClient = mock(DialogueClient.class);
+        DialogueConversationRepository dialogueRepository = mock(DialogueConversationRepository.class);
+        CafeVisitRepository cafeVisitRepository = mock(CafeVisitRepository.class);
+        DialogueService service = new DialogueService(
+                dialogueClient,
+                dialogueRepository,
+                mock(LearningSessionRepository.class),
+                mock(AttemptRepository.class),
+                cafeVisitRepository,
+                mock(CafeService.class),
+                mock(LearnerService.class),
+                mock(RewardService.class));
+
+        CafeVisit visit = CafeVisit.start(7L);
+        ReflectionTestUtils.setField(visit, "id", 21L);
+        visit.advanceTo(reachedStage);
+        when(cafeVisitRepository.findByPublicId(visit.getPublicId())).thenReturn(Optional.of(visit));
+        when(dialogueRepository.findFirstByCafeVisitIdAndScenarioIdOrderByRoundDesc(21L, scenarioId))
+                .thenReturn(Optional.empty());
+        return new StartFixture(service, dialogueClient, visit);
+    }
+
+    @Test
     void homeTeachingUsesOnlyServerOwnedPracticeFacts() {
         DialogueClient dialogueClient = mock(DialogueClient.class);
         DialogueConversationRepository dialogueRepository = mock(DialogueConversationRepository.class);
@@ -423,14 +796,15 @@ class DialogueServiceTest {
         when(turn.isMissingNode()).thenReturn(false);
 
         when(sessionRepository.findByPublicId(session.getPublicId())).thenReturn(Optional.of(session));
-        when(dialogueRepository.findByLearningSessionId(11L)).thenReturn(Optional.empty());
+        when(dialogueRepository.findFirstByLearningSessionIdOrderByRoundDesc(11L))
+                .thenReturn(Optional.empty());
         when(attemptRepository.countDistinctCorrectQuestions(11L, "drill")).thenReturn(5);
         when(attemptRepository.findByLearningSessionIdOrderByIdAsc(11L)).thenReturn(attempts);
         when(learnerService.require(7L)).thenReturn(learner);
         when(rewardService.sessionReward(11L, RewardSource.DRILL)).thenReturn(1000);
         when(dialogueClient.createConversation(any())).thenReturn(envelope);
 
-        JsonNode result = service.startHomeTeaching(7L, session.getPublicId());
+        JsonNode result = service.startHomeTeaching(7L, session.getPublicId(), null);
 
         assertThat(result).isSameAs(envelope);
         assertThat(session.getConversationId()).isEqualTo("conversation-safe-1");

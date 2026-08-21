@@ -1,17 +1,23 @@
 package com.mormi.backend.dialogue;
 
+import com.mormi.backend.cafe.CafeProblemContract;
 import com.mormi.backend.cafe.CafeStage;
 import com.mormi.backend.cafe.CafeService;
 import com.mormi.backend.cafe.CafeVisit;
 import com.mormi.backend.cafe.CafeVisitRepository;
+import com.mormi.backend.cafe.CafeDtos.CafeContext;
+import com.mormi.backend.cafe.CafeDtos.CafeMenuItem;
 import com.mormi.backend.cafe.CafeDtos.ChangeRequest;
 import com.mormi.backend.cafe.CafeDtos.MenuRequest;
 import com.mormi.backend.cafe.CafeDtos.PaymentRequest;
+import com.mormi.backend.cafe.CafeDtos.QueueContext;
 import com.mormi.backend.cafe.CafeDtos.QueueRequest;
 import com.mormi.backend.cafe.CafeDtos.StageResultResponse;
 import com.mormi.backend.common.ApiException;
 import com.mormi.backend.curriculum.CurriculumCatalog;
 import com.mormi.backend.dialogue.DialogueDtos.StartCafeDialogueRequest;
+import com.mormi.backend.dialogue.DialogueDtos.StartTeachingRequest;
+import java.util.Objects;
 import com.mormi.backend.learner.Learner;
 import com.mormi.backend.learner.LearnerService;
 import com.mormi.backend.reward.RewardService;
@@ -72,17 +78,28 @@ public class DialogueService {
 
     /** 마지막 drill 저장 이후 호출한다. 반복 결과 저장과 가르치기 시작을 한 API로 묶는다. */
     @Transactional
-    public JsonNode startHomeTeaching(Long learnerId, String publicSessionId) {
+    public JsonNode startHomeTeaching(
+            Long learnerId, String publicSessionId, StartTeachingRequest request) {
         LearningSession session = requireSessionOwned(learnerId, publicSessionId);
         if (session.isCompleted()) {
             throw ApiException.conflict("session_completed", "이미 완료된 세션입니다.");
         }
 
-        DialogueConversation existing = dialogueRepository
-                .findByLearningSessionId(session.getId())
+        String requestId = request == null ? null : request.requestId();
+        DialogueConversation replayed = findReplayedRequest(learnerId, requestId);
+        if (replayed != null) {
+            if (!session.getId().equals(replayed.getLearningSessionId())) {
+                throw requestIdConflict();
+            }
+            return dialogueClient.getConversation(replayed.getConversationId());
+        }
+
+        DialogueConversation latest = dialogueRepository
+                .findFirstByLearningSessionIdOrderByRoundDesc(session.getId())
                 .orElse(null);
-        if (existing != null) {
-            return dialogueClient.getConversation(existing.getConversationId());
+        // 명시적 restart 가 아니면 새로고침 복구로 보고 마지막 회차를 그대로 이어 준다.
+        if (latest != null && (request == null || !request.wantsRestart())) {
+            return dialogueClient.getConversation(latest.getConversationId());
         }
 
         int solvedQuestions = attemptRepository.countDistinctCorrectQuestions(
@@ -93,22 +110,24 @@ public class DialogueService {
                     "반복 문제 %d개를 마친 뒤 모르미를 가르칠 수 있습니다."
                             .formatted(CurriculumCatalog.MASTERY_TARGET));
         }
+        int round = latest == null ? 1 : latest.getRound() + 1;
 
         Learner learner = learnerService.require(learnerId);
         String practiceResultId = practiceResultId(session);
 
-        Map<String, Object> request = baseRequest(learner, "home_teach", "home_teach");
-        request.put("learning_session_id", session.getPublicId());
-        request.put("practice_result_id", practiceResultId);
-        request.put("practice_summary", buildPracticeSummary(session));
+        Map<String, Object> body = baseRequest(learner, "home_teach", "home_teach");
+        body.put("learning_session_id", session.getPublicId());
+        body.put("practice_result_id", practiceResultId);
+        body.put("practice_summary", buildPracticeSummary(session));
 
-        JsonNode envelope = requireEnvelope(dialogueClient.createConversation(request));
+        JsonNode envelope = requireEnvelope(dialogueClient.createConversation(body));
         String conversationId = envelope.path("conversation_id").asString();
 
         session.setPracticeResultId(practiceResultId);
+        // 세션이 신뢰하는 대화는 항상 마지막 회차. 이전 회차는 분석용으로만 남는다.
         session.setConversationId(conversationId);
         dialogueRepository.save(DialogueConversation.forLearningSession(
-                conversationId, learnerId, session.getId()));
+                conversationId, learnerId, session.getId(), round, requestId));
         return envelope;
     }
 
@@ -117,11 +136,22 @@ public class DialogueService {
     public Map<String, Object> startCafeDialogue(
             Long learnerId, String publicVisitId, StartCafeDialogueRequest request) {
         CafeVisit visit = requireCafeOwned(learnerId, publicVisitId);
+
+        DialogueConversation replayed = findReplayedRequest(learnerId, request.requestId());
+        if (replayed != null) {
+            if (!visit.getId().equals(replayed.getCafeVisitId())
+                    || !Objects.equals(request.scenarioId(), replayed.getScenarioId())) {
+                throw requestIdConflict();
+            }
+            return envelopeWithContext(
+                    replayed, dialogueClient.getConversation(replayed.getConversationId()));
+        }
+
         DialogueConversation latest = dialogueRepository
                 .findFirstByCafeVisitIdAndScenarioIdOrderByRoundDesc(visit.getId(), request.scenarioId())
                 .orElse(null);
-        // 다시 연습이 아니면 새로고침 복구로 보고 마지막 회차를 그대로 이어 준다.
-        if (latest != null && !request.restart()) {
+        // 명시적 이어하기(또는 옛 restart=false)면 마지막 회차를 그대로 이어 준다.
+        if (latest != null && !request.wantsRestart()) {
             return envelopeWithContext(
                     latest, dialogueClient.getConversation(latest.getConversationId()));
         }
@@ -139,29 +169,61 @@ public class DialogueService {
         }
         int round = latest == null ? 1 : latest.getRound() + 1;
 
-        Learner learner = learnerService.require(learnerId);
-        Map<String, Object> body = baseRequest(learner, "cafe", request.scenarioId());
-        Map<String, Object> scenarioContext = new LinkedHashMap<>();
+        // 문제 계약 위반은 AI 대화를 만들기 전에 4xx 로 거절한다. 여기서 통과한 컨텍스트만
+        // 회차에 저장되므로, 대화 완료 뒤 동기화가 계약 불일치로 5xx 를 내는 일이 없다.
+        String contextKey;
+        Map<String, Object> contextValue;
         if ("cafe_queue".equals(request.scenarioId())) {
-            if (request.queueContext() == null || request.queueContext().isEmpty()) {
+            if (request.queueContext() == null) {
                 throw ApiException.badRequest("queue_context_required", "줄 화면 정보가 필요합니다.");
             }
-            body.put("queue_context", request.queueContext());
-            scenarioContext.put("queue_context", new LinkedHashMap<>(request.queueContext()));
+            CafeProblemContract.requireQueueCounts(
+                    request.queueContext().leftCount(), request.queueContext().rightCount());
+            contextKey = "queue_context";
+            contextValue = queueContextMap(request.queueContext());
         } else {
-            if (request.cafeContext() == null || request.cafeContext().isEmpty()) {
+            if (request.cafeContext() == null) {
                 throw ApiException.badRequest("cafe_context_required", "메뉴 화면 정보가 필요합니다.");
             }
-            body.put("cafe_context", request.cafeContext());
-            scenarioContext.put("cafe_context", new LinkedHashMap<>(request.cafeContext()));
+            CafeProblemContract.requireMenuBoard(request.cafeContext());
+            if ("cafe_budget_menu".equals(request.scenarioId())) {
+                CafeProblemContract.requireKnownBudget(request.cafeContext().budget());
+            }
+            contextKey = "cafe_context";
+            contextValue = cafeContextMap(request.cafeContext());
         }
+
+        Learner learner = learnerService.require(learnerId);
+        Map<String, Object> body = baseRequest(learner, "cafe", request.scenarioId());
+        body.put(contextKey, contextValue);
+        Map<String, Object> scenarioContext = new LinkedHashMap<>();
+        scenarioContext.put(contextKey, contextValue);
 
         JsonNode envelope = requireEnvelope(dialogueClient.createConversation(body));
         String conversationId = envelope.path("conversation_id").asString();
         DialogueConversation dialogue = DialogueConversation.forCafeVisit(
-                conversationId, learnerId, visit.getId(), request.scenarioId(), round, scenarioContext);
+                conversationId, learnerId, visit.getId(), request.scenarioId(), round,
+                scenarioContext, request.requestId());
         dialogueRepository.save(dialogue);
         return envelopeWithContext(dialogue, envelope);
+    }
+
+    /**
+     * 같은 request_id 로 이미 만든 회차가 있으면 그 회차를 돌려준다.
+     * 동시에 두 요청이 들어와 조회를 모두 비껴가는 극단 상황은
+     * (learner_id, request_id) 유니크 인덱스가 두 번째 INSERT 를 막는다.
+     */
+    private DialogueConversation findReplayedRequest(Long learnerId, String requestId) {
+        if (requestId == null || requestId.isBlank()) {
+            return null;
+        }
+        return dialogueRepository.findByLearnerIdAndRequestId(learnerId, requestId).orElse(null);
+    }
+
+    private ApiException requestIdConflict() {
+        return ApiException.conflict(
+                "dialogue_request_id_conflict",
+                "같은 request_id 가 다른 대화 시작에 이미 사용되었습니다.");
     }
 
     @Transactional
@@ -370,6 +432,32 @@ public class DialogueService {
                 cafeVisitPublicId(dialogue),
                 new ChangeRequest(
                         contextString(context, "mormi_menu_id"), counts, attemptNo, null));
+    }
+
+    /** AI 요청과 회차 저장에 같은 snake_case 계약 키를 쓴다. sync* 가 이 키로 다시 읽는다. */
+    private Map<String, Object> queueContextMap(QueueContext context) {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("left_count", context.leftCount());
+        map.put("right_count", context.rightCount());
+        return map;
+    }
+
+    private Map<String, Object> cafeContextMap(CafeContext context) {
+        List<Map<String, Object>> menuItems = new ArrayList<>();
+        for (CafeMenuItem item : context.menuItems()) {
+            Map<String, Object> menuItem = new LinkedHashMap<>();
+            menuItem.put("id", item.id());
+            menuItem.put("name", item.name());
+            menuItem.put("price", item.price());
+            menuItems.add(menuItem);
+        }
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("menu_items", menuItems);
+        map.put("mormi_menu_id", context.mormiMenuId());
+        if (context.budget() != null) {
+            map.put("budget", context.budget());
+        }
+        return map;
     }
 
     private String cafeVisitPublicId(DialogueConversation dialogue) {

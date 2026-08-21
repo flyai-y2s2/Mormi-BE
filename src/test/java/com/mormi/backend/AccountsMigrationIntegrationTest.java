@@ -13,7 +13,7 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 /**
- * V12 가 운영 데이터를 옮기는 마이그레이션이라, 빈 스키마가 아니라
+ * V13 이 운영 데이터를 옮기는 마이그레이션이라, 빈 스키마가 아니라
  * "V11 까지 적용된 DB 에 기존 학습자가 있는" 상태를 만들어 놓고 검증한다.
  * 1) 아이디가 있는 학습자는 계정으로 이관되고 로그인 세션이 끊기지 않는다
  * 2) 구 방식(연구 코드 온보딩) 학습자도 행이 남고 account_id 가 채워진다

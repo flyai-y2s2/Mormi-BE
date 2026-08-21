@@ -28,8 +28,22 @@ public final class CurriculumCatalog {
     /** 카페 실습용 고정 소지금. 지갑과 분리된 별도 화폐이며 거스름돈 기준액이다. */
     public static final int CAFE_TARGET_AMOUNT = 10000;
 
+    /** 줄 서기 좌우 인원의 계약 범위. FE 화면·AI 컨텍스트가 같은 범위를 써야 한다. */
+    public static final int CAFE_QUEUE_MIN_COUNT = 1;
+    public static final int CAFE_QUEUE_MAX_COUNT = 5;
+
     /** 메뉴 고르기 예산. 프런트가 방문마다 이 중 하나를 뽑아 보내고, 서버는 목록에 있는 값만 받는다. */
-    public static final Set<Integer> CAFE_MENU_BUDGETS = Set.of(8000, 9000, 10000);
+    public static final Set<Integer> CAFE_MENU_BUDGETS = Set.of(7000, 8000);
+
+    /**
+     * 예전 배포에서 뽑혀 DB에 저장돼 있을 수 있는 예산. 새 대화에서는 쓰지 않지만,
+     * 저장된 대화의 재진입·동기화가 깨지지 않도록 검증에서만 한시적으로 허용한다.
+     */
+    public static final Set<Integer> LEGACY_CAFE_MENU_BUDGETS = Set.of(9000, 10000);
+
+    public static boolean isAllowedMenuBudget(int budget) {
+        return CAFE_MENU_BUDGETS.contains(budget) || LEGACY_CAFE_MENU_BUDGETS.contains(budget);
+    }
 
     /** 카페 해금에 필요한 5개 세션. journey-config.ts 의 cafeRequiredSessionIds 와 같다. */
     public static final List<String> CAFE_REQUIRED_SESSION_IDS =

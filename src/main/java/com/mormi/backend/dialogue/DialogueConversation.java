@@ -53,6 +53,13 @@ public class DialogueConversation {
     @Column(name = "scenario_context", nullable = false, columnDefinition = "jsonb", updatable = false)
     private Map<String, Object> scenarioContext = new LinkedHashMap<>();
 
+    /**
+     * FE가 요청마다 새로 뽑는 멱등키. 같은 요청이 네트워크 재시도로 중복 도착하면
+     * (learner_id, request_id) 유니크 제약과 재조회로 같은 회차를 돌려준다.
+     */
+    @Column(name = "request_id", length = 100, updatable = false)
+    private String requestId;
+
     /** 이 회차가 스테이지를 통과시킨 시각. 같은 회차를 다시 읽을 때 재검증을 건너뛰는 기준. */
     @Column(name = "cleared_at")
     private OffsetDateTime clearedAt;
@@ -67,7 +74,8 @@ public class DialogueConversation {
             Long cafeVisitId,
             String scenarioId,
             int round,
-            Map<String, Object> scenarioContext) {
+            Map<String, Object> scenarioContext,
+            String requestId) {
         this.conversationId = conversationId;
         this.learnerId = learnerId;
         this.learningSessionId = learningSessionId;
@@ -77,12 +85,20 @@ public class DialogueConversation {
         this.scenarioContext = scenarioContext == null
                 ? new LinkedHashMap<>()
                 : new LinkedHashMap<>(scenarioContext);
+        this.requestId = requestId;
     }
 
     public static DialogueConversation forLearningSession(
             String conversationId, Long learnerId, Long learningSessionId) {
+        return forLearningSession(conversationId, learnerId, learningSessionId, 1, null);
+    }
+
+    public static DialogueConversation forLearningSession(
+            String conversationId, Long learnerId, Long learningSessionId,
+            int round, String requestId) {
         return new DialogueConversation(
-                conversationId, learnerId, learningSessionId, null, "home_teach", 1, Map.of());
+                conversationId, learnerId, learningSessionId, null,
+                "home_teach", round, Map.of(), requestId);
     }
 
     public static DialogueConversation forCafeVisit(
@@ -92,8 +108,21 @@ public class DialogueConversation {
             String scenarioId,
             int round,
             Map<String, Object> scenarioContext) {
+        return forCafeVisit(
+                conversationId, learnerId, cafeVisitId, scenarioId, round, scenarioContext, null);
+    }
+
+    public static DialogueConversation forCafeVisit(
+            String conversationId,
+            Long learnerId,
+            Long cafeVisitId,
+            String scenarioId,
+            int round,
+            Map<String, Object> scenarioContext,
+            String requestId) {
         return new DialogueConversation(
-                conversationId, learnerId, null, cafeVisitId, scenarioId, round, scenarioContext);
+                conversationId, learnerId, null, cafeVisitId, scenarioId, round,
+                scenarioContext, requestId);
     }
 
     /** 이 회차가 스테이지를 통과시켰음을 한 번만 기록한다. */

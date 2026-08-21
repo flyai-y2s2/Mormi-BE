@@ -1,6 +1,6 @@
 # 데이터 모델과 학습자 격리
 
-`V1__init.sql` ~ `V13__cohort_research_codes.sql` 기준. 스키마를 바꾸면 이 문서도 같이 고친다.
+`V1__init.sql` ~ `V14__cohort_research_codes.sql` 기준. 스키마를 바꾸면 이 문서도 같이 고친다.
 
 ## ERD
 
@@ -250,7 +250,7 @@ erDiagram
 
 행이 계정당 여러 개일 수 있어 기기를 두 대 써도 서로를 밀어내지 않는다. 대신 로그아웃은 그 요청에 쓰인 토큰만(`AccountPrincipal.tokenId`), 전체 로그아웃은 계정의 모든 행을 폐기한다.
 
-비밀번호는 BCrypt 해시(`accounts.password_hash`)로만 보관하고, 로그인 실패 응답은 아이디가 없을 때와 비밀번호가 틀릴 때가 같다. `research_code`는 연구 식별자로만 남고 인증에는 관여하지 않는다. V12 이전에 연구 코드로만 온보딩한 학습자는 `legacy:` 접두 아이디와 `!disabled` 해시(BCrypt 형식이 아니라 어떤 비밀번호와도 매칭 불가)를 가진 계정이 채워져, 데이터는 남되 로그인 경로만 없다.
+비밀번호는 BCrypt 해시(`accounts.password_hash`)로만 보관하고, 로그인 실패 응답은 아이디가 없을 때와 비밀번호가 틀릴 때가 같다. `research_code`는 연구 식별자로만 남고 인증에는 관여하지 않는다. V13 이전에 연구 코드로만 온보딩한 학습자는 `legacy:` 접두 아이디와 `!disabled` 해시(BCrypt 형식이 아니라 어떤 비밀번호와도 매칭 불가)를 가진 계정이 채워져, 데이터는 남되 로그인 경로만 없다.
 
 **2. 컨트롤러는 클라이언트가 보낸 learner_id를 믿지 않는다**
 

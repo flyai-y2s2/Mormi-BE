@@ -13,7 +13,7 @@ import lombok.NoArgsConstructor;
 
 /**
  * 교사·연구자 한 명. V9 에서는 명부였고, account_id 가 연결되면 로그인 주체가 된다.
- * V12 이전에 명부로만 등록된 행은 계정이 없을 수 있다.
+ * V13 이전에 명부로만 등록된 행은 계정이 없을 수 있다.
  */
 @Entity
 @Table(name = "educators")
