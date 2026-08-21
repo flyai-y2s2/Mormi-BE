@@ -159,8 +159,8 @@ erDiagram
         bigint    learner_id FK "대화 기록에서 역참조. 이벤트 값을 믿지 않는다"
         bigint    learning_session_id FK "null 가능"
         bigint    cafe_visit_id FK "null 가능"
-        varchar   expression_before "발화사다리 L4~L0"
-        varchar   expression_after
+        varchar   expression_before "원본 발화사다리: 신규 L4/L3/L2/L0, legacy L1 허용"
+        varchar   expression_after "조회·집계 시 legacy L1은 L2로 해석"
         varchar   hint_before "힌트사다리 H0~H3"
         varchar   hint_after
         varchar   response_category

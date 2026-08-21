@@ -1,5 +1,6 @@
 package com.mormi.backend.report;
 
+import com.mormi.backend.common.ExpressionLevels;
 import static com.mormi.backend.report.DiagnosticReportDtos.FactCategory.CONCEPT;
 import static com.mormi.backend.report.DiagnosticReportDtos.FactCategory.EXPLANATION;
 import static com.mormi.backend.report.DiagnosticReportDtos.FactCategory.IMPROVED;
@@ -419,7 +420,7 @@ public class DiagnosticReportService {
                     representative.taskId(),
                     conversation.completionOutcome(),
                     conversation.taskMaxHint(),
-                    representative.expressionLevel(),
+                    ExpressionLevels.canonicalForRead(representative.expressionLevel()),
                     safeMap(conversation.verifiedSlots()),
                     conversation.updatedAt()));
         }
@@ -556,7 +557,7 @@ public class DiagnosticReportService {
                                 "conversation:" + conversation.conversationId() + ":turn:" + turn.turnId(),
                                 turn.response(),
                                 turn.hintLevel(),
-                                turn.expressionLevel(),
+                                ExpressionLevels.canonicalForRead(turn.expressionLevel()),
                                 turn.createdAt()),
                         Set.copyOf(newlyVerified)));
             }

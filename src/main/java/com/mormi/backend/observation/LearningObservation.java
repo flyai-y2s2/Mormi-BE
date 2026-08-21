@@ -77,7 +77,7 @@ public class LearningObservation {
     @Column(name = "bottleneck_candidate", length = 60)
     private String bottleneckCandidate;
 
-    /** 발화사다리 L4~L0. 힌트사다리와 독립적으로 움직인다. */
+    /** 발화사다리 원본. 신규 값은 L4/L3/L2/L0이며 과거 L1도 원본 그대로 보존한다. */
     @Column(name = "expression_before", length = 4)
     private String expressionBefore;
 

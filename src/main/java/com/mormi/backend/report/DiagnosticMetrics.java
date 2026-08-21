@@ -1,5 +1,6 @@
 package com.mormi.backend.report;
 
+import com.mormi.backend.common.ExpressionLevels;
 import static com.mormi.backend.report.DiagnosticReportDtos.FactCategory.CONCEPT;
 import static com.mormi.backend.report.DiagnosticReportDtos.FactCategory.EXPLANATION;
 import static com.mormi.backend.report.DiagnosticReportDtos.FactCategory.LIFE;
@@ -112,7 +113,7 @@ final class DiagnosticMetrics {
                     point.supportedScore(),
                     point.attemptCount(),
                     point.questionCount(),
-                    point.expressionLevel(),
+                    ExpressionLevels.canonicalForRead(point.expressionLevel()),
                     index >= recentStart));
         }
         return List.copyOf(marked);
@@ -208,7 +209,7 @@ final class DiagnosticMetrics {
                         supportedTeachScore(evidence),
                         null,
                         null,
-                        evidence.expressionLevel(),
+                        ExpressionLevels.canonicalForRead(evidence.expressionLevel()),
                         false));
     }
 
