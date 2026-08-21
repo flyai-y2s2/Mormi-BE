@@ -1,6 +1,6 @@
 package com.mormi.backend.session;
 
-import com.mormi.backend.auth.LearnerPrincipal;
+import com.mormi.backend.auth.AccountPrincipal;
 import com.mormi.backend.session.SessionDtos.CompleteSessionRequest;
 import com.mormi.backend.session.SessionDtos.CompleteSessionResponse;
 import com.mormi.backend.session.SessionDtos.RecordAttemptRequest;
@@ -32,32 +32,32 @@ public class LearningSessionController {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     public StartSessionResponse start(
-            @AuthenticationPrincipal LearnerPrincipal principal,
+            @AuthenticationPrincipal AccountPrincipal principal,
             @Valid @RequestBody StartSessionRequest request) {
-        return learningSessionService.start(principal.learnerId(), request);
+        return learningSessionService.start(principal.subjectId(), request);
     }
 
     @GetMapping("/{learningSessionId}")
     public SessionView get(
-            @AuthenticationPrincipal LearnerPrincipal principal,
+            @AuthenticationPrincipal AccountPrincipal principal,
             @PathVariable String learningSessionId) {
-        return learningSessionService.view(principal.learnerId(), learningSessionId);
+        return learningSessionService.view(principal.subjectId(), learningSessionId);
     }
 
     @PostMapping("/{learningSessionId}/attempts")
     @ResponseStatus(HttpStatus.CREATED)
     public RecordAttemptResponse recordAttempt(
-            @AuthenticationPrincipal LearnerPrincipal principal,
+            @AuthenticationPrincipal AccountPrincipal principal,
             @PathVariable String learningSessionId,
             @Valid @RequestBody RecordAttemptRequest request) {
-        return learningSessionService.recordAttempt(principal.learnerId(), learningSessionId, request);
+        return learningSessionService.recordAttempt(principal.subjectId(), learningSessionId, request);
     }
 
     @PostMapping("/{learningSessionId}/complete")
     public CompleteSessionResponse complete(
-            @AuthenticationPrincipal LearnerPrincipal principal,
+            @AuthenticationPrincipal AccountPrincipal principal,
             @PathVariable String learningSessionId,
             @Valid @RequestBody CompleteSessionRequest request) {
-        return learningSessionService.complete(principal.learnerId(), learningSessionId, request);
+        return learningSessionService.complete(principal.subjectId(), learningSessionId, request);
     }
 }

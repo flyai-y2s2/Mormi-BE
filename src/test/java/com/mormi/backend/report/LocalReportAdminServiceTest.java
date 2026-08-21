@@ -50,7 +50,7 @@ class LocalReportAdminServiceTest {
     }
 
     private Learner learner(long id, String displayName) {
-        Learner learner = Learner.create(displayName, "R-" + id, "token-hash");
+        Learner learner = Learner.register(displayName, "R-" + id, id);
         ReflectionTestUtils.setField(learner, "id", id);
         return learner;
     }

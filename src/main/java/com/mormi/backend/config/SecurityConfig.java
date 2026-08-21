@@ -1,7 +1,7 @@
 package com.mormi.backend.config;
 
+import com.mormi.backend.auth.AuthTokenFilter;
 import com.mormi.backend.auth.InternalServiceKeyFilter;
-import com.mormi.backend.auth.LearnerTokenFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -21,15 +21,15 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 @Configuration
 public class SecurityConfig {
 
-    private final LearnerTokenFilter learnerTokenFilter;
+    private final AuthTokenFilter authTokenFilter;
     private final InternalServiceKeyFilter internalServiceKeyFilter;
     private final List<String> allowedOrigins;
 
     public SecurityConfig(
-            LearnerTokenFilter learnerTokenFilter,
+            AuthTokenFilter authTokenFilter,
             InternalServiceKeyFilter internalServiceKeyFilter,
             @Value("${mormi.cors.allowed-origins:http://localhost:3000}") List<String> allowedOrigins) {
-        this.learnerTokenFilter = learnerTokenFilter;
+        this.authTokenFilter = authTokenFilter;
         this.internalServiceKeyFilter = internalServiceKeyFilter;
         this.allowedOrigins = allowedOrigins;
     }
@@ -49,23 +49,28 @@ public class SecurityConfig {
                             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
                             response.setCharacterEncoding(StandardCharsets.UTF_8.name());
                             response.getWriter().write(
-                                    "{\"code\":\"unauthorized\",\"message\":\"학습자 토큰이 필요합니다.\"}");
+                                    "{\"code\":\"unauthorized\",\"message\":\"인증 토큰이 필요합니다.\"}");
                         }))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/health").permitAll()
                         .requestMatchers(HttpMethod.POST, "/v1/auth/signup").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/v1/auth/educators/signup").permitAll()
                         .requestMatchers(HttpMethod.POST, "/v1/auth/login").permitAll()
-                        // 연구 코드 단독 온보딩. FE 전환 후 아래 두 줄과 함께 제거한다.
-                        .requestMatchers(HttpMethod.POST, "/v1/learners").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/v1/learners/auth").permitAll()
                         .requestMatchers(HttpMethod.GET, "/v1/local-report-admin/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/v1/local-report-admin/auth-attempt").permitAll()
-                        // 내부 서버 전용. 학습자 토큰이 아니라 서비스 키로만 통과한다.
+                        // 내부 서버 전용. 인증 토큰이 아니라 서비스 키로만 통과한다.
                         .requestMatchers("/internal/**")
                         .hasAuthority(InternalServiceKeyFilter.SERVICE_AUTHORITY)
+                        // 학습 경로는 아이 전용이다. 교사 토큰으로 부르면 403 이 된다.
+                        .requestMatchers(
+                                "/v1/learners/**", "/v1/learning-sessions/**", "/v1/cafe-visits/**",
+                                "/v1/dialogue/**", "/v1/progress", "/v1/themes", "/v1/reports/**")
+                        .hasRole("LEARNER")
+                        // 학급 관리는 교사 전용이다. 학생 토큰으로 부르면 403 이 된다.
+                        .requestMatchers("/v1/cohorts/**").hasRole("EDUCATOR")
                         .requestMatchers("/v1/**").authenticated()
                         .anyRequest().permitAll())
-                .addFilterBefore(learnerTokenFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(authTokenFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(internalServiceKeyFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }

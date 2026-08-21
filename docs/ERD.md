@@ -1,12 +1,13 @@
 # 데이터 모델과 학습자 격리
 
-`V1__init.sql` ~ `V11__star_notes.sql` 기준. 스키마를 바꾸면 이 문서도 같이 고친다.
+`V1__init.sql` ~ `V14__cohort_research_codes.sql` 기준. 스키마를 바꾸면 이 문서도 같이 고친다.
 
 ## ERD
 
 ```mermaid
 erDiagram
-    learners ||--o{ learner_tokens    : "id → learner_id"
+    accounts ||--o{ auth_tokens : "id → account_id"
+    accounts ||--|| learners    : "id → account_id (역할 learner)"
     learners ||--o{ learning_sessions : "id → learner_id"
     learners ||--o{ theme_progress    : "id → learner_id"
     learners ||--o{ cafe_visits       : "id → learner_id"
@@ -15,26 +16,32 @@ erDiagram
     learning_sessions ||--o{ reward_ledger : "id → learning_session_id (nullable)"
     cafe_visits       ||--o{ cafe_visit_stages : "id → cafe_visit_id"
 
-    learners {
+    accounts {
         bigserial id PK
-        varchar   display_name
-        varchar   research_code UK "연구 식별자. 인증에는 쓰지 않는다"
-        uuid      analytics_id  UK "PostHog 등 외부 분석용"
-        varchar   login_id      UK "로그인 아이디. 기존 학습자는 NULL"
-        varchar   password_hash "BCrypt 해시 60자"
-        varchar   token_hash    UK "deprecated. FE 전환 후 제거"
-        boolean   conversation_storage_consent
-        varchar   retention_policy
-        timestamptz onboarding_completed_at
+        varchar   login_id UK "학생·교사 공용 전역 유니크. 구 학습자는 legacy: 접두"
+        varchar   password_hash "BCrypt 해시 60자. 구 학습자는 !disabled (로그인 불가)"
+        varchar   role "learner | educator"
         timestamptz created_at
     }
 
-    learner_tokens {
+    auth_tokens {
         bigserial id PK
-        bigint    learner_id FK
+        bigint    account_id FK
         varchar   token_hash UK "액세스 토큰의 SHA-256 해시"
         timestamptz expires_at "발급 30일. 인증 성공 시 뒤로 밀린다"
         timestamptz revoked_at "로그아웃 시각. NULL 이면 살아 있다"
+        timestamptz created_at
+    }
+
+    learners {
+        bigserial id PK
+        bigint    account_id FK "UK. 로그인 정보는 accounts 가 관리"
+        varchar   display_name
+        varchar   research_code UK "연구 식별자. 인증에는 쓰지 않는다"
+        uuid      analytics_id  UK "PostHog 등 외부 분석용"
+        boolean   conversation_storage_consent
+        varchar   retention_policy
+        timestamptz onboarding_completed_at
         timestamptz created_at
     }
 
@@ -124,6 +131,9 @@ erDiagram
     learning_sessions ||--o{ learning_task_outcomes : "id → learning_session_id"
     organizations ||--o{ educators : "id → organization_id"
     organizations ||--o{ cohorts : "id → organization_id"
+    accounts ||--|| educators : "id → account_id (역할 educator, 구 명부 행은 NULL)"
+    cohorts ||--o{ cohort_research_codes : "id → cohort_id"
+    educators ||--o{ cohort_research_codes : "id → issued_by"
     cohorts ||--o{ learner_enrollments : "id → cohort_id"
     learners ||--o{ learner_enrollments : "id → learner_id"
     learners ||--o{ consent_records : "id → learner_id"
@@ -204,7 +214,7 @@ erDiagram
         varchar   policy_version "동의 문서 버전. 백필은 pilot-baseline"
         boolean   granted
         timestamptz collected_at
-        varchar   collected_by
+        varchar   collected_by "참여 번호를 발급한 교사 표식. 모르면 NULL"
         timestamptz withdrawn_at "철회는 행 삭제가 아니라 이 기록"
     }
 
@@ -234,13 +244,13 @@ erDiagram
 
 세 겹으로 막는다. 하나가 뚫려도 다음이 막는다.
 
-**1. 토큰이 학습자를 특정한다**
+**1. 토큰이 계정을, 계정이 학습자를 특정한다**
 
-`POST /v1/auth/login`이 로그인마다 다른 액세스 토큰을 발급하고, DB에는 해시만 남긴다(`learner_tokens.token_hash`, UNIQUE). 요청이 오면 `LearnerTokenFilter`가 `AuthService.authenticate()`에 넘기고, 거기서 토큰을 해시해 행을 찾은 뒤 폐기·만료 여부까지 확인해 `LearnerPrincipal`로 심는다. 토큰이 없거나 죽었으면 401이다.
+`POST /v1/auth/login`이 로그인마다 다른 액세스 토큰을 발급하고, DB에는 해시만 남긴다(`auth_tokens.token_hash`, UNIQUE). 요청이 오면 `AuthTokenFilter`가 `AuthService.authenticate()`에 넘기고, 거기서 토큰을 해시해 행을 찾은 뒤 폐기·만료 여부까지 확인해 `AccountPrincipal(accountId, role, subjectId, tokenId)`로 심는다. 토큰이 없거나 죽었으면 401이다. 계정 역할이 `ROLE_LEARNER`/`ROLE_EDUCATOR` 권한이 되어, 교사 토큰으로 학습 경로를 부르거나 학생 토큰으로 학급 경로를 부르면 403이다.
 
-행이 학습자당 여러 개일 수 있어 기기를 두 대 써도 서로를 밀어내지 않는다. 대신 로그아웃은 그 요청에 쓰인 토큰만(`LearnerPrincipal.tokenId`), 전체 로그아웃은 학습자의 모든 행을 폐기한다.
+행이 계정당 여러 개일 수 있어 기기를 두 대 써도 서로를 밀어내지 않는다. 대신 로그아웃은 그 요청에 쓰인 토큰만(`AccountPrincipal.tokenId`), 전체 로그아웃은 계정의 모든 행을 폐기한다.
 
-비밀번호는 BCrypt 해시(`password_hash`)로만 보관하고, 로그인 실패 응답은 아이디가 없을 때와 비밀번호가 틀릴 때가 같다. `research_code`는 연구 식별자로만 남고 인증에는 관여하지 않는다.
+비밀번호는 BCrypt 해시(`accounts.password_hash`)로만 보관하고, 로그인 실패 응답은 아이디가 없을 때와 비밀번호가 틀릴 때가 같다. `research_code`는 연구 식별자로만 남고 인증에는 관여하지 않는다. V13 이전에 연구 코드로만 온보딩한 학습자는 `legacy:` 접두 아이디와 `!disabled` 해시(BCrypt 형식이 아니라 어떤 비밀번호와도 매칭 불가)를 가진 계정이 채워져, 데이터는 남되 로그인 경로만 없다.
 
 **2. 컨트롤러는 클라이언트가 보낸 learner_id를 믿지 않는다**
 

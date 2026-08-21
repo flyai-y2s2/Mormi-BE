@@ -1,6 +1,6 @@
 package com.mormi.backend.starnote;
 
-import com.mormi.backend.auth.LearnerPrincipal;
+import com.mormi.backend.auth.AccountPrincipal;
 import com.mormi.backend.starnote.StarNoteDtos.StarNoteList;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -25,7 +25,7 @@ public class StarNoteController {
             @PathVariable Long learnerId,
             @RequestParam(required = false) Integer limit,
             @RequestParam(required = false) String cursor,
-            @AuthenticationPrincipal LearnerPrincipal principal) {
-        return starNoteQueryService.list(learnerId, principal.learnerId(), limit, cursor);
+            @AuthenticationPrincipal AccountPrincipal principal) {
+        return starNoteQueryService.list(learnerId, principal.subjectId(), limit, cursor);
     }
 }

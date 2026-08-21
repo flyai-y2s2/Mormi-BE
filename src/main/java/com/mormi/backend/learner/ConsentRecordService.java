@@ -21,16 +21,19 @@ public class ConsentRecordService {
         this.consentRecordRepository = consentRecordRepository;
     }
 
-    /** 학습자 생성 시점의 동의 상태를 기준선으로 남긴다. */
+    /**
+     * 학습자 생성 시점의 동의 상태를 기준선으로 남긴다.
+     * collectedBy 는 동의를 받은 교사·연구자 표식이며 모르면 null 로 남긴다.
+     */
     @Transactional
-    public void recordBaseline(Long learnerId, boolean granted) {
+    public void recordBaseline(Long learnerId, boolean granted, String collectedBy) {
         consentRecordRepository.save(ConsentRecord.collect(
                 learnerId, ConsentRecord.SCOPE_CONVERSATION_STORAGE,
-                CURRENT_POLICY_VERSION, granted, null));
+                CURRENT_POLICY_VERSION, granted, collectedBy));
     }
 
     @Transactional
-    public void recordChange(Long learnerId, boolean granted) {
+    public void recordChange(Long learnerId, boolean granted, String collectedBy) {
         ConsentRecord active = consentRecordRepository
                 .findFirstByLearnerIdAndScopeAndWithdrawnAtIsNullOrderByIdDesc(
                         learnerId, ConsentRecord.SCOPE_CONVERSATION_STORAGE)
@@ -43,6 +46,6 @@ public class ConsentRecordService {
         }
         consentRecordRepository.save(ConsentRecord.collect(
                 learnerId, ConsentRecord.SCOPE_CONVERSATION_STORAGE,
-                CURRENT_POLICY_VERSION, granted, null));
+                CURRENT_POLICY_VERSION, granted, collectedBy));
     }
 }

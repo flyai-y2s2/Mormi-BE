@@ -1,6 +1,6 @@
 package com.mormi.backend.progress;
 
-import com.mormi.backend.auth.LearnerPrincipal;
+import com.mormi.backend.auth.AccountPrincipal;
 import com.mormi.backend.progress.ProgressDtos.ProgressResponse;
 import com.mormi.backend.progress.ProgressDtos.ThemeView;
 import java.util.List;
@@ -20,12 +20,12 @@ public class ProgressController {
     }
 
     @GetMapping("/progress")
-    public ProgressResponse progress(@AuthenticationPrincipal LearnerPrincipal principal) {
-        return progressService.snapshot(principal.learnerId());
+    public ProgressResponse progress(@AuthenticationPrincipal AccountPrincipal principal) {
+        return progressService.snapshot(principal.subjectId());
     }
 
     @GetMapping("/themes")
-    public List<ThemeView> themes(@AuthenticationPrincipal LearnerPrincipal principal) {
-        return progressService.themes(principal.learnerId());
+    public List<ThemeView> themes(@AuthenticationPrincipal AccountPrincipal principal) {
+        return progressService.themes(principal.subjectId());
     }
 }

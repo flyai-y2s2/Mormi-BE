@@ -24,6 +24,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import com.mormi.backend.AuthTestSupport;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -131,13 +132,7 @@ class ReportSnapshotIntegrationTest {
 
     /** 시도 2건(오답→정답)을 남기고 완료까지 마친 학습자를 만든다. */
     private long 완료된_학습(String researchCode) throws Exception {
-        String learnerBody = mockMvc.perform(post("/v1/learners")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                Map.of("display_name", "스냅", "research_code", researchCode))))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
-        JsonNode learner = objectMapper.readTree(learnerBody);
+        JsonNode learner = AuthTestSupport.signupLearner(mockMvc, objectMapper, "스냅", researchCode);
         String token = learner.get("access_token").asString();
 
         String sessionBody = mockMvc.perform(post("/v1/learning-sessions")

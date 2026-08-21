@@ -13,14 +13,15 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 /**
- * 로그인 세션 한 건. 학습자당 여러 행이 존재할 수 있어 다기기 로그인을 지원한다.
+ * 로그인 세션 한 건. 계정당 여러 행이 존재할 수 있어 다기기 로그인을 지원한다.
+ * 학생·교사 구분 없이 이 테이블 하나가 토큰을 관리하고, 역할은 계정이 갖는다.
  * 토큰 평문은 발급 응답에만 실리고 여기에는 SHA-256 해시만 남는다.
  */
 @Entity
-@Table(name = "learner_tokens")
+@Table(name = "auth_tokens")
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-public class LearnerToken {
+public class AuthToken {
 
     /** 파일럿은 리프레시 토큰 쌍 없이 만료 30일 + 슬라이딩 갱신으로 운영한다. */
     public static final Duration TTL = Duration.ofDays(30);
@@ -35,8 +36,8 @@ public class LearnerToken {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "learner_id", nullable = false, updatable = false)
-    private Long learnerId;
+    @Column(name = "account_id", nullable = false, updatable = false)
+    private Long accountId;
 
     @Column(name = "token_hash", nullable = false, length = 64, updatable = false)
     private String tokenHash;
@@ -50,14 +51,14 @@ public class LearnerToken {
     @Column(name = "created_at", nullable = false, updatable = false, insertable = false)
     private OffsetDateTime createdAt;
 
-    private LearnerToken(Long learnerId, String tokenHash, OffsetDateTime expiresAt) {
-        this.learnerId = learnerId;
+    private AuthToken(Long accountId, String tokenHash, OffsetDateTime expiresAt) {
+        this.accountId = accountId;
         this.tokenHash = tokenHash;
         this.expiresAt = expiresAt;
     }
 
-    public static LearnerToken issue(Long learnerId, String tokenHash, OffsetDateTime now) {
-        return new LearnerToken(learnerId, tokenHash, now.plus(TTL));
+    public static AuthToken issue(Long accountId, String tokenHash, OffsetDateTime now) {
+        return new AuthToken(accountId, tokenHash, now.plus(TTL));
     }
 
     /** 폐기되지 않았고 만료 전이어야 인증에 쓸 수 있다. */

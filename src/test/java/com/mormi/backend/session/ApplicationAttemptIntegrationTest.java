@@ -18,6 +18,7 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import com.mormi.backend.AuthTestSupport;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -120,13 +121,7 @@ class ApplicationAttemptIntegrationTest {
     }
 
     private 학습 학습을_시작한다(String researchCode) throws Exception {
-        String learnerBody = mockMvc.perform(post("/v1/learners")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                Map.of("display_name", "적용", "research_code", researchCode))))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
-        JsonNode learner = objectMapper.readTree(learnerBody);
+        JsonNode learner = AuthTestSupport.signupLearner(mockMvc, objectMapper, "적용", researchCode);
         String token = learner.get("access_token").asString();
 
         String sessionBody = mockMvc.perform(post("/v1/learning-sessions")

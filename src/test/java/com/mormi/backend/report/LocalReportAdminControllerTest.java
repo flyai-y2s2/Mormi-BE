@@ -6,7 +6,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import com.mormi.backend.auth.LearnerPrincipal;
+import com.mormi.backend.auth.Account;
+import com.mormi.backend.auth.AccountPrincipal;
 import com.mormi.backend.common.ApiException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.LocalDate;
@@ -80,7 +81,8 @@ class LocalReportAdminControllerTest {
         DiagnosticReportController authenticatedController = new DiagnosticReportController(authenticatedService);
         LocalDate monday = LocalDate.of(2026, 8, 17);
 
-        authenticatedController.current(new LearnerPrincipal(7L, 101L), monday);
+        authenticatedController.current(
+                new AccountPrincipal(70L, Account.ROLE_LEARNER, 7L, 101L), monday);
 
         verify(authenticatedService).current(7L, monday);
     }

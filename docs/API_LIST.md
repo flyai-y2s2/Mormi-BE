@@ -21,20 +21,26 @@
 
 ## 1. Mormi-BE (Spring Boot) — 구현 완료
 
-인증: `Authorization: Bearer <learner token>`.
+인증: `Authorization: Bearer <access token>`.
 보상 계산, 정오 판정, 해금 판정은 **전부 서버가 확정**합니다. 프런트는 표시만 합니다.
+
+계정은 학생·교사 공용 `accounts` 하나입니다. **로그인은 하나로 합치고, 가입만 나눕니다.**
+학습 경로(`/v1/learners` `/v1/learning-sessions` `/v1/cafe-visits` `/v1/dialogue`
+`/v1/progress` `/v1/themes` `/v1/reports`)는 학생 토큰 전용, 학급 경로(`/v1/cohorts`)는
+교사 토큰 전용이며 역할이 다른 토큰으로 부르면 403 입니다.
 
 ### A. 인증
 
 | Method | Path | 인증 | 설명 |
 |---|---|---|---|
-| `POST` | `/v1/auth/signup` | — | 회원가입. 201 + `access_token` |
-| `POST` | `/v1/auth/login` | — | 로그인. 200 + `access_token` |
+| `POST` | `/v1/auth/signup` | — | 학생 회원가입. 201 + `access_token` |
+| `POST` | `/v1/auth/educators/signup` | — | 교사 회원가입. 201 + `access_token` |
+| `POST` | `/v1/auth/login` | — | 통합 로그인. 200 + `role` 로 도착지 분기 |
 | `POST` | `/v1/auth/logout` | ✓ | 현재 기기의 토큰만 폐기. 204 |
-| `POST` | `/v1/auth/logout-all` | ✓ | 해당 학습자의 모든 토큰 폐기. 204 |
+| `POST` | `/v1/auth/logout-all` | ✓ | 해당 계정의 모든 토큰 폐기. 204 |
 
 ```jsonc
-// POST /v1/auth/signup
+// POST /v1/auth/signup — 학생
 {
   "display_name": "민준", "research_code": "MORMI-A03",
   "login_id": "minjun01", "password": "pilot1234"
@@ -47,17 +53,36 @@
   "access_token": "KMw_gyMdWRtm..."
 }
 
-// POST /v1/auth/login
+// POST /v1/auth/educators/signup — 교사. 기관 이름이 정확히 같으면 같은 기관에 합류
+{
+  "organization_name": "모르미초등학교", "display_name": "김교사",
+  "position": "교사",                 // 교사 | 연구자
+  "login_id": "teacher01", "password": "pilot1234"
+}
+// 201
+{
+  "id": 1, "display_name": "김교사", "position": "교사",
+  "organization_id": 1, "organization_name": "모르미초등학교",
+  "access_token": "wJq3xhJdiA..."
+}
+
+// POST /v1/auth/login — 학생·교사 공용
 { "login_id": "minjun01", "password": "pilot1234" }
-// 200 — 응답 본문은 signup 과 같습니다.
+// 200 — role 에 맞는 쪽(learner 또는 educator)만 채워진다
+{
+  "role": "learner",                 // learner -> /   educator -> /teacher/cohorts
+  "access_token": "KMw_gyMdWRtm...",
+  "learner": { "id": 1, "display_name": "민준", "research_code": "MORMI-A03", "...": "..." }
+}
 ```
 
-- `login_id` 는 영숫자 4~20자, `password` 는 8자 이상입니다. 비밀번호는 BCrypt 해시만 보관합니다.
+- `login_id` 는 영숫자 4~20자로 학생·교사 공용 전역 유니크, `password` 는 8자 이상입니다. 비밀번호는 BCrypt 해시만 보관합니다.
 - **아이디가 없을 때와 비밀번호가 틀릴 때의 응답이 같습니다.** 가입 여부를 떠볼 수 없게 하기 위함이며, 프런트는 두 경우를 구분해 안내할 수 없습니다.
 - **로그인해도 기존 토큰이 죽지 않습니다.** 태블릿과 보호자 휴대폰을 동시에 쓸 수 있습니다.
-- 토큰은 평문 저장하지 않고 SHA-256 해시만 `learner_tokens` 에 보관합니다. 만료는 발급 30일이며 인증에 성공할 때마다 뒤로 밀립니다.
-- `logout` 은 그 요청에 쓰인 토큰만, `logout-all` 은 해당 학습자의 모든 토큰을 폐기합니다. 폐기된 토큰은 즉시 401 입니다.
-- `research_code` 는 연구 식별자 전용이며 인증에 관여하지 않습니다.
+- 토큰은 평문 저장하지 않고 SHA-256 해시만 `auth_tokens` 에 보관합니다. 만료는 발급 30일이며 인증에 성공할 때마다 뒤로 밀립니다.
+- `logout` 은 그 요청에 쓰인 토큰만, `logout-all` 은 해당 계정의 모든 토큰을 폐기합니다. 폐기된 토큰은 즉시 401 입니다.
+- `research_code` 는 연구 식별자 전용이며 인증에 관여하지 않습니다. 교사가 사전 발급한
+  참여 번호로 가입하면 그 학급에 자동 재적됩니다 (B-2 절).
 
 ### B. 학습자
 
@@ -66,11 +91,43 @@
 | `GET` | `/v1/learners/{learner_id}` | ✓ | 프로필 조회 (본인만) |
 | `PATCH` | `/v1/learners/me/conversation-consent` | ✓ | 자유 발화 암호화 저장 동의·보존기간 변경 |
 | `GET` | `/v1/learners/{learner_id}/star-notes` | ✓ | 별노트 목록 (본인만). 상세는 G-3 |
-| ~~`POST`~~ | ~~`/v1/learners`~~ | — | **deprecated.** 연구 코드 온보딩. `/v1/auth/signup` 을 씁니다 |
-| ~~`POST`~~ | ~~`/v1/learners/auth`~~ | — | **deprecated.** 연구 코드 복구. `/v1/auth/login` 을 씁니다 |
 
 - `display_name` 은 화면 표시 전용. PostHog 와 AI 프롬프트에는 `analytics_id` 만 씁니다.
-- deprecated 두 경로는 FE 전환 기간에만 유지하며, 토큰은 새 경로와 똑같이 `learner_tokens` 에 발급됩니다. FE 전환이 끝나면 별도 PR 로 제거합니다.
+- 구 연구 코드 온보딩(`POST /v1/learners`, `POST /v1/learners/auth`)은 **제거됐습니다.**
+  V13 이전에 그 경로로만 온보딩한 학습자는 로그인 수단이 없어 접근이 끊기지만,
+  행과 학습 기록은 연구 산출물로 남습니다.
+
+### B-2. 학급 (교사 전용)
+
+| Method | Path | 인증 | 설명 |
+|---|---|---|---|
+| `POST` | `/v1/cohorts` | 교사 | 학급 생성. `class_code` 는 서버가 발급 |
+| `GET` | `/v1/cohorts` | 교사 | 내 기관의 학급 목록 |
+| `POST` | `/v1/cohorts/{id}/research-codes` | 교사 | 참여 번호 사전 발급 (최대 50개) |
+| `GET` | `/v1/cohorts/{id}/learners` | 교사 | 재적 중인 아이 목록 |
+| `GET` | `/v1/cohorts/{id}/reports` | 교사 | 학급 리포트. `?from=&to=` 없으면 최근 7일 |
+
+```jsonc
+// POST /v1/cohorts
+{ "name": "1반" }
+// 201
+{ "id": 1, "name": "1반", "class_code": "TQ7M3K", "organization_id": 1, "created_at": "..." }
+
+// POST /v1/cohorts/1/research-codes
+{ "codes": ["MORMI-A03", "MORMI-A04"] }
+// 201 — learner_id 가 있으면 이미 가입한 아이가 소급 재적된 것
+[ { "code": "MORMI-A03", "learner_id": 7 }, { "code": "MORMI-A04" } ]
+
+// GET /v1/cohorts/1/learners
+[ { "id": 7, "display_name": "민준", "research_code": "MORMI-A03", "enrolled_at": "..." } ]
+```
+
+- **아이 가입 폼은 그대로입니다.** 교사가 참여 번호를 미리 발급하고, 아이는 지금처럼 그 번호를
+  입력합니다. 서버가 발급 장부(`cohort_research_codes`)에서 학급을 찾아 재적시킵니다.
+- 모든 학급 API 는 요청 교사가 그 학급의 **기관 소속인지 검증**합니다. 다른 기관은 403.
+- 이미 발급된 참여 번호를 다시 발급하면 409 `research_code_issued`.
+- 학급 리포트 본문은 `report_snapshots` 집계(학습자 섹션 모음)이며 LLM 을 쓰지 않습니다.
+  재적 중인 아이가 없으면 404.
 
 ### C. 진행도 / 해금
 
@@ -531,7 +588,7 @@ AI에서 처리가 끝났지만 응답만 유실된 경우도 있으므로, FE�
 ## 3. Mormi-FE 연동 원칙
 
 연동 완료:
-- 온보딩에서 이름 + 참여 번호 → `POST /v1/learners` → 토큰 보관
+- 가입에서 이름 + 참여 번호 + 아이디·비밀번호 → `POST /v1/auth/signup` → 토큰 보관
 - 부팅 시 `GET /v1/progress` 로 상태 복구
 - 드릴 정답·오답 전건 `POST .../attempts`
 - 세션 종료 `POST .../complete` → 지갑·완료목록·해금을 서버 응답으로 갱신
@@ -544,14 +601,19 @@ AI에서 처리가 끝났지만 응답만 유실된 경우도 있으므로, FE�
 
 ---
 
-## 4. DB 스키마 (`V1__init.sql` ~ `V5__learner_accounts.sql`)
+## 4. DB 스키마 (인증·학습 핵심 테이블, `V14` 기준)
 
 ```
-learners             id, display_name, research_code UNIQUE, analytics_id UUID UNIQUE,
-                     login_id UNIQUE, password_hash, conversation_storage_consent,
+accounts             id, login_id UNIQUE, password_hash, role(learner|educator), created_at
+auth_tokens          id, account_id, token_hash UNIQUE, expires_at, revoked_at, created_at
+learners             id, account_id UNIQUE, display_name, research_code UNIQUE,
+                     analytics_id UUID UNIQUE, conversation_storage_consent,
                      retention_policy, onboarding_completed_at, created_at
-                     token_hash 은 deprecated. FE 전환 후 제거
-learner_tokens       id, learner_id, token_hash UNIQUE, expires_at, revoked_at, created_at
+organizations        id, name, created_at
+educators            id, organization_id, account_id UNIQUE, display_name, role(직위), created_at
+cohorts              id, organization_id, name, class_code UNIQUE, created_at
+cohort_research_codes id, cohort_id, code UNIQUE, issued_by(educator), created_at
+learner_enrollments  id, learner_id, cohort_id, enrolled_at, left_at
 learning_sessions    id, public_id UNIQUE, learner_id, curriculum_session_id, variant_seed,
                      scaffold_level, elapsed_seconds, transfer_solved, timed_out,
                      conversation_id, practice_result_id, started_at, completed_at
@@ -572,7 +634,8 @@ dialogue_conversations id, conversation_id UNIQUE, learner_id,
                      scenario_context JSONB, created_at
 ```
 
-- 로그인 세션은 `learner_tokens` 에 행 단위로 쌓입니다. 학습자당 여러 행이 살아 있을 수 있어 다기기 로그인이 되고, 로그아웃은 행을 지우지 않고 `revoked_at` 을 남깁니다.
+- 로그인 세션은 `auth_tokens` 에 행 단위로 쌓입니다. 계정당 여러 행이 살아 있을 수 있어 다기기 로그인이 되고, 로그아웃은 행을 지우지 않고 `revoked_at` 을 남깁니다.
+- 계정은 `accounts` 하나로 전역 유니크입니다. 학생·교사 프로필이 `account_id` 로 계정을 가리키며, 역할별 토큰 테이블은 없습니다.
 - 지갑 잔액은 별도 컬럼 없이 `reward_ledger` 합계로 도출합니다.
 - 아동 데이터 테이블에는 `learner_id` 인덱스가 있습니다.
 - 아이 이름·자유 발화 원문·음성은 저장하지 않습니다. 대화 원문은 Mormi-AI 가 암호화 보관합니다.
@@ -618,4 +681,4 @@ DB_USERNAME=mormi DB_PASSWORD=mormi ./gradlew bootRun
 | 4 | 별노트 저장 주체 | AI 가 생성·발행하고 **Spring 이 서비스 원장(`star_notes`)을 소유** (이슈 #12, G-3 참조). FE 는 Spring 목록 API 만 사용 |
 | 4-1 | 별노트 → BE 이벤트 계약 | **확정.** `star_note_created` 이벤트로 수집 (G-3). `learning_task_outcomes.star_note_*` 컬럼은 원장에서 파생해 연결됨 (이슈 #14, G-3 "과제 집계 연결" 참조) |
 | 5 | `conversation_storage_consent` 관리 주체 | Spring `learners` 및 동의 변경 API. AI가 실제 암호화·삭제 수행 |
-| 6 | 참여 번호 발급 방식 | 연구자가 사전 발급해 전달하는 것으로 가정 |
+| 6 | 참여 번호 발급 방식 | **확정.** 교사가 학급 화면(`POST /v1/cohorts/{id}/research-codes`)에서 사전 발급해 전달. 아이 가입 시 자동 재적 (이슈 #17, B-2 참조) |

@@ -49,13 +49,7 @@ class LearningFlowIntegrationTest {
     ObjectMapper objectMapper;
 
     private JsonNode createLearner(String name, String code) throws Exception {
-        String body = mockMvc.perform(post("/v1/learners")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                Map.of("display_name", name, "research_code", code))))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
-        return objectMapper.readTree(body);
+        return AuthTestSupport.signupLearner(mockMvc, objectMapper, name, code);
     }
 
     @Test
@@ -78,18 +72,22 @@ class LearningFlowIntegrationTest {
     }
 
     @Test
-    void 같은_연구코드로_다시_들어오면_진행도가_이어진다() throws Exception {
+    void 같은_아이디로_다시_로그인하면_진행도가_이어진다() throws Exception {
         JsonNode created = createLearner("서연", "MORMI-A03");
         long learnerId = created.get("id").asLong();
 
-        // 기기를 바꿔 코드만으로 복구
-        String restored = mockMvc.perform(post("/v1/learners/auth")
+        // 기기를 바꿔 아이디·비밀번호로 다시 로그인
+        String restored = mockMvc.perform(post("/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of("research_code", "MORMI-A03"))))
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "login_id", AuthTestSupport.loginId("MORMI-A03"),
+                                "password", AuthTestSupport.PASSWORD))))
                 .andExpect(status().isOk())
                 .andReturn().getResponse().getContentAsString();
 
-        assertThat(objectMapper.readTree(restored).get("id").asLong()).isEqualTo(learnerId);
+        JsonNode login = objectMapper.readTree(restored);
+        assertThat(login.get("role").asString()).isEqualTo("learner");
+        assertThat(login.get("learner").get("id").asLong()).isEqualTo(learnerId);
     }
 
     @Test
@@ -186,7 +184,7 @@ class LearningFlowIntegrationTest {
 
     @Test
     void 메뉴_예산은_7000원과_8000원이_공식이고_기존_저장분_9000원_10000원도_한시_허용한다() throws Exception {
-        String token = "Bearer " + createLearner("소민", "MORMI-C03").get("access_token").asText();
+        String token = "Bearer " + createLearner("소민", "MORMI-C04").get("access_token").asText();
         for (String sessionKey : CurriculumCatalog.CAFE_REQUIRED_SESSION_IDS) {
             completeSession(token, sessionKey);
         }

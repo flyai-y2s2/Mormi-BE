@@ -11,6 +11,9 @@ public interface LearnerEnrollmentRepository extends JpaRepository<LearnerEnroll
 
     List<LearnerEnrollment> findByLearnerIdOrderByIdAsc(Long learnerId);
 
+    /** 소급 재적 시 중복 행을 막는다. 나갔다 돌아온 아이는 새 행으로 재적된다. */
+    boolean existsByLearnerIdAndCohortIdAndLeftAtIsNull(Long learnerId, Long cohortId);
+
     /** 학급 단위 파일럿 조회의 기본 질의. 나간 아이는 제외한다. */
     @Query("""
             SELECT e.learnerId FROM LearnerEnrollment e

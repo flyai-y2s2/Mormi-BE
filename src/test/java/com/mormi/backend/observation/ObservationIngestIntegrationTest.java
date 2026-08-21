@@ -20,6 +20,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import com.mormi.backend.AuthTestSupport;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -188,13 +189,7 @@ class ObservationIngestIntegrationTest {
 
     /** 학습자·세션은 API 로 만들고, 대화 소유권 행만 직접 넣는다. */
     private String 대화를_만든다(String researchCode, String conversationId) throws Exception {
-        String learnerBody = mockMvc.perform(post("/v1/learners")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(
-                                Map.of("display_name", "관찰", "research_code", researchCode))))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
-        JsonNode learner = objectMapper.readTree(learnerBody);
+        JsonNode learner = AuthTestSupport.signupLearner(mockMvc, objectMapper, "관찰", researchCode);
 
         String sessionBody = mockMvc.perform(post("/v1/learning-sessions")
                         .header("Authorization", "Bearer " + learner.get("access_token").asString())
