@@ -1,6 +1,7 @@
 package com.mormi.backend.progress;
 
 import com.mormi.backend.cafe.CafeVisitRepository;
+import com.mormi.backend.curriculum.AmusementParkCatalog;
 import com.mormi.backend.curriculum.CurriculumCatalog;
 import com.mormi.backend.learner.Learner;
 import com.mormi.backend.learner.LearnerService;
@@ -81,6 +82,8 @@ public class ProgressService {
         List<String> remaining = CurriculumCatalog.CAFE_REQUIRED_SESSION_IDS.stream()
                 .filter(id -> !completed.contains(id))
                 .toList();
+        // 놀이동산 해금 조건은 세션 목록이 아니라 카페 완료라서 필수 세션 목록이 비어 있다.
+        boolean parkUnlocked = themeProgressService.syncAmusementParkUnlock(learnerId);
 
         return List.of(
                 new ThemeView("home", "집", true, List.of(), List.of()),
@@ -89,6 +92,12 @@ public class ProgressService {
                         "모르미 카페",
                         cafeUnlocked,
                         CurriculumCatalog.CAFE_REQUIRED_SESSION_IDS,
-                        remaining));
+                        remaining),
+                new ThemeView(
+                        AmusementParkCatalog.THEME_ID,
+                        "모르미 놀이동산",
+                        parkUnlocked,
+                        List.of(),
+                        List.of()));
     }
 }

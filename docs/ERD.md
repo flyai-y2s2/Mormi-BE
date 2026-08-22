@@ -1,6 +1,6 @@
 # 데이터 모델과 학습자 격리
 
-`V1__init.sql` ~ `V14__cohort_research_codes.sql` 기준. 스키마를 바꾸면 이 문서도 같이 고친다.
+`V1__init.sql` ~ `V15__amusement_park_visits.sql` 기준. 스키마를 바꾸면 이 문서도 같이 고친다.
 
 ## ERD
 
@@ -11,10 +11,12 @@ erDiagram
     learners ||--o{ learning_sessions : "id → learner_id"
     learners ||--o{ theme_progress    : "id → learner_id"
     learners ||--o{ cafe_visits       : "id → learner_id"
+    learners ||--o{ amusement_park_visits : "id → learner_id"
     learners ||--o{ reward_ledger     : "id → learner_id"
     learning_sessions ||--o{ attempts      : "id → learning_session_id"
     learning_sessions ||--o{ reward_ledger : "id → learning_session_id (nullable)"
     cafe_visits       ||--o{ cafe_visit_stages : "id → cafe_visit_id"
+    amusement_park_visits ||--o{ amusement_park_visit_stages : "id → park_visit_id"
 
     accounts {
         bigserial id PK
@@ -104,6 +106,27 @@ erDiagram
         boolean   is_correct
         integer   elapsed_ms
         jsonb     payload "화폐별 개수, 메뉴 id 등"
+        timestamptz created_at
+    }
+
+    amusement_park_visits {
+        bigserial id PK
+        varchar   public_id UK
+        bigint    learner_id FK
+        varchar   stage "ticket|snack_split|pass_break_even|complete"
+        jsonb     facts "방문 시작 시 고정된 가격·인원. 같은 방문에서 바뀌지 않는다"
+        timestamptz started_at
+        timestamptz completed_at
+    }
+
+    amusement_park_visit_stages {
+        bigserial id PK
+        bigint    park_visit_id FK
+        varchar   stage
+        integer   attempt_no
+        boolean   is_correct
+        integer   elapsed_ms
+        jsonb     payload "주어진 값, 아이가 구한 값, 서버 정답"
         timestamptz created_at
     }
 
@@ -236,7 +259,7 @@ erDiagram
 - `report_snapshots` 는 반대로 불변이다. 생성 시점의 근거 ID 를 고정해 교사가 승인한 리포트의 근거가 나중에 바뀌지 않게 한다.
 - 집계·리포트의 불리언 NULL 은 전부 '수집 안 됨'이다. false(근거를 보고 아니라고 판단)와 다르며, 화면·분석에서 0/false 로 합치면 안 된다.
 
-`attempts`와 `cafe_visit_stages`에는 `learner_id`가 없다. 각각 부모(`learning_sessions`, `cafe_visits`)를 통해서만 도달하고, 그 부모가 학습자에 묶여 있다.
+`attempts`, `cafe_visit_stages`, `amusement_park_visit_stages`에는 `learner_id`가 없다. 각각 부모(`learning_sessions`, `cafe_visits`, `amusement_park_visits`)를 통해서만 도달하고, 그 부모가 학습자에 묶여 있다.
 
 지갑 잔액 컬럼은 없다. `reward_ledger`의 합계로 도출한다(`RewardLedgerRepository.sumAmountByLearnerId`). 잔액을 따로 들고 있으면 원장과 어긋날 수 있어서다.
 

@@ -18,6 +18,9 @@ public interface DialogueConversationRepository extends JpaRepository<DialogueCo
     Optional<DialogueConversation> findFirstByCafeVisitIdAndScenarioIdOrderByRoundDesc(
             Long cafeVisitId, String scenarioId);
 
+    Optional<DialogueConversation> findFirstByParkVisitIdAndScenarioIdOrderByRoundDesc(
+            Long parkVisitId, String scenarioId);
+
     /** 네트워크 재시도로 중복 도착한 시작 요청을 이미 만든 회차로 되돌린다. */
     Optional<DialogueConversation> findByLearnerIdAndRequestId(Long learnerId, String requestId);
 }

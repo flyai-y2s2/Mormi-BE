@@ -64,7 +64,8 @@ public class SecurityConfig {
                         // 학습 경로는 아이 전용이다. 교사 토큰으로 부르면 403 이 된다.
                         .requestMatchers(
                                 "/v1/learners/**", "/v1/learning-sessions/**", "/v1/cafe-visits/**",
-                                "/v1/dialogue/**", "/v1/progress", "/v1/themes", "/v1/reports/**")
+                                "/v1/amusement-park-visits/**", "/v1/dialogue/**", "/v1/progress",
+                                "/v1/themes", "/v1/reports/**")
                         .hasRole("LEARNER")
                         // 학급 관리는 교사 전용이다. 학생 토큰으로 부르면 403 이 된다.
                         .requestMatchers("/v1/cohorts/**").hasRole("EDUCATOR")

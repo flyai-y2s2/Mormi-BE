@@ -2,6 +2,7 @@ package com.mormi.backend.dialogue;
 
 import com.mormi.backend.auth.AccountPrincipal;
 import com.mormi.backend.dialogue.DialogueDtos.StartCafeDialogueRequest;
+import com.mormi.backend.dialogue.DialogueDtos.StartParkDialogueRequest;
 import com.mormi.backend.dialogue.DialogueDtos.StartTeachingRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -40,6 +41,15 @@ public class DialogueController {
             @PathVariable String visitId,
             @Valid @RequestBody StartCafeDialogueRequest request) {
         return dialogueService.startCafeDialogue(principal.subjectId(), visitId, request);
+    }
+
+    @PostMapping("/v1/amusement-park-visits/{visitId}/dialogues")
+    @ResponseStatus(HttpStatus.CREATED)
+    public Object startParkDialogue(
+            @AuthenticationPrincipal AccountPrincipal principal,
+            @PathVariable String visitId,
+            @Valid @RequestBody StartParkDialogueRequest request) {
+        return dialogueService.startParkDialogue(principal.subjectId(), visitId, request);
     }
 
     @GetMapping("/v1/dialogue/conversations/{conversationId}")

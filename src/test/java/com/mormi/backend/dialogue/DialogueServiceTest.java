@@ -10,6 +10,8 @@ import static org.mockito.Mockito.when;
 
 import com.mormi.backend.cafe.CafeVisitRepository;
 import com.mormi.backend.cafe.CafeVisit;
+import com.mormi.backend.amusementpark.AmusementParkService;
+import com.mormi.backend.amusementpark.AmusementParkVisitRepository;
 import com.mormi.backend.cafe.CafeService;
 import com.mormi.backend.cafe.CafeStage;
 import com.mormi.backend.cafe.CafeDtos.CafeContext;
@@ -57,6 +59,8 @@ class DialogueServiceTest {
                 attemptRepository,
                 cafeVisitRepository,
                 cafeService,
+                mock(AmusementParkVisitRepository.class),
+                mock(AmusementParkService.class),
                 learnerService,
                 rewardService);
 
@@ -128,6 +132,8 @@ class DialogueServiceTest {
                 attemptRepository,
                 cafeVisitRepository,
                 cafeService,
+                mock(AmusementParkVisitRepository.class),
+                mock(AmusementParkService.class),
                 learnerService,
                 rewardService);
 
@@ -180,6 +186,8 @@ class DialogueServiceTest {
                 mock(AttemptRepository.class),
                 cafeVisitRepository,
                 mock(CafeService.class),
+                mock(AmusementParkVisitRepository.class),
+                mock(AmusementParkService.class),
                 learnerService,
                 mock(RewardService.class));
 
@@ -226,6 +234,8 @@ class DialogueServiceTest {
                 mock(AttemptRepository.class),
                 cafeVisitRepository,
                 mock(CafeService.class),
+                mock(AmusementParkVisitRepository.class),
+                mock(AmusementParkService.class),
                 mock(LearnerService.class),
                 mock(RewardService.class));
 
@@ -266,6 +276,8 @@ class DialogueServiceTest {
                 mock(AttemptRepository.class),
                 cafeVisitRepository,
                 mock(CafeService.class),
+                mock(AmusementParkVisitRepository.class),
+                mock(AmusementParkService.class),
                 learnerService,
                 mock(RewardService.class));
 
@@ -337,6 +349,8 @@ class DialogueServiceTest {
                 mock(AttemptRepository.class),
                 cafeVisitRepository,
                 cafeService,
+                mock(AmusementParkVisitRepository.class),
+                mock(AmusementParkService.class),
                 mock(LearnerService.class),
                 mock(RewardService.class));
 
@@ -398,6 +412,8 @@ class DialogueServiceTest {
                 mock(AttemptRepository.class),
                 cafeVisitRepository,
                 mock(CafeService.class),
+                mock(AmusementParkVisitRepository.class),
+                mock(AmusementParkService.class),
                 learnerService,
                 mock(RewardService.class));
 
@@ -456,6 +472,8 @@ class DialogueServiceTest {
                 mock(AttemptRepository.class),
                 cafeVisitRepository,
                 mock(CafeService.class),
+                mock(AmusementParkVisitRepository.class),
+                mock(AmusementParkService.class),
                 mock(LearnerService.class),
                 mock(RewardService.class));
 
@@ -504,6 +522,8 @@ class DialogueServiceTest {
                 mock(AttemptRepository.class),
                 cafeVisitRepository,
                 mock(CafeService.class),
+                mock(AmusementParkVisitRepository.class),
+                mock(AmusementParkService.class),
                 mock(LearnerService.class),
                 mock(RewardService.class));
 
@@ -546,6 +566,8 @@ class DialogueServiceTest {
                 mock(AttemptRepository.class),
                 mock(CafeVisitRepository.class),
                 mock(CafeService.class),
+                mock(AmusementParkVisitRepository.class),
+                mock(AmusementParkService.class),
                 mock(LearnerService.class),
                 mock(RewardService.class));
 
@@ -581,6 +603,8 @@ class DialogueServiceTest {
                 attemptRepository,
                 mock(CafeVisitRepository.class),
                 mock(CafeService.class),
+                mock(AmusementParkVisitRepository.class),
+                mock(AmusementParkService.class),
                 learnerService,
                 rewardService);
 
@@ -732,6 +756,8 @@ class DialogueServiceTest {
                 mock(AttemptRepository.class),
                 cafeVisitRepository,
                 mock(CafeService.class),
+                mock(AmusementParkVisitRepository.class),
+                mock(AmusementParkService.class),
                 mock(LearnerService.class),
                 mock(RewardService.class));
 
@@ -762,6 +788,8 @@ class DialogueServiceTest {
                 attemptRepository,
                 cafeVisitRepository,
                 cafeService,
+                mock(AmusementParkVisitRepository.class),
+                mock(AmusementParkService.class),
                 learnerService,
                 rewardService);
 
