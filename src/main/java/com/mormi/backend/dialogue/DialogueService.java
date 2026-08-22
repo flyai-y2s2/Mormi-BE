@@ -1,5 +1,9 @@
 package com.mormi.backend.dialogue;
 
+import com.mormi.backend.amusementpark.AmusementParkService;
+import com.mormi.backend.amusementpark.AmusementParkStage;
+import com.mormi.backend.amusementpark.AmusementParkVisit;
+import com.mormi.backend.amusementpark.AmusementParkVisitRepository;
 import com.mormi.backend.cafe.CafeProblemContract;
 import com.mormi.backend.cafe.CafeStage;
 import com.mormi.backend.cafe.CafeService;
@@ -14,8 +18,12 @@ import com.mormi.backend.cafe.CafeDtos.QueueContext;
 import com.mormi.backend.cafe.CafeDtos.QueueRequest;
 import com.mormi.backend.cafe.CafeDtos.StageResultResponse;
 import com.mormi.backend.common.ApiException;
+import com.mormi.backend.curriculum.AmusementParkCatalog;
+import com.mormi.backend.curriculum.AmusementParkCatalog.Fact;
+import com.mormi.backend.curriculum.AmusementParkCatalog.StageContent;
 import com.mormi.backend.curriculum.CurriculumCatalog;
 import com.mormi.backend.dialogue.DialogueDtos.StartCafeDialogueRequest;
+import com.mormi.backend.dialogue.DialogueDtos.StartParkDialogueRequest;
 import com.mormi.backend.dialogue.DialogueDtos.StartTeachingRequest;
 import java.util.Objects;
 import com.mormi.backend.learner.Learner;
@@ -54,6 +62,8 @@ public class DialogueService {
     private final AttemptRepository attemptRepository;
     private final CafeVisitRepository cafeVisitRepository;
     private final CafeService cafeService;
+    private final AmusementParkVisitRepository parkVisitRepository;
+    private final AmusementParkService amusementParkService;
     private final LearnerService learnerService;
     private final RewardService rewardService;
 
@@ -64,6 +74,8 @@ public class DialogueService {
             AttemptRepository attemptRepository,
             CafeVisitRepository cafeVisitRepository,
             CafeService cafeService,
+            AmusementParkVisitRepository parkVisitRepository,
+            AmusementParkService amusementParkService,
             LearnerService learnerService,
             RewardService rewardService) {
         this.dialogueClient = dialogueClient;
@@ -72,6 +84,8 @@ public class DialogueService {
         this.attemptRepository = attemptRepository;
         this.cafeVisitRepository = cafeVisitRepository;
         this.cafeService = cafeService;
+        this.parkVisitRepository = parkVisitRepository;
+        this.amusementParkService = amusementParkService;
         this.learnerService = learnerService;
         this.rewardService = rewardService;
     }
@@ -209,6 +223,67 @@ public class DialogueService {
     }
 
     /**
+     * 놀이동산 대화를 시작한다. 카페와 달리 문제 사실을 프런트에서 받지 않는다.
+     *
+     * <p>가격과 인원은 방문 시작 시 서버가 고정했으므로, AI에 보내는 컨텍스트도 방문 행에서
+     * 만든다. 프런트가 문제를 다시 보내지 않으니 "화면·AI·서버가 다른 문제를 본다"는
+     * 불일치 자체가 생기지 않는다.
+     */
+    @Transactional
+    public Map<String, Object> startParkDialogue(
+            Long learnerId, String publicVisitId, StartParkDialogueRequest request) {
+        AmusementParkVisit visit = requireParkOwned(learnerId, publicVisitId);
+        StageContent content = AmusementParkCatalog.stageByScenarioId(request.scenarioId());
+        if (content == null) {
+            throw ApiException.badRequest(
+                    "dialogue_scenario_invalid", "지원하지 않는 놀이동산 대화입니다: " + request.scenarioId());
+        }
+
+        DialogueConversation replayed = findReplayedRequest(learnerId, request.requestId());
+        if (replayed != null) {
+            if (!visit.getId().equals(replayed.getParkVisitId())
+                    || !Objects.equals(request.scenarioId(), replayed.getScenarioId())) {
+                throw requestIdConflict();
+            }
+            return envelopeWithContext(
+                    replayed, dialogueClient.getConversation(replayed.getConversationId()));
+        }
+
+        DialogueConversation latest = dialogueRepository
+                .findFirstByParkVisitIdAndScenarioIdOrderByRoundDesc(visit.getId(), request.scenarioId())
+                .orElse(null);
+        // 명시적 재시작이 아니면 새로고침 복구로 보고 마지막 회차를 그대로 이어 준다.
+        if (latest != null && !request.wantsRestart()) {
+            return envelopeWithContext(
+                    latest, dialogueClient.getConversation(latest.getConversationId()));
+        }
+
+        // 단계 제출과 같은 기준으로 연다. 막을 것은 아직 도달하지 않은 앞선 단계뿐이다.
+        AmusementParkStage requestedStage = AmusementParkStage.from(content.stageId());
+        if (!visit.isCompleted() && !requestedStage.isReachedBy(visit.stage())) {
+            throw ApiException.conflict(
+                    "dialogue_stage_locked",
+                    "아직 열리지 않은 놀이동산 단계입니다. 현재 단계: " + visit.getStage());
+        }
+        int round = latest == null ? 1 : latest.getRound() + 1;
+
+        Learner learner = learnerService.require(learnerId);
+        Map<String, Object> parkContext = parkContextMap(content, visit.getFacts());
+        Map<String, Object> body = baseRequest(learner, "amusement_park", request.scenarioId());
+        body.put("park_context", parkContext);
+        Map<String, Object> scenarioContext = new LinkedHashMap<>();
+        scenarioContext.put("park_context", parkContext);
+
+        JsonNode envelope = requireEnvelope(dialogueClient.createConversation(body));
+        String conversationId = envelope.path("conversation_id").asString();
+        DialogueConversation dialogue = DialogueConversation.forParkVisit(
+                conversationId, learnerId, visit.getId(), request.scenarioId(), round,
+                scenarioContext, request.requestId());
+        dialogueRepository.save(dialogue);
+        return envelopeWithContext(dialogue, envelope);
+    }
+
+    /**
      * 같은 request_id 로 이미 만든 회차가 있으면 그 회차를 돌려준다.
      * 동시에 두 요청이 들어와 조회를 모두 비껴가는 극단 상황은
      * (learner_id, request_id) 유니크 인덱스가 두 번째 INSERT 를 막는다.
@@ -230,7 +305,7 @@ public class DialogueService {
     public Object getConversation(Long learnerId, String conversationId) {
         DialogueConversation dialogue = requireDialogueOwned(learnerId, conversationId);
         JsonNode envelope = dialogueClient.getConversation(conversationId);
-        return dialogue.getCafeVisitId() == null ? envelope : envelopeWithContext(dialogue, envelope);
+        return dialogue.isVisitScoped() ? envelopeWithContext(dialogue, envelope) : envelope;
     }
 
     /** 원문은 저장하지 않고, 소유권 확인 뒤 AI로만 전달한다. */
@@ -238,7 +313,7 @@ public class DialogueService {
     public Object respond(Long learnerId, String conversationId, JsonNode response) {
         DialogueConversation dialogue = requireDialogueOwned(learnerId, conversationId);
         JsonNode envelope = dialogueClient.respond(conversationId, response);
-        return dialogue.getCafeVisitId() == null ? envelope : envelopeWithContext(dialogue, envelope);
+        return dialogue.isVisitScoped() ? envelopeWithContext(dialogue, envelope) : envelope;
     }
 
     private Map<String, Object> buildPracticeSummary(LearningSession session) {
@@ -318,7 +393,9 @@ public class DialogueService {
         response.put("conversation_id", envelope.path("conversation_id").asString());
         response.put("turn", envelope.path("turn"));
         response.put("scenario_context", dialogue.getScenarioContext());
-        response.put("stage_progress", reconcileCafeCompletion(dialogue, envelope));
+        response.put("stage_progress", dialogue.getParkVisitId() != null
+                ? reconcileParkCompletion(dialogue, envelope)
+                : reconcileCafeCompletion(dialogue, envelope));
         return response;
     }
 
@@ -373,6 +450,115 @@ public class DialogueService {
         }
         CafeStage nextStage = CafeStage.from(result.nextStage());
         return stageProgress(expectedStage, nextStage, result.isCorrect(), "dialogue_verified_facts");
+    }
+
+    /**
+     * 놀이동산판 대화 완료 반영. 카페와 같은 규칙으로, 검증된 사실만 단계 판정에 쓴다.
+     *
+     * <p>주어진 값(입장료·인원 등)이 방문에 고정된 값과 다르면 통과시키지 않고 재시도를 유도한다.
+     */
+    private Map<String, Object> reconcileParkCompletion(
+            DialogueConversation dialogue, JsonNode envelope) {
+        StageContent content = AmusementParkCatalog.stageByScenarioId(dialogue.getScenarioId());
+        if (content == null) {
+            throw ApiException.badRequest(
+                    "dialogue_scenario_invalid",
+                    "지원하지 않는 놀이동산 대화입니다: " + dialogue.getScenarioId());
+        }
+        AmusementParkStage expectedStage = AmusementParkStage.from(content.stageId());
+        AmusementParkVisit visit = parkVisitRepository.findById(dialogue.getParkVisitId())
+                .orElseThrow(() -> ApiException.notFound("놀이동산 방문을 찾을 수 없습니다."));
+
+        // 통과 여부는 방문 진행도가 아니라 "이 회차가 통과했는지"로 본다.
+        if (dialogue.getClearedAt() != null) {
+            return parkStageProgress(expectedStage, visit.stage(), true, "stage_attempt");
+        }
+
+        JsonNode turn = envelope.path("turn");
+        JsonNode completion = turn.path("completion");
+        boolean completedByDialogue = "completed".equals(turn.path("status").asString())
+                && completion.path("teach_reward_eligible").asBoolean(false)
+                && !"bright_exit".equals(completion.path("outcome").asString());
+        if (!completedByDialogue) {
+            return parkStageProgress(expectedStage, visit.stage(), false, "pending");
+        }
+
+        JsonNode facts = completion.path("verified_facts");
+        if (!facts.isObject()) {
+            throw ApiException.serviceUnavailable(
+                    "dialogue_completion_facts_missing",
+                    "대화 완료 사실을 확인하지 못했습니다. 잠시 뒤 다시 시도해 주세요.");
+        }
+        Map<String, Integer> verified = new LinkedHashMap<>();
+        for (String key : content.requiredVerifiedFactKeys()) {
+            verified.put(key, factInt(facts, key));
+        }
+
+        // 카페와 같은 회차별 멱등키 대역을 쓴다. 회차마다 state_version 이 1부터 다시 시작한다.
+        int stateVersion = Math.min(Math.max(1, turn.path("state_version").asInt(1)), 999);
+        int attemptNo = 900_000 + (dialogue.getRound() - 1) * 1_000 + stateVersion;
+        com.mormi.backend.amusementpark.AmusementParkDtos.StageResultResponse result =
+                amusementParkService.submitVerifiedFacts(
+                        dialogue.getLearnerId(),
+                        visit.getPublicId(),
+                        content.stageId(),
+                        verified,
+                        attemptNo);
+        if (result.isCorrect()) {
+            dialogue.markCleared();
+        }
+        return parkStageProgress(
+                expectedStage,
+                AmusementParkStage.from(result.nextStage()),
+                result.isCorrect(),
+                "dialogue_verified_facts");
+    }
+
+    private Map<String, Object> parkStageProgress(
+            AmusementParkStage stage,
+            AmusementParkStage nextStage,
+            boolean completed,
+            String source) {
+        Map<String, Object> progress = new LinkedHashMap<>();
+        progress.put("stage", stage.value());
+        progress.put("completed", completed);
+        progress.put("next_stage", nextStage.value());
+        progress.put("source", source);
+        return progress;
+    }
+
+    /**
+     * AI 요청과 회차 저장에 같은 snake_case 계약 키를 쓴다.
+     * 모르미의 오개념·전략·전이 문장은 서버가 소유하므로 AI가 새로 지어내지 않게 함께 보낸다.
+     */
+    private Map<String, Object> parkContextMap(StageContent content, Map<String, Integer> visitFacts) {
+        List<Map<String, Object>> facts = new ArrayList<>();
+        for (Fact fact : content.facts()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("key", fact.key());
+            item.put("label", fact.label());
+            item.put("value", visitFacts.getOrDefault(fact.key(), fact.value()));
+            item.put("unit", fact.unit());
+            facts.add(item);
+        }
+        Map<String, Object> transfer = new LinkedHashMap<>();
+        transfer.put("prompt", content.transfer().prompt());
+        transfer.put("equation", content.transfer().equation());
+        transfer.put("conclusion", content.transfer().conclusion());
+
+        Map<String, Object> context = new LinkedHashMap<>();
+        context.put("theme_id", AmusementParkCatalog.THEME_ID);
+        context.put("stage_id", content.stageId());
+        context.put("title", content.title());
+        context.put("mission", content.mission());
+        context.put("skill", content.skill());
+        context.put("strategy", content.strategy());
+        context.put("mormi_misconception", content.mormiMisconception());
+        context.put("prompt", content.prompt());
+        context.put("facts", facts);
+        context.put("required_verified_fact_keys", content.requiredVerifiedFactKeys());
+        context.put("transfer", transfer);
+        return context;
     }
 
     private StageResultResponse syncQueue(
@@ -568,6 +754,10 @@ public class DialogueService {
             throw ApiException.forbidden("다른 학습자의 카페 방문입니다.");
         }
         return visit;
+    }
+
+    private AmusementParkVisit requireParkOwned(Long learnerId, String publicId) {
+        return amusementParkService.requireOwned(learnerId, publicId);
     }
 
     private DialogueConversation requireDialogueOwned(Long learnerId, String conversationId) {

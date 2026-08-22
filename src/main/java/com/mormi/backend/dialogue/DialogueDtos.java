@@ -40,6 +40,28 @@ public final class DialogueDtos {
     }
 
     /**
+     * 놀이동산 대화 시작 요청.
+     *
+     * <p>카페와 달리 문제 사실을 프런트에서 받지 않는다. 가격과 인원은 방문 시작 시 서버가
+     * 고정해 방문 행에 저장했으므로, 대화 컨텍스트도 그 값에서 만든다.
+     *
+     * @param startMode restart 면 기존 기록을 보존한 채 새 회차 대화를 만들고,
+     *                  resume(기본)이면 마지막 회차를 그대로 이어 준다.
+     * @param requestId FE가 요청마다 새로 뽑는 멱등키.
+     */
+    public record StartParkDialogueRequest(
+            @NotBlank
+            @Pattern(regexp = "amusement_ticket_multiply|amusement_snack_divide|amusement_pass_compare")
+            String scenarioId,
+            @Pattern(regexp = "restart|resume") String startMode,
+            @Size(max = 100) String requestId) {
+
+        public boolean wantsRestart() {
+            return "restart".equals(startMode);
+        }
+    }
+
+    /**
      * 홈 가르치기 시작 요청. body 없이 부르면 기존 동작(resume)과 같다.
      *
      * @param startMode restart 면 기존 대화를 보존한 채 새 회차의 첫 턴부터 시작한다.

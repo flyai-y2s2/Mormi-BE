@@ -38,6 +38,9 @@ public class DialogueConversation {
     @Column(name = "cafe_visit_id", updatable = false)
     private Long cafeVisitId;
 
+    @Column(name = "park_visit_id", updatable = false)
+    private Long parkVisitId;
+
     @Column(name = "scenario_id", nullable = false, length = 100, updatable = false)
     private String scenarioId;
 
@@ -72,6 +75,7 @@ public class DialogueConversation {
             Long learnerId,
             Long learningSessionId,
             Long cafeVisitId,
+            Long parkVisitId,
             String scenarioId,
             int round,
             Map<String, Object> scenarioContext,
@@ -80,6 +84,7 @@ public class DialogueConversation {
         this.learnerId = learnerId;
         this.learningSessionId = learningSessionId;
         this.cafeVisitId = cafeVisitId;
+        this.parkVisitId = parkVisitId;
         this.scenarioId = scenarioId;
         this.round = round;
         this.scenarioContext = scenarioContext == null
@@ -97,7 +102,7 @@ public class DialogueConversation {
             String conversationId, Long learnerId, Long learningSessionId,
             int round, String requestId) {
         return new DialogueConversation(
-                conversationId, learnerId, learningSessionId, null,
+                conversationId, learnerId, learningSessionId, null, null,
                 "home_teach", round, Map.of(), requestId);
     }
 
@@ -121,8 +126,27 @@ public class DialogueConversation {
             Map<String, Object> scenarioContext,
             String requestId) {
         return new DialogueConversation(
-                conversationId, learnerId, null, cafeVisitId, scenarioId, round,
+                conversationId, learnerId, null, cafeVisitId, null, scenarioId, round,
                 scenarioContext, requestId);
+    }
+
+    /** 놀이동산 방문 회차. 문제 사실은 프런트가 아니라 방문 행에서 끌어와 저장한다. */
+    public static DialogueConversation forParkVisit(
+            String conversationId,
+            Long learnerId,
+            Long parkVisitId,
+            String scenarioId,
+            int round,
+            Map<String, Object> scenarioContext,
+            String requestId) {
+        return new DialogueConversation(
+                conversationId, learnerId, null, null, parkVisitId, scenarioId, round,
+                scenarioContext, requestId);
+    }
+
+    /** 장소 대화인지. 홈 가르치기는 스테이지 진행도를 붙이지 않는다. */
+    public boolean isVisitScoped() {
+        return cafeVisitId != null || parkVisitId != null;
     }
 
     /** 이 회차가 스테이지를 통과시켰음을 한 번만 기록한다. */

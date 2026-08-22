@@ -25,8 +25,9 @@
 보상 계산, 정오 판정, 해금 판정은 **전부 서버가 확정**합니다. 프런트는 표시만 합니다.
 
 계정은 학생·교사 공용 `accounts` 하나입니다. **로그인은 하나로 합치고, 가입만 나눕니다.**
-학습 경로(`/v1/learners` `/v1/learning-sessions` `/v1/cafe-visits` `/v1/dialogue`
-`/v1/progress` `/v1/themes` `/v1/reports`)는 학생 토큰 전용, 학급 경로(`/v1/cohorts`)는
+학습 경로(`/v1/learners` `/v1/learning-sessions` `/v1/cafe-visits`
+`/v1/amusement-park-visits` `/v1/dialogue` `/v1/progress` `/v1/themes` `/v1/reports`)는
+학생 토큰 전용, 학급 경로(`/v1/cohorts`)는
 교사 토큰 전용이며 역할이 다른 토큰으로 부르면 403 입니다.
 
 ### A. 인증
@@ -329,6 +330,105 @@
   "request_id": "9f4c…(요청마다 새 UUID)" }
 ```
 
+### E-2. 놀이동산 (이슈 #29)
+
+| Method | Path | 설명 |
+|---|---|---|
+| `POST` | `/v1/amusement-park-visits` | 방문 시작 (해금 검증, 기존 방문 있으면 이어받음) |
+| `GET` | `/v1/amusement-park-visits/{id}` | 진행 복구 (스테이지 콘텐츠 + 시도 전체) |
+| `POST` | `/v1/amusement-park-visits/{id}/stages/{stage_id}` | 단계 답 제출 |
+| `POST` | `/v1/amusement-park-visits/{id}/complete` | 완료 |
+| `POST` | `/v1/amusement-park-visits/{id}/dialogues` | 현재 놀이동산 단계의 AI 대화 시작·복구 |
+
+`stage_id = ticket | snack_split | pass_break_even`. **카페를 완료해야 열립니다.** 해금 전 방문은 403.
+
+카페와 두 가지가 다릅니다.
+
+1. **콘텐츠를 서버가 내려줍니다.** 제목·미션·전략·모르미 오개념·전이 문장까지 방문 응답에
+   담습니다. FE는 정답·설명문을 임의로 만들지 않고 이 값을 표시만 합니다.
+2. **문제 숫자를 방문 시작 시 고정합니다.** 가격과 인원은 `amusement_park_visits.facts` 에
+   저장되고 같은 `visit_id` 안에서 바뀌지 않습니다. 그래서 제출·대화 요청에 문제를 함께
+   싣지 않습니다(카페는 화면이 매번 새로 뽑아 함께 보냅니다).
+
+```jsonc
+// GET /v1/amusement-park-visits/{id}
+{
+  "theme_id": "amusement_park",
+  "visit_id": "park_visit_…",
+  "stage_order": ["ticket", "snack_split", "pass_break_even"],
+  "stage_progress": {                 // locked | available | completed
+    "ticket": "available", "snack_split": "locked", "pass_break_even": "locked"
+  },
+  "stages": [
+    {
+      "stage_id": "ticket",
+      "scenario_id": "amusement_ticket_multiply",
+      "title": "매표소", "mission": "우리 일행 표 사기", "skill": "multiply",
+      "strategy": "같은 돈이 여러 번이면 곱하면 돼",
+      "mormi_misconception": "표가 여러 장이어도 한 장 값만 내면 되는 줄 알았어.",
+      "prompt": "1인 입장료와 일행 수를 이용해 총액을 설명해 주세요.",
+      "facts": [
+        { "key": "ticket_price", "label": "1인 입장료", "value": 3000, "unit": "원" },
+        { "key": "party_count",  "label": "우리 일행",  "value": 2,    "unit": "명" }
+      ],
+      "verified_facts": { "ticket_price": 3000, "party_count": 2, "total_price": 6000 },
+      "transfer": {
+        "prompt": "그럼 1인 3,500원이고 4명이면?",
+        "equation": "3,500 × 4 = 14,000",
+        "conclusion": "3,500원을 네 번 더한 것과 같으니까 14,000원이야!"
+      }
+    }
+    // snack_split, pass_break_even …
+  ],
+  "attempts": [ /* 틀린 시도 포함 전체 */ ]
+}
+```
+
+단계별 필수 `verified_facts` 키는 이슈 계약과 같습니다.
+
+| 단계 | 주어지는 값 | 아이가 구하는 값 |
+|---|---|---|
+| `ticket` | `ticket_price`, `party_count` | `total_price` |
+| `snack_split` | `snack_total`, `payer_count` | `per_person` |
+| `pass_break_even` | `single_ride_price`, `day_pass_price` | `break_even_rides`, `benefit_from_rides` |
+
+```jsonc
+// POST .../stages/ticket   answers 에는 "아이가 구하는 값"만 담는다
+{ "answers": { "total_price": 3000 }, "attempt_no": 1, "elapsed_ms": 4200 }
+// 200
+{ "visit_id": "park_visit_…", "stage": "ticket", "is_correct": false,
+  "next_stage": "ticket", "next_stage_unlocked": false, "attempts": 1,
+  "expected_answers": { "total_price": 6000 },
+  "submitted_answers": { "total_price": 3000 },
+  "feedback_code": "ticket_short" }
+
+// POST .../stages/pass_break_even   답이 두 개인 단계는 둘 다 맞아야 통과
+{ "answers": { "break_even_rides": 5, "benefit_from_rides": 6 }, "attempt_no": 1 }
+```
+
+- 주어진 값(`ticket_price` 등)을 `answers` 에 실으면 `answer_unknown` 400 입니다.
+  정답은 서버가 방문에 고정된 값으로만 계산합니다.
+- `feedback_code` 는 답이 하나인 단계에서 `{stage}_short` / `{stage}_over` 로 방향까지
+  알려주고, 답이 둘인 단계는 `{stage}_wrong` 입니다. 정답은 `{stage}_correct`.
+- 세 단계를 모두 통과하기 전 완료 요청은 `stage_incomplete` 409 입니다.
+- 완료된 방문은 세 단계가 모두 다시 열립니다(연습 모드). 진행도는 전진 전용입니다.
+
+```jsonc
+// POST .../dialogues   문제 사실은 서버가 방문에서 꺼내므로 컨텍스트를 보내지 않는다
+{ "scenario_id": "amusement_ticket_multiply",   // | amusement_snack_divide | amusement_pass_compare
+  "start_mode": "resume",                       // restart | resume
+  "request_id": "9f4c…(요청마다 새 UUID)" }
+```
+
+대화 완료 턴의 `completion.verified_facts` 는 카페와 같은 방식으로 단계를 통과시킵니다.
+주어진 값이 방문에 고정된 값과 다르면 통과시키지 않고 `dialogue_completion_fact_mismatch`
+503 으로 재시도를 유도합니다. 자유 발화 원문이나 모르미 대사는 절대 정답으로 쓰지 않습니다.
+
+> ⚠️ **Mormi-AI 쪽 시나리오 핸들러가 아직 없습니다.** `amusement_*` 세 시나리오를 AI가
+> 인식하고 `verified_facts` 를 위 키로 채워 주기 전까지 `POST .../dialogues` 는
+> `dialogue_*` 오류로 실패합니다. 결정적 제출 경로(`POST .../stages/{stage_id}`)는
+> AI 없이도 동작합니다.
+
 ### F. 인증된 AI 대화 프록시
 
 | Method | Path | 설명 |
@@ -602,7 +702,7 @@ AI에서 처리가 끝났지만 응답만 유실된 경우도 있으므로, FE�
 
 ---
 
-## 4. DB 스키마 (인증·학습 핵심 테이블, `V14` 기준)
+## 4. DB 스키마 (인증·학습 핵심 테이블, `V15` 기준)
 
 ```
 accounts             id, login_id UNIQUE, password_hash, role(learner|educator), created_at
