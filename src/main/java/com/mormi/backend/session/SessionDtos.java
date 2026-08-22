@@ -15,9 +15,14 @@ public final class SessionDtos {
     private SessionDtos() {
     }
 
+    /**
+     * variant_seed 는 필수다. 프런트가 문제를 런타임 생성하므로 seed 없이는 아이가 본 문제를
+     * 재구성할 수 없다. 원시 int 로 두면 누락 시 본문 파싱이 깨져 400 으로만 안내되므로,
+     * 어느 필드가 빠졌는지 알려주도록 Integer + @NotNull 로 둬 422 fields 에 실리게 한다.
+     */
     public record StartSessionRequest(
             @NotBlank @Size(max = 60) String curriculumSessionId,
-            int variantSeed) {
+            @NotNull Integer variantSeed) {
     }
 
     public record StartSessionResponse(

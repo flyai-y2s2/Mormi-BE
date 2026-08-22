@@ -169,7 +169,7 @@
 // POST /v1/learning-sessions
 { "curriculum_session_id": "money-count", "variant_seed": 1284 }
 ```
-`variant_seed` 는 필수입니다. 프런트가 `varyProblem()` 으로 문제를 런타임 생성하므로 seed 없이는 아이가 실제로 본 문제를 재구성할 수 없습니다.
+`variant_seed` 는 필수입니다. 프런트가 `varyProblem()` 으로 문제를 런타임 생성하므로 seed 없이는 아이가 실제로 본 문제를 재구성할 수 없습니다. 빠뜨리면 `validation_failed` (422) 로 `fields.variantSeed` 에 사유가 담겨 옵니다. 본문 자체가 깨졌거나 타입이 맞지 않으면 `invalid_request` (400) 입니다.
 
 ```jsonc
 // POST .../attempts  — 정답·오답 모두 보낸다
