@@ -1,6 +1,7 @@
 package com.mormi.backend.report;
 
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -71,7 +72,7 @@ class LocalReportAdminControllerTest {
         controller.approveLadderRecommendation(
                 19L,
                 "ladder-1",
-                new DiagnosticReportController.LadderApprovalRequest(2),
+                new LocalReportAdminController.LadderApprovalRequest(2),
                 requestWithLoopbackAndKey());
 
         verify(guard).requireAllowed("local-secret", "127.0.0.1");
@@ -97,6 +98,13 @@ class LocalReportAdminControllerTest {
                 new AccountPrincipal(70L, Account.ROLE_LEARNER, 7L, 101L), monday);
 
         verify(authenticatedService).current(7L, monday);
+    }
+
+    @Test
+    void learnerDiagnosticControllerDoesNotExposeTeacherApproval() {
+        assertThat(DiagnosticReportController.class.getDeclaredMethods())
+                .extracting(java.lang.reflect.Method::getName)
+                .doesNotContain("approveLadderRecommendation");
     }
 
     private HttpServletRequest requestWithLoopbackAndKey() {

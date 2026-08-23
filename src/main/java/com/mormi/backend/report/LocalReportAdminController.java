@@ -23,6 +23,9 @@ import org.springframework.http.ResponseEntity;
 @ConditionalOnProperty(name = "mormi.local-report-admin.enabled", havingValue = "true")
 public class LocalReportAdminController {
 
+    public record LadderApprovalRequest(int recommendationVersion) {
+    }
+
     private final LocalReportAdminGuard guard;
     private final LocalReportAdminService service;
     private final DiagnosticReportService diagnosticReportService;
@@ -86,7 +89,7 @@ public class LocalReportAdminController {
     public LadderApprovalResponse approveLadderRecommendation(
             @PathVariable long learnerId,
             @PathVariable String analysisId,
-            @RequestBody DiagnosticReportController.LadderApprovalRequest approval,
+            @RequestBody LadderApprovalRequest approval,
             HttpServletRequest request) {
         requireAllowed(request);
         return diagnosticReportService.approveLadderRecommendation(
