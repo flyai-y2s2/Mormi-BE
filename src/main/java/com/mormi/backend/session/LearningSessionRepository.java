@@ -33,4 +33,6 @@ public interface LearningSessionRepository extends JpaRepository<LearningSession
             Long learnerId, OffsetDateTime startInclusive, OffsetDateTime endExclusive);
 
     Optional<LearningSession> findFirstByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(Long learnerId);
+
+    List<LearningSession> findTop2ByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(Long learnerId);
 }
