@@ -346,9 +346,22 @@
 
 1. **콘텐츠를 서버가 내려줍니다.** 제목·미션·전략·모르미 오개념·전이 문장까지 방문 응답에
    담습니다. FE는 정답·설명문을 임의로 만들지 않고 이 값을 표시만 합니다.
-2. **문제 숫자를 방문 시작 시 고정합니다.** 가격과 인원은 `amusement_park_visits.facts` 에
-   저장되고 같은 `visit_id` 안에서 바뀌지 않습니다. 그래서 제출·대화 요청에 문제를 함께
-   싣지 않습니다(카페는 화면이 매번 새로 뽑아 함께 보냅니다).
+2. **문제 숫자를 방문 시작 시 뽑아 고정합니다.** 가격과 인원은 방문을 시작할 때 서버가
+   새로 뽑아 `amusement_park_visits.facts` 에 저장하고, 같은 `visit_id` 안에서는 바뀌지
+   않습니다. 그래서 제출·대화 요청에 문제를 함께 싣지 않습니다(카페는 화면이 매번 새로 뽑아
+   함께 보냅니다). **아래 예시의 숫자는 한 번 뽑힌 결과일 뿐이니 FE는 값을 하드코딩하지 말고
+   응답을 그대로 표시하세요.** 출제 범위는 다음과 같습니다.
+
+   | 단계 | 주어지는 값 | 범위 |
+   |---|---|---|
+   | `ticket` | `ticket_price` / `party_count` | 2,000~5,000원(천 원 단위) / 2~5명 |
+   | `snack_split` | `snack_total` / `payer_count` | 1인당 1,000~3,000원 × 인원 / 2~5명 |
+   | `pass_break_even` | `single_ride_price` / `day_pass_price` | 1,000~3,000원 / 1회 값 × 본전 3~6회 |
+
+   `snack_total` 은 `payer_count` 로, `day_pass_price` 는 `single_ride_price` 로 **항상
+   나누어떨어집니다.** 정답(1인당 낼 돈·본전 횟수)을 먼저 뽑고 문제를 곱셈으로 되돌려 만들기
+   때문입니다. `transfer` 문장의 숫자도 이 방문 값에서 한 칸 올려(금액 +1,000원, 인원 +1명)
+   만들므로 본문제와 절대 같지 않습니다.
 
 ```jsonc
 // GET /v1/amusement-park-visits/{id}
@@ -367,15 +380,15 @@
       "strategy": "같은 돈이 여러 번이면 곱하면 돼",
       "mormi_misconception": "표가 여러 장이어도 한 장 값만 내면 되는 줄 알았어.",
       "prompt": "1인 입장료와 일행 수를 이용해 총액을 설명해 주세요.",
-      "facts": [
+      "facts": [                        // ← 값은 방문마다 새로 뽑힌다. 하드코딩 금지
         { "key": "ticket_price", "label": "1인 입장료", "value": 3000, "unit": "원" },
         { "key": "party_count",  "label": "우리 일행",  "value": 2,    "unit": "명" }
       ],
       "verified_facts": { "ticket_price": 3000, "party_count": 2, "total_price": 6000 },
-      "transfer": {
-        "prompt": "그럼 1인 3,500원이고 4명이면?",
-        "equation": "3,500 × 4 = 14,000",
-        "conclusion": "3,500원을 네 번 더한 것과 같으니까 14,000원이야!"
+      "transfer": {                     // ← 본문제에서 한 칸 올린 새 숫자
+        "prompt": "그럼 1인 4,000원이고 3명이면?",
+        "equation": "4,000 × 3 = 12,000",
+        "conclusion": "4,000원을 3번 더한 것과 같으니까 12,000원이야!"
       }
     }
     // snack_split, pass_break_even …

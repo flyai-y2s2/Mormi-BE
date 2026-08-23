@@ -537,14 +537,17 @@ public class DialogueService {
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("key", fact.key());
             item.put("label", fact.label());
-            item.put("value", visitFacts.getOrDefault(fact.key(), fact.value()));
+            item.put("value", AmusementParkCatalog.factValue(visitFacts, fact.key()));
             item.put("unit", fact.unit());
             facts.add(item);
         }
+        // 전이 문장도 이 방문에 뽑힌 숫자에서 만든다. AI가 다른 숫자를 지어내지 못하게 함께 보낸다.
+        AmusementParkCatalog.Transfer stageTransfer =
+                AmusementParkCatalog.transfer(content.stageId(), visitFacts);
         Map<String, Object> transfer = new LinkedHashMap<>();
-        transfer.put("prompt", content.transfer().prompt());
-        transfer.put("equation", content.transfer().equation());
-        transfer.put("conclusion", content.transfer().conclusion());
+        transfer.put("prompt", stageTransfer.prompt());
+        transfer.put("equation", stageTransfer.equation());
+        transfer.put("conclusion", stageTransfer.conclusion());
 
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("theme_id", AmusementParkCatalog.THEME_ID);
