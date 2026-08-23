@@ -4,6 +4,7 @@ import static com.mormi.backend.report.LocalReportAdminDtos.LocalLearnerResult;
 
 import com.mormi.backend.report.DiagnosticReportDtos.DiagnosticReport;
 import com.mormi.backend.report.DiagnosticReportDtos.SpeechEvidence;
+import com.mormi.backend.report.DiagnosticReportDtos.LadderApprovalResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.LocalDate;
 import java.util.List;
@@ -79,6 +80,17 @@ public class LocalReportAdminController {
         requireAllowed(request);
         DiagnosticReportDomains.requireSupported(domainId);
         return diagnosticReportService.speechEvidence(learnerId, domainId, weekStart);
+    }
+
+    @PostMapping("/learners/{learnerId}/ladder-recommendations/{analysisId}/approve")
+    public LadderApprovalResponse approveLadderRecommendation(
+            @PathVariable long learnerId,
+            @PathVariable String analysisId,
+            @RequestBody DiagnosticReportController.LadderApprovalRequest approval,
+            HttpServletRequest request) {
+        requireAllowed(request);
+        return diagnosticReportService.approveLadderRecommendation(
+                learnerId, analysisId, approval.recommendationVersion());
     }
 
     private void requireAllowed(HttpServletRequest request) {

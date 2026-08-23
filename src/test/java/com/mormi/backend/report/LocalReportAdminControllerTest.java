@@ -67,6 +67,18 @@ class LocalReportAdminControllerTest {
     }
 
     @Test
+    void ladderApprovalUsesTheSelectedLearnerAfterGuarding() {
+        controller.approveLadderRecommendation(
+                19L,
+                "ladder-1",
+                new DiagnosticReportController.LadderApprovalRequest(2),
+                requestWithLoopbackAndKey());
+
+        verify(guard).requireAllowed("local-secret", "127.0.0.1");
+        verify(diagnosticReportService).approveLadderRecommendation(19L, "ladder-1", 2);
+    }
+
+    @Test
     void speechEvidenceRejectsUnsupportedDomainsBeforeDelegating() {
         assertThatThrownBy(() -> controller.speechEvidence(19L, "outside-report", null, requestWithLoopbackAndKey()))
                 .isInstanceOf(ApiException.class);
