@@ -645,6 +645,107 @@ class DialogueServiceTest {
         assertThat(saved.getValue().getRequestId()).isEqualTo("req-7");
     }
 
+    /** #37: AI는 같은 학습 세션이면 기존 대화를 돌려준다. 그때 새 행을 만들면 유니크 제약에 걸린다. */
+    @Test
+    void homeTeachingRestartReusesTheRowWhenAiReturnsTheSameConversation() throws Exception {
+        DialogueClient dialogueClient = mock(DialogueClient.class);
+        DialogueConversationRepository dialogueRepository = mock(DialogueConversationRepository.class);
+        LearningSessionRepository sessionRepository = mock(LearningSessionRepository.class);
+        AttemptRepository attemptRepository = mock(AttemptRepository.class);
+        LearnerService learnerService = mock(LearnerService.class);
+        DialogueService service = new DialogueService(
+                dialogueClient,
+                dialogueRepository,
+                sessionRepository,
+                attemptRepository,
+                mock(CafeVisitRepository.class),
+                mock(CafeService.class),
+                mock(AmusementParkVisitRepository.class),
+                mock(AmusementParkService.class),
+                learnerService,
+                mock(RewardService.class));
+
+        LearningSession session = LearningSession.start(7L, "number-count", 42);
+        ReflectionTestUtils.setField(session, "id", 11L);
+        Learner learner = Learner.register("표시 이름", "R-007", 1L);
+        ReflectionTestUtils.setField(learner, "id", 7L);
+        DialogueConversation firstRound = DialogueConversation.forLearningSession(
+                "conversation-teach-1", 7L, 11L, 1, null);
+        // AI가 새 대화 대신 1회차와 같은 conversation_id 를 돌려준 상황
+        JsonNode envelope = new ObjectMapper().readTree("""
+                {
+                  "conversation_id": "conversation-teach-1",
+                  "turn": {"status": "active", "completion": null}
+                }
+                """);
+
+        when(sessionRepository.findByPublicId(session.getPublicId())).thenReturn(Optional.of(session));
+        when(dialogueRepository.findFirstByLearningSessionIdOrderByRoundDesc(11L))
+                .thenReturn(Optional.of(firstRound));
+        when(dialogueRepository.findByConversationId("conversation-teach-1"))
+                .thenReturn(Optional.of(firstRound));
+        when(attemptRepository.countDistinctCorrectQuestions(11L, "drill")).thenReturn(5);
+        when(attemptRepository.findByLearningSessionIdOrderByIdAsc(11L)).thenReturn(List.of());
+        when(learnerService.require(7L)).thenReturn(learner);
+        when(dialogueClient.createConversation(any())).thenReturn(envelope);
+
+        JsonNode result = service.startHomeTeaching(
+                7L, session.getPublicId(), new StartTeachingRequest("restart", "req-8"));
+
+        assertThat(result.path("conversation_id").asString()).isEqualTo("conversation-teach-1");
+        assertThat(session.getConversationId()).isEqualTo("conversation-teach-1");
+        // 같은 대화의 복구이므로 새 회차 행을 만들지 않아야 유니크 제약에 걸리지 않는다.
+        verify(dialogueRepository, never()).save(any());
+    }
+
+    /** #37 방어선: 다른 학습 세션의 대화가 돌아오면 이어 쓰지 않고 재시도를 유도한다. */
+    @Test
+    void homeTeachingRejectsAConversationBelongingToAnotherLearning() throws Exception {
+        DialogueClient dialogueClient = mock(DialogueClient.class);
+        DialogueConversationRepository dialogueRepository = mock(DialogueConversationRepository.class);
+        LearningSessionRepository sessionRepository = mock(LearningSessionRepository.class);
+        AttemptRepository attemptRepository = mock(AttemptRepository.class);
+        LearnerService learnerService = mock(LearnerService.class);
+        DialogueService service = new DialogueService(
+                dialogueClient,
+                dialogueRepository,
+                sessionRepository,
+                attemptRepository,
+                mock(CafeVisitRepository.class),
+                mock(CafeService.class),
+                mock(AmusementParkVisitRepository.class),
+                mock(AmusementParkService.class),
+                learnerService,
+                mock(RewardService.class));
+
+        LearningSession session = LearningSession.start(7L, "number-count", 42);
+        ReflectionTestUtils.setField(session, "id", 11L);
+        Learner learner = Learner.register("표시 이름", "R-007", 1L);
+        ReflectionTestUtils.setField(learner, "id", 7L);
+        DialogueConversation otherSessions = DialogueConversation.forLearningSession(
+                "conversation-teach-9", 7L, 99L, 1, null);
+        JsonNode envelope = new ObjectMapper().readTree("""
+                {
+                  "conversation_id": "conversation-teach-9",
+                  "turn": {"status": "active", "completion": null}
+                }
+                """);
+
+        when(sessionRepository.findByPublicId(session.getPublicId())).thenReturn(Optional.of(session));
+        when(dialogueRepository.findByConversationId("conversation-teach-9"))
+                .thenReturn(Optional.of(otherSessions));
+        when(attemptRepository.countDistinctCorrectQuestions(11L, "drill")).thenReturn(5);
+        when(attemptRepository.findByLearningSessionIdOrderByIdAsc(11L)).thenReturn(List.of());
+        when(learnerService.require(7L)).thenReturn(learner);
+        when(dialogueClient.createConversation(any())).thenReturn(envelope);
+
+        assertThatThrownBy(() -> service.startHomeTeaching(
+                7L, session.getPublicId(), new StartTeachingRequest("restart", "req-9")))
+                .isInstanceOf(com.mormi.backend.common.ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "dialogue_conversation_mismatch");
+        verify(dialogueRepository, never()).save(any());
+    }
+
     @Test
     void equalQueueCountsAreRejectedBeforeCreatingADialogue() {
         StartFixture fixture = startFixture("cafe_queue", CafeStage.QUEUE);
