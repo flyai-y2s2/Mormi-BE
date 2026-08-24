@@ -95,9 +95,15 @@ public class LadderAnalysisTriggerService {
         Map<String, int[]> counts = new LinkedHashMap<>();
         String currentLevel = null;
         int lowerRuleEvidence = 0;
+        int unlevelledCorrect = 0;
+        int unlevelledAttempts = 0;
         for (Attempt attempt : attempts) {
             String level = canonicalLevel(attempt.getAnswerMeta().get("expression_level"));
             if (level == null) {
+                unlevelledAttempts += 1;
+                if (attempt.isCorrect()) {
+                    unlevelledCorrect += 1;
+                }
                 continue;
             }
             currentLevel = level;
@@ -110,7 +116,28 @@ public class LadderAnalysisTriggerService {
                 lowerRuleEvidence += 1;
             }
         }
-        if (currentLevel == null || counts.isEmpty()) {
+        List<String> sessionPublicIds = List.of(older.getPublicId(), newest.getPublicId());
+        String unlevelledLevel = currentLevel;
+        if (unlevelledAttempts > 0 || currentLevel == null) {
+            unlevelledLevel = reportAiClient.latestExpressionLevel(
+                            trigger.learnerId(), newest.getCurriculumSessionId(), sessionPublicIds)
+                    .orElse(null);
+            if (unlevelledLevel != null) {
+                currentLevel = unlevelledLevel;
+            }
+        }
+        if (currentLevel == null || (unlevelledAttempts > 0 && unlevelledLevel == null)) {
+            return ReportAiClient.LadderRegistrationResult.RETRY;
+        }
+        if (unlevelledAttempts > 0) {
+            int[] value = counts.computeIfAbsent(unlevelledLevel, ignored -> new int[2]);
+            value[0] += unlevelledCorrect;
+            value[1] += unlevelledAttempts;
+            if ("L0".equals(unlevelledLevel)) {
+                lowerRuleEvidence += unlevelledAttempts;
+            }
+        }
+        if (counts.isEmpty()) {
             return ReportAiClient.LadderRegistrationResult.ACCEPTED;
         }
         Map<String, LadderAnalysisTrigger.Performance> performance = new LinkedHashMap<>();
@@ -121,7 +148,7 @@ public class LadderAnalysisTriggerService {
                 trigger.learnerId(),
                 newest.getCurriculumSessionId(),
                 newest.getPublicId(),
-                List.of(older.getPublicId(), newest.getPublicId()),
+                sessionPublicIds,
                 currentLevel,
                 performance,
                 lowerRuleEvidence));

@@ -162,6 +162,8 @@ class ReportAiClientTest {
                     "http://127.0.0.1:" + server.getAddress().getPort(), "shared-secret", 45);
 
             var evidence = client.evidence(7L, true);
+            assertThat(evidenceQuery.get()).isEqualTo("include_raw=true");
+            var latestLevel = client.latestExpressionLevel(7L, "addition", List.of("session-1"));
             var summary = client.summarize("민서", List.of(
                     new ReportFact("drill:money-count", CONCEPT, "돈 세기 상태는 관찰 중입니다.")));
 
@@ -169,8 +171,9 @@ class ReportAiClientTest {
             assertThat(evidence.orElseThrow().conversations().getFirst().turns().getFirst().response())
                     .isEqualTo("500원과 100원을 더했어");
             assertThat(evidence.orElseThrow().skills().getFirst().skillId()).isEqualTo("addition");
+            assertThat(latestLevel).contains("L3");
             assertThat(summary).isPresent();
-            assertThat(evidenceQuery.get()).isEqualTo("include_raw=true");
+            assertThat(evidenceQuery.get()).isEqualTo("include_raw=false");
             assertThat(evidenceKey.get()).isEqualTo("shared-secret");
             assertThat(summaryKey.get()).isEqualTo("shared-secret");
             assertThat(summaryBody.get()).contains("\"learner_label\":\"민서\"");
