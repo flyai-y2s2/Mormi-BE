@@ -131,6 +131,33 @@ class AmusementParkFlowIntegrationTest {
     }
 
     @Test
+    void 거스름돈_정답_즉시_카페_완료_원장이_찍혀_놀이동산이_열린다() throws Exception {
+        String token = learnerToken("민재", "MORMI-P43");
+        for (String sessionKey : CurriculumCatalog.CAFE_REQUIRED_SESSION_IDS) {
+            completeSession(token, sessionKey);
+        }
+
+        String cafeVisitId = completeCafeStages(token);
+
+        Map<String, Object> visit = jdbc.queryForMap(
+                "SELECT stage, completed_at FROM cafe_visits WHERE public_id = ?", cafeVisitId);
+        assertThat(visit.get("stage")).isEqualTo("complete");
+        assertThat(visit.get("completed_at")).isNotNull();
+
+        Map<String, Object> theme = jdbc.queryForMap(
+                "SELECT completed_at FROM theme_progress WHERE theme_id = 'cafe' "
+                        + "AND learner_id = (SELECT learner_id FROM cafe_visits WHERE public_id = ?)",
+                cafeVisitId);
+        assertThat(theme.get("completed_at")).isNotNull();
+
+        mockMvc.perform(get("/v1/themes").header("Authorization", token))
+                .andExpect(jsonPath("$[2].theme_id").value("amusement_park"))
+                .andExpect(jsonPath("$[2].unlocked").value(true));
+        mockMvc.perform(post("/v1/amusement-park-visits").header("Authorization", token))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
     void 방문_응답은_스테이지_콘텐츠와_잠금_상태를_함께_내려준다() throws Exception {
         String token = unlockedParkToken("서우", "MORMI-P02");
 
@@ -402,6 +429,13 @@ class AmusementParkFlowIntegrationTest {
     }
 
     private void completeCafe(String token) throws Exception {
+        String visitId = completeCafeStages(token);
+
+        mockMvc.perform(post("/v1/cafe-visits/{id}/complete", visitId).header("Authorization", token))
+                .andExpect(status().isOk());
+    }
+
+    private String completeCafeStages(String token) throws Exception {
         String visitBody = mockMvc.perform(post("/v1/cafe-visits").header("Authorization", token))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
@@ -439,8 +473,7 @@ class AmusementParkFlowIntegrationTest {
                                 "counts", Map.of("1000", 7), "attempt_no", 1))))
                 .andExpect(jsonPath("$.is_correct").value(true));
 
-        mockMvc.perform(post("/v1/cafe-visits/{id}/complete", visitId).header("Authorization", token))
-                .andExpect(status().isOk());
+        return visitId;
     }
 
     private void completeSession(String token, String curriculumSessionId) throws Exception {
