@@ -213,7 +213,11 @@ public class CafeService {
         }
 
         if (correct) {
-            visit.advanceTo(stage.next());
+            CafeStage next = stage.next();
+            visit.advanceTo(next);
+            if (next == CafeStage.COMPLETE) {
+                themeProgressService.markCafeCompleted(visit.getLearnerId());
+            }
         }
         return new StageResultResponse(
                 visit.getPublicId(),

@@ -79,12 +79,10 @@ public class ThemeProgressService {
     }
 
     private void markCompleted(Long learnerId, String themeId) {
-        themeProgressRepository.findByLearnerIdAndThemeId(learnerId, themeId)
-                .ifPresent(progress -> {
-                    if (progress.getCompletedAt() == null) {
-                        progress.setCompletedAt(OffsetDateTime.now());
-                    }
-                });
+        ThemeProgress progress = requireTheme(learnerId, themeId);
+        if (progress.getCompletedAt() == null) {
+            progress.setCompletedAt(OffsetDateTime.now());
+        }
     }
 
     private boolean isUnlocked(Long learnerId, String themeId) {
