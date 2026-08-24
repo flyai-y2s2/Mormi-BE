@@ -147,6 +147,7 @@ BE가 Mormi-AI를 부르다 실패한 경우다. **대부분 503이고 재시도
 | `dialogue_upstream_error` | 503 | 그 밖의 AI 오류 | 잠시 후 재시도 |
 | `dialogue_ai_error{.진단코드}` | 503 | AI가 5xx. 뒤에 AI 코드가 붙는다 | 잠시 후 재시도 |
 | `dialogue_invalid_request{.진단정보}` | 400 | AI가 400/422로 요청을 거절 | **재시도 금지.** 개발 로그 확인 |
+| `dialogue_conversation_mismatch` | 503 | AI가 다른 학습자·세션의 대화를 돌려줌 (계약 위반) | 잠시 후 재시도 |
 
 `dialogue_invalid_request` 는 이런 모양으로 늘어난다:
 

@@ -140,8 +140,23 @@ public class DialogueService {
         session.setPracticeResultId(practiceResultId);
         // 세션이 신뢰하는 대화는 항상 마지막 회차. 이전 회차는 분석용으로만 남는다.
         session.setConversationId(conversationId);
-        dialogueRepository.save(DialogueConversation.forLearningSession(
-                conversationId, learnerId, session.getId(), round, requestId));
+        // AI는 같은 학습 세션이면 새로 만들지 않고 기존 대화를 그대로 돌려준다
+        // (learning_session_id 멱등). 그 경우 새 회차가 아니라 같은 대화의 복구이므로
+        // 행을 다시 만들지 않는다. 무조건 INSERT 하면 uq_dialogue_conversation_id 에
+        // 걸려 두 번째 시작부터 항상 500 이 된다. (#37)
+        DialogueConversation existing =
+                dialogueRepository.findByConversationId(conversationId).orElse(null);
+        if (existing == null) {
+            dialogueRepository.save(DialogueConversation.forLearningSession(
+                    conversationId, learnerId, session.getId(), round, requestId));
+        } else if (!learnerId.equals(existing.getLearnerId())
+                || !session.getId().equals(existing.getLearningSessionId())) {
+            // 다른 학습자나 세션의 대화가 돌아왔다면 AI 계약 위반이다. 이어 쓰면 남의
+            // 대화를 보게 되므로 재시도를 유도하고 멈춘다.
+            throw ApiException.serviceUnavailable(
+                    "dialogue_conversation_mismatch",
+                    "대화 서버가 다른 학습의 대화를 돌려주었습니다. 잠시 뒤 다시 시도해 주세요.");
+        }
         return envelope;
     }
 
