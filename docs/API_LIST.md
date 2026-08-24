@@ -334,7 +334,7 @@
 
 | Method | Path | 설명 |
 |---|---|---|
-| `POST` | `/v1/amusement-park-visits` | 방문 시작 (해금 검증, 기존 방문 있으면 이어받음) |
+| `POST` | `/v1/amusement-park-visits` | 방문 시작 (해금 검증, 진행 중 방문 있으면 이어받고 완료 뒤에는 새 방문 생성) |
 | `GET` | `/v1/amusement-park-visits/{id}` | 진행 복구 (스테이지 콘텐츠 + 시도 전체) |
 | `POST` | `/v1/amusement-park-visits/{id}/stages/{stage_id}` | 단계 답 제출 |
 | `POST` | `/v1/amusement-park-visits/{id}/complete` | 완료 |
@@ -424,7 +424,10 @@
 - `feedback_code` 는 답이 하나인 단계에서 `{stage}_short` / `{stage}_over` 로 방향까지
   알려주고, 답이 둘인 단계는 `{stage}_wrong` 입니다. 정답은 `{stage}_correct`.
 - 세 단계를 모두 통과하기 전 완료 요청은 `stage_incomplete` 409 입니다.
-- 완료된 방문은 세 단계가 모두 다시 열립니다(연습 모드). 진행도는 전진 전용입니다.
+- 완료된 뒤 다시 `POST /v1/amusement-park-visits` 를 호출하면 새 `visit_id` 와 새 숫자 묶음을
+  받습니다. 직전 완료 방문과 같은 숫자 조합이 뽑히면 다시 뽑아 답 외우기 반복을 줄입니다.
+- 같은 `visit_id` 안에서는 숫자가 바뀌지 않습니다. 완료된 `visit_id` 로 대화를 `restart` 하면
+  409 `park_visit_completed` 입니다. 새 방문을 시작한 뒤 그 `visit_id` 로 대화를 열어 주세요.
 
 ```jsonc
 // POST .../dialogues   문제 사실은 서버가 방문에서 꺼내므로 컨텍스트를 보내지 않는다

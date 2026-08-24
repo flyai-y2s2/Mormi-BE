@@ -253,6 +253,11 @@ public class DialogueService {
             throw ApiException.badRequest(
                     "dialogue_scenario_invalid", "지원하지 않는 놀이동산 대화입니다: " + request.scenarioId());
         }
+        if (visit.isCompleted() && request.wantsRestart()) {
+            throw ApiException.conflict(
+                    "park_visit_completed",
+                    "완료된 놀이동산 방문은 새 방문을 시작한 뒤 대화를 열어 주세요.");
+        }
 
         DialogueConversation replayed = findReplayedRequest(learnerId, request.requestId());
         if (replayed != null) {

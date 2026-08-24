@@ -37,11 +37,9 @@ public class AmusementParkService {
         if (!themeProgressService.syncAmusementParkUnlock(learnerId)) {
             throw ApiException.forbidden("아직 놀이동산이 열리지 않았습니다. 카페를 먼저 마쳐 주세요.");
         }
-        // 카페와 같은 규칙. 끝낸 방문도 그대로 이어 주어 세 단계가 모두 열린 연습 모드가 된다.
         AmusementParkVisit visit = visitRepository
                 .findFirstByLearnerIdAndCompletedAtIsNullOrderByIdDesc(learnerId)
-                .or(() -> visitRepository.findFirstByLearnerIdOrderByIdDesc(learnerId))
-                .orElseGet(() -> visitRepository.save(AmusementParkVisit.start(learnerId)));
+                .orElseGet(() -> visitRepository.save(newVisitAfterLatest(learnerId)));
         return view(learnerId, visit.getPublicId());
     }
 
@@ -126,6 +124,26 @@ public class AmusementParkService {
             throw ApiException.forbidden("다른 학습자의 놀이동산 방문입니다.");
         }
         return visit;
+    }
+
+    private AmusementParkVisit newVisitAfterLatest(Long learnerId) {
+        Map<String, Integer> previousFacts = visitRepository.findFirstByLearnerIdOrderByIdDesc(learnerId)
+                .map(AmusementParkVisit::getFacts)
+                .orElse(null);
+        if (previousFacts == null) {
+            return AmusementParkVisit.start(learnerId);
+        }
+
+        for (int index = 0; index < 20; index++) {
+            Map<String, Integer> facts = AmusementParkCatalog.initialFacts();
+            if (!facts.equals(previousFacts)) {
+                return AmusementParkVisit.start(learnerId, facts);
+            }
+        }
+        Map<String, Integer> facts = new LinkedHashMap<>(previousFacts);
+        int ticketPrice = facts.getOrDefault("ticket_price", 2000);
+        facts.put("ticket_price", ticketPrice >= 5000 ? 2000 : ticketPrice + 1000);
+        return AmusementParkVisit.start(learnerId, facts);
     }
 
     /** 시도를 저장하고, 정답이면 다음 단계로 진행시킨다. 같은 attempt_no 재전송은 첫 결과를 돌려준다. */
