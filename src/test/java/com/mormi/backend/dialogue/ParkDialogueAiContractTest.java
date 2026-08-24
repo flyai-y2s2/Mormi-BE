@@ -138,7 +138,7 @@ class ParkDialogueAiContractTest {
         Path python = resolvePython(aiHome);
         if (python == null) {
             abort("Mormi-AI 의 파이썬 실행 파일을 찾지 못해 실제 스키마 검증을 건너뜁니다: "
-                    + aiHome.resolve(".venv/bin/python"));
+                    + String.join(", ", pythonCandidates(aiHome).stream().map(Path::toString).toList()));
         }
 
         ProcessBuilder builder = new ProcessBuilder(
@@ -170,15 +170,30 @@ class ParkDialogueAiContractTest {
         return Files.isDirectory(candidate.resolve("src/mormi_api")) ? candidate : null;
     }
 
-    /** 스키마는 pydantic 위에 있으므로 시스템 파이썬이 아니라 Mormi-AI 의 venv 를 먼저 본다. */
+    /** 스키마는 pydantic 위에 있으므로 시스템 파이썬이 아니라 지정된 Python 또는 Mormi-AI 의 venv 를 먼저 본다. */
     private static Path resolvePython(Path aiHome) {
-        for (String relative : List.of(".venv/bin/python", ".venv/bin/python3")) {
-            Path candidate = aiHome.resolve(relative);
+        for (Path candidate : pythonCandidates(aiHome)) {
             if (Files.isExecutable(candidate)) {
                 return candidate;
             }
         }
         return null;
+    }
+
+    private static List<Path> pythonCandidates(Path aiHome) {
+        List<Path> candidates = new ArrayList<>();
+        String configured = System.getenv("MORMI_AI_PYTHON");
+        if (configured != null && !configured.isBlank()) {
+            candidates.add(Path.of(configured));
+        }
+        for (String relative : List.of(
+                ".venv-repro/bin/python",
+                ".venv-repro/bin/python3",
+                ".venv/bin/python",
+                ".venv/bin/python3")) {
+            candidates.add(aiHome.resolve(relative));
+        }
+        return candidates;
     }
 
     private static String readCheckScript() throws IOException {

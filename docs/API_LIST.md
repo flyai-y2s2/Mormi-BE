@@ -437,10 +437,9 @@
 주어진 값이 방문에 고정된 값과 다르면 통과시키지 않고 `dialogue_completion_fact_mismatch`
 503 으로 재시도를 유도합니다. 자유 발화 원문이나 모르미 대사는 절대 정답으로 쓰지 않습니다.
 
-> ⚠️ **Mormi-AI 쪽 시나리오 핸들러가 아직 없습니다.** `amusement_*` 세 시나리오를 AI가
-> 인식하고 `verified_facts` 를 위 키로 채워 주기 전까지 `POST .../dialogues` 는
-> `dialogue_*` 오류로 실패합니다. 결정적 제출 경로(`POST .../stages/{stage_id}`)는
-> AI 없이도 동작합니다.
+> Mormi-AI#36 이후 `amusement_*` 세 시나리오는 AI 대화 경로에서도 동작합니다.
+> AI는 대화 완료 시 `verified_facts` 를 위 키로 채워 주며, 결정적 제출 경로
+> (`POST .../stages/{stage_id}`)는 AI 없이도 계속 동작합니다.
 
 ### F. 인증된 AI 대화 프록시
 
