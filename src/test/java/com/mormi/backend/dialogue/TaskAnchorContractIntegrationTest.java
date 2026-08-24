@@ -339,6 +339,30 @@ class TaskAnchorContractIntegrationTest {
         assertThat(hits.get("/v1/conversations").get()).isEqualTo(2);
     }
 
+    @Test
+    void 카페_대화_시작은_restart_없이_start_mode만_와도_열린다() throws Exception {
+        String token = createLearner("이안", "MORMI-TA13");
+        String visitId = unlockCafeAndStartVisit(token);
+
+        // 배포 FE(Mormi-FE#32)는 폐기 예정인 restart 를 더 이상 싣지 않는다. 이 본문이
+        // 파싱에서 거절되면 카페의 모든 스테이지 대화가 400 으로 막힌다(#39).
+        String body = mockMvc.perform(post("/v1/cafe-visits/{id}/dialogues", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "scenario_id", "cafe_queue",
+                                "queue_context", Map.of("left_count", 3, "right_count", 5),
+                                "start_mode", "resume",
+                                "request_id", "req-ta13-1"))))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        JsonNode response = objectMapper.readTree(body);
+
+        assertThat(response.path("turn"))
+                .isEqualTo(served(response.path("conversation_id").asString()).path("turn"));
+        assertThat(anchorOf(response)).isEqualTo(expectedCafeAnchor());
+    }
+
 
     // ------------------------------------------------------- 구버전 AI 하위 호환
     // 앵커는 나중에 추가된 필드다. 신버전 AI 가 아직 배포되지 않은 서버로 요청이 가면
