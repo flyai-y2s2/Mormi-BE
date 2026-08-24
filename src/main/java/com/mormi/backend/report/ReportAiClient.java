@@ -101,9 +101,9 @@ public class ReportAiClient {
         }
     }
 
-    public boolean registerLadderAnalysis(LadderAnalysisTrigger.Request request) {
+    public LadderRegistrationResult registerLadderAnalysis(LadderAnalysisTrigger.Request request) {
         if (!enabled) {
-            return false;
+            return LadderRegistrationResult.RETRY;
         }
         try {
             restClient.post()
@@ -113,14 +113,27 @@ public class ReportAiClient {
                     .body(JSON.writeValueAsString(request))
                     .retrieve()
                     .toBodilessEntity();
-            return true;
+            return LadderRegistrationResult.ACCEPTED;
         } catch (RestClientResponseException error) {
-            log.warn("Mormi-AI ladder registration failed status={}", error.getStatusCode().value());
-            return false;
+            int status = error.getStatusCode().value();
+            log.warn("Mormi-AI ladder registration failed status={}", status);
+            if (status == 409) {
+                return LadderRegistrationResult.ACCEPTED;
+            }
+            if (status == 408 || status == 425 || status == 429 || status >= 500) {
+                return LadderRegistrationResult.RETRY;
+            }
+            return LadderRegistrationResult.REJECTED;
         } catch (Exception error) {
             log.warn("Mormi-AI ladder registration unavailable type={}", error.getClass().getSimpleName());
-            return false;
+            return LadderRegistrationResult.RETRY;
         }
+    }
+
+    public enum LadderRegistrationResult {
+        ACCEPTED,
+        RETRY,
+        REJECTED
     }
 
     public boolean approveLadderAnalysis(String analysisId, long learnerId, int recommendationVersion) {

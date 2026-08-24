@@ -34,5 +34,6 @@ public interface LearningSessionRepository extends JpaRepository<LearningSession
 
     Optional<LearningSession> findFirstByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(Long learnerId);
 
-    List<LearningSession> findTop2ByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(Long learnerId);
+    List<LearningSession> findTop2ByLearnerIdAndCurriculumSessionIdAndCompletedAtIsNotNullOrderByCompletedAtDescIdDesc(
+            Long learnerId, String curriculumSessionId);
 }
