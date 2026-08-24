@@ -1,6 +1,7 @@
 package com.mormi.backend.amusementpark;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -8,15 +9,25 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.mormi.backend.AuthTestSupport;
 import com.mormi.backend.curriculum.CurriculumCatalog;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
@@ -41,11 +52,57 @@ class AmusementParkFlowIntegrationTest {
     @ServiceConnection
     static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
 
+    /**
+     * 대화 시작이 저장까지 가는지만 보면 되므로 가짜 AI 는 대화 발급 한 가지만 응답한다.
+     * 진짜 AI 처럼 대화마다 새 ID 를 발급해야 conversation_id 유니크 제약에 걸리지 않는다.
+     */
+    static HttpServer fakeAi;
+    static final AtomicInteger conversationSequence = new AtomicInteger();
+
+    static {
+        try {
+            fakeAi = HttpServer.create(new InetSocketAddress(0), 0);
+            fakeAi.createContext(
+                    "/v1/conversations", AmusementParkFlowIntegrationTest::issueConversation);
+            fakeAi.start();
+        } catch (IOException error) {
+            throw new IllegalStateException("가짜 AI 서버를 띄우지 못했습니다", error);
+        }
+    }
+
+    /** 턴 내용은 이 테스트의 관심사가 아니라 status 만 둔다. 완료가 아니므로 진행도는 pending 이다. */
+    static void issueConversation(HttpExchange exchange) throws IOException {
+        exchange.getRequestBody().readAllBytes();
+        byte[] body = """
+                {"conversation_id":"conversation_park_%d","turn":{"status":"active"}}"""
+                .formatted(conversationSequence.incrementAndGet())
+                .getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", "application/json");
+        exchange.sendResponseHeaders(201, body.length);
+        exchange.getResponseBody().write(body);
+        exchange.close();
+    }
+
+    @DynamicPropertySource
+    static void aiProperties(DynamicPropertyRegistry registry) {
+        registry.add("mormi.dialogue.base-url",
+                () -> "http://localhost:" + fakeAi.getAddress().getPort());
+        registry.add("mormi.dialogue.service-key", () -> "test-service-key");
+    }
+
+    @AfterAll
+    static void stopFakeAi() {
+        fakeAi.stop(0);
+    }
+
     @Autowired
     MockMvc mockMvc;
 
     @Autowired
     ObjectMapper objectMapper;
+
+    @Autowired
+    JdbcTemplate jdbc;
 
     @Test
     void 카페를_마쳐야_놀이동산이_열린다() throws Exception {
@@ -224,6 +281,54 @@ class AmusementParkFlowIntegrationTest {
         mockMvc.perform(get("/v1/amusement-park-visits/{id}", visitId)
                         .header("Authorization", stranger))
                 .andExpect(status().isForbidden());
+    }
+
+    /**
+     * 놀이동산 대화가 대화 원장에 저장되는지 본다(#42).
+     *
+     * <p>회귀 배경: dialogue_conversations 의 소유자 CHECK 제약이 학습세션/카페방문 2택이라
+     * park_visit_id 만 채우는 놀이동산 대화는 INSERT 가 통째로 막혔다(SQLState 23514).
+     * 방문·제출 REST 경로만 보던 기존 테스트로는 잡히지 않아 배포 뒤 500 으로 드러났다.
+     * 제약은 DB 에만 있으므로 실제 PostgreSQL 을 띄우는 이 테스트가 유일한 탐지 수단이다.
+     */
+    @Test
+    void 놀이동산_대화_시작이_방문_소유로_저장된다() throws Exception {
+        String token = unlockedParkToken("소율", "MORMI-P07");
+        String visitId = startParkVisit(token).visitId();
+
+        String body = mockMvc.perform(post("/v1/amusement-park-visits/{id}/dialogues", visitId)
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "scenario_id", "amusement_ticket_multiply"))))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.stage_progress.stage").value("ticket"))
+                .andExpect(jsonPath("$.scenario_context.park_context.facts").isNotEmpty())
+                .andReturn().getResponse().getContentAsString();
+
+        String conversationId = objectMapper.readTree(body).get("conversation_id").asString();
+        Map<String, Object> owner = jdbc.queryForMap(
+                "SELECT learning_session_id, cafe_visit_id, park_visit_id "
+                        + "FROM dialogue_conversations WHERE conversation_id = ?", conversationId);
+        assertThat(owner.get("learning_session_id")).isNull();
+        assertThat(owner.get("cafe_visit_id")).isNull();
+        assertThat(owner.get("park_visit_id")).isNotNull();
+    }
+
+    /**
+     * 제약을 셋으로 넓히면서 "소유자 없는 대화"까지 열어 주지는 않았는지 본다.
+     * 소유자가 없으면 나중에 그 대화를 어느 방문에 붙일지 알 수 없어 원장이 고아 행을 갖게 된다.
+     */
+    @Test
+    void 소유자가_없는_대화는_여전히_거절된다() throws Exception {
+        learnerToken("고아", "MORMI-P08");
+        Long learnerId = jdbc.queryForObject(
+                "SELECT id FROM learners WHERE display_name = ?", Long.class, "고아");
+
+        assertThatThrownBy(() -> jdbc.update(
+                "INSERT INTO dialogue_conversations (conversation_id, learner_id, scenario_id) "
+                        + "VALUES ('conversation_orphan', ?, 'amusement_ticket_multiply')", learnerId))
+                .hasMessageContaining("ck_dialogue_owner_scope");
     }
 
     private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder submit(
