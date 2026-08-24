@@ -1,6 +1,7 @@
 package com.mormi.backend.report;
 
 import com.mormi.backend.common.ExpressionLevels;
+import com.mormi.backend.common.ApiException;
 import static com.mormi.backend.report.DiagnosticReportDtos.FactCategory.CONCEPT;
 import static com.mormi.backend.report.DiagnosticReportDtos.FactCategory.EXPLANATION;
 import static com.mormi.backend.report.DiagnosticReportDtos.FactCategory.IMPROVED;
@@ -17,6 +18,7 @@ import com.mormi.backend.dialogue.DialogueConversationRepository;
 import com.mormi.backend.learner.Learner;
 import com.mormi.backend.learner.LearnerService;
 import com.mormi.backend.report.DiagnosticReportDtos.AiConversationEvidence;
+import com.mormi.backend.report.DiagnosticReportDtos.AiLadderRecommendation;
 import com.mormi.backend.report.DiagnosticReportDtos.AiNarrative;
 import com.mormi.backend.report.DiagnosticReportDtos.AiReportEvidence;
 import com.mormi.backend.report.DiagnosticReportDtos.AiSummary;
@@ -34,6 +36,8 @@ import com.mormi.backend.report.DiagnosticReportDtos.FactCategory;
 import com.mormi.backend.report.DiagnosticReportDtos.Highlight;
 import com.mormi.backend.report.DiagnosticReportDtos.HomeEvidence;
 import com.mormi.backend.report.DiagnosticReportDtos.LearnerHeader;
+import com.mormi.backend.report.DiagnosticReportDtos.LadderApprovalResponse;
+import com.mormi.backend.report.DiagnosticReportDtos.LadderRecommendation;
 import com.mormi.backend.report.DiagnosticReportDtos.LifeEvidence;
 import com.mormi.backend.report.DiagnosticReportDtos.ModeReport;
 import com.mormi.backend.report.DiagnosticReportDtos.ReportFact;
@@ -174,6 +178,9 @@ public class DiagnosticReportService {
         occurrences.sort(Comparator.naturalOrder());
 
         int speechSamples = aiEvidence.map(evidence -> speechCandidates(records, evidence, null, period).size()).orElse(0);
+        List<LadderRecommendation> ladderRecommendations = aiEvidence
+                .map(evidence -> ladderRecommendations(records, evidence))
+                .orElseGet(List::of);
         return new DiagnosticReport(
                 new LearnerHeader(learnerId, learner.getDisplayName()),
                 new ReportPeriod(
@@ -198,7 +205,29 @@ public class DiagnosticReportService {
                         teach.size(),
                         records.visits().size(),
                         speechSamples),
-                narrative.fallback());
+                narrative.fallback(),
+                ladderRecommendations);
+    }
+
+    public LadderApprovalResponse approveLadderRecommendation(
+            long learnerId, String analysisId, int recommendationVersion) {
+        AiLadderRecommendation recommendation = safeEvidence(learnerId, false)
+                .stream()
+                .flatMap(evidence -> safeList(evidence.ladderRecommendations()).stream())
+                .filter(item -> item != null
+                        && item.learnerId() == learnerId
+                        && analysisId.equals(item.analysisId())
+                        && item.recommendationVersion() == recommendationVersion)
+                .findFirst()
+                .orElseThrow(() -> ApiException.notFound("발화 사다리 분석을 찾을 수 없습니다."));
+        if (!("UPGRADE".equals(recommendation.action())
+                || "ADJUST_DOWN".equals(recommendation.action()))) {
+            throw ApiException.conflict("ladder_not_applicable", "적용할 단계 변경이 없습니다.");
+        }
+        if (!aiClient.approveLadderAnalysis(analysisId, learnerId, recommendationVersion)) {
+            throw ApiException.conflict("ladder_approval_failed", "단계 적용을 완료하지 못했습니다.");
+        }
+        return new LadderApprovalResponse(analysisId, "approved");
     }
 
     @Transactional(readOnly = true)
@@ -216,18 +245,63 @@ public class DiagnosticReportService {
 
         List<SpeechCandidate> candidates = speechCandidates(records, evidence.orElseThrow(), domainId, period);
         Optional<SpeechPair> pair = comparablePair(candidates);
-        if (pair.isEmpty()) {
+        if (pair.isPresent()) {
+            SpeechPair selected = pair.orElseThrow();
+            return new SpeechEvidence(
+                    domainId,
+                    true,
+                    null,
+                    selected.past().sample(),
+                    selected.recent().sample(),
+                    selected.verifiedElements(),
+                    changeSummary(selected.past().sample(), selected.recent().sample()));
+        }
+        List<SpeechCandidate> fallback = fallbackSpeechCandidates(
+                records, evidence.orElseThrow(), domainId, period);
+        if (fallback.isEmpty()) {
             return unavailableSpeech(domainId);
         }
-        SpeechPair selected = pair.orElseThrow();
+        SpeechSample recent = fallback.getLast().sample();
+        SpeechSample past = fallback.size() > 1 ? fallback.getFirst().sample() : null;
         return new SpeechEvidence(
                 domainId,
                 true,
                 null,
-                selected.past().sample(),
-                selected.recent().sample(),
-                selected.verifiedElements(),
-                changeSummary(selected.past().sample(), selected.recent().sample()));
+                past,
+                recent,
+                List.of(),
+                past == null ? "최근 발화 1건을 확인했습니다." : changeSummary(past, recent));
+    }
+
+    private List<LadderRecommendation> ladderRecommendations(
+            RecordContext records, AiReportEvidence evidence) {
+        Set<String> sessionPublicIds = records.sessions().values().stream()
+                .map(LearningSession::getPublicId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        return safeList(evidence.ladderRecommendations()).stream()
+                .filter(Objects::nonNull)
+                .filter(item -> item.learnerId() == evidence.learnerId())
+                .filter(item -> HOME_LABELS.containsKey(item.skillId()))
+                .filter(item -> sessionPublicIds.contains(item.triggerSessionId()))
+                .map(item -> new LadderRecommendation(
+                        item.analysisId(),
+                        item.learnerId(),
+                        item.skillId(),
+                        item.triggerSessionId(),
+                        List.copyOf(safeList(item.sessionIds())),
+                        ExpressionLevels.canonicalForRead(item.currentLevel()),
+                        ExpressionLevels.canonicalForRead(item.recommendedLevel()),
+                        item.action(),
+                        item.currentAccuracy(),
+                        item.evidenceCount(),
+                        item.reasonCode(),
+                        List.copyOf(safeList(item.recentPredictions())),
+                        item.modelVersion(),
+                        item.recommendationVersion(),
+                        item.approved(),
+                        item.analyzedAt()))
+                .toList();
     }
 
     private RecordContext loadRecords(long learnerId, boolean loadMetricRows, WeeklyReportPeriod period) {
@@ -567,6 +641,56 @@ public class DiagnosticReportService {
                 .toList();
     }
 
+    private List<SpeechCandidate> fallbackSpeechCandidates(
+            RecordContext records,
+            AiReportEvidence evidence,
+            String requestedDomain,
+            WeeklyReportPeriod period) {
+        if (!validAiEnvelope(evidence)) {
+            return List.of();
+        }
+        List<SpeechCandidate> candidates = new ArrayList<>();
+        for (AiConversationEvidence conversation : uniqueAiConversations(evidence).values()) {
+            DialogueConversation owner = records.dialogues().get(conversation.conversationId());
+            String domainId = ownedDomain(records, owner, conversation);
+            if (domainId == null
+                    || (requestedDomain != null && !requestedDomain.equals(domainId))
+                    || !completedFallbackEvidence(conversation)
+                    || !isWithin(period, conversation.updatedAt())) {
+                continue;
+            }
+            Set<String> seenTurnIds = new HashSet<>();
+            for (AiTurnEvidence turn : safeList(conversation.turns()).stream()
+                    .filter(Objects::nonNull)
+                    .filter(item -> item.turnId() != null && seenTurnIds.add(item.turnId()))
+                    .filter(item -> item.response() != null && !item.response().isBlank())
+                    .filter(item -> item.createdAt() != null && isWithin(period, item.createdAt()))
+                    .filter(item -> VERIFIED_RESPONSE_CATEGORIES.contains(normalize(item.responseCategory())))
+                    .sorted(Comparator
+                            .comparing(AiTurnEvidence::createdAt)
+                            .thenComparing(AiTurnEvidence::turnId))
+                    .toList()) {
+                candidates.add(new SpeechCandidate(
+                        domainId,
+                        valueOrUnknown(turn.taskId()),
+                        new SpeechSample(
+                                "conversation:" + conversation.conversationId() + ":turn:" + turn.turnId(),
+                                turn.response(),
+                                turn.hintLevel(),
+                                ExpressionLevels.canonicalForRead(turn.expressionLevel()),
+                                turn.createdAt()),
+                        Set.of()));
+            }
+        }
+        return candidates.stream().sorted(speechCandidateOrder()).toList();
+    }
+
+    private boolean completedFallbackEvidence(AiConversationEvidence conversation) {
+        return "completed".equalsIgnoreCase(conversation.status())
+                && conversation.completionOutcome() != null
+                && COMPLETION_OUTCOMES.contains(conversation.completionOutcome().toLowerCase());
+    }
+
     private Optional<SpeechPair> comparablePair(List<SpeechCandidate> candidates) {
         List<SpeechPair> pairs = new ArrayList<>();
         safeList(candidates).stream()
@@ -713,6 +837,17 @@ public class DiagnosticReportService {
         for (String domainId : REPORT_DOMAINS) {
             Optional<SpeechPair> pair = comparablePair(speechCandidates(records, aiEvidence, domainId, period));
             if (pair.isEmpty()) {
+                List<SpeechCandidate> fallback = fallbackSpeechCandidates(
+                        records, aiEvidence, domainId, period);
+                if (!fallback.isEmpty()) {
+                    SpeechSample recent = fallback.getLast().sample();
+                    facts.add(new ReportFact(
+                            "speech:" + domainId,
+                            EXPLANATION,
+                            unitLabel(domainId) + " 단원의 최근 실제 발화는 “"
+                                    + reportQuote(recent.utterance()) + "”이며 발화 단계는 "
+                                    + valueOrUnknown(recent.expressionLevel()) + "입니다."));
+                }
                 continue;
             }
             SpeechPair selected = pair.orElseThrow();
@@ -729,6 +864,11 @@ public class DiagnosticReportService {
                             + selected.verifiedElements().size() + "개가 확인되었고 " + helpChange));
         }
         return List.copyOf(facts);
+    }
+
+    private String reportQuote(String utterance) {
+        String normalized = utterance == null ? "" : utterance.strip();
+        return normalized.length() <= 100 ? normalized : normalized.substring(0, 100);
     }
 
     private void appendTrendFacts(

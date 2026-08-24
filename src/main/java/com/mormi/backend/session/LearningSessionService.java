@@ -52,6 +52,7 @@ public class LearningSessionService {
     private final ThemeProgressService themeProgressService;
     private final DialogueClient dialogueClient;
     private final TaskOutcomeService taskOutcomeService;
+    private final LadderAnalysisTriggerService ladderAnalysisTriggerService;
 
     public LearningSessionService(
             LearningSessionRepository sessionRepository,
@@ -59,13 +60,15 @@ public class LearningSessionService {
             RewardService rewardService,
             ThemeProgressService themeProgressService,
             DialogueClient dialogueClient,
-            TaskOutcomeService taskOutcomeService) {
+            TaskOutcomeService taskOutcomeService,
+            LadderAnalysisTriggerService ladderAnalysisTriggerService) {
         this.sessionRepository = sessionRepository;
         this.attemptRepository = attemptRepository;
         this.rewardService = rewardService;
         this.themeProgressService = themeProgressService;
         this.dialogueClient = dialogueClient;
         this.taskOutcomeService = taskOutcomeService;
+        this.ladderAnalysisTriggerService = ladderAnalysisTriggerService;
     }
 
     @Transactional
@@ -187,7 +190,8 @@ public class LearningSessionService {
         LearningSession session = requireOwned(learnerId, publicId);
 
         boolean teachEligible = false;
-        if (!session.isCompleted()) {
+        boolean completedNow = !session.isCompleted();
+        if (completedNow) {
             session.setTransferSolved(deriveTransferSolved(session.getId(), request.transferSolved()));
             session.setScaffoldLevel(request.scaffoldLevel());
             session.setElapsedSeconds(
@@ -219,6 +223,10 @@ public class LearningSessionService {
 
         List<String> completed = sessionRepository.findCompletedCurriculumSessionIds(learnerId);
         boolean cafeUnlocked = themeProgressService.syncCafeUnlock(learnerId, Set.copyOf(completed));
+
+        if (completedNow) {
+            ladderAnalysisTriggerService.schedule(learnerId, session.getPublicId());
+        }
 
         int drillReward = rewardService.sessionReward(session.getId(), RewardSource.DRILL);
         int teachReward = rewardService.sessionReward(session.getId(), RewardSource.TEACH);

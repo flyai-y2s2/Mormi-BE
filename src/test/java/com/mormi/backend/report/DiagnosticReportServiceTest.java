@@ -22,6 +22,7 @@ import com.mormi.backend.dialogue.DialogueConversationRepository;
 import com.mormi.backend.learner.Learner;
 import com.mormi.backend.learner.LearnerService;
 import com.mormi.backend.report.DiagnosticReportDtos.AiConversationEvidence;
+import com.mormi.backend.report.DiagnosticReportDtos.AiLadderRecommendation;
 import com.mormi.backend.report.DiagnosticReportDtos.AiNarrative;
 import com.mormi.backend.report.DiagnosticReportDtos.AiReportEvidence;
 import com.mormi.backend.report.DiagnosticReportDtos.AiSummary;
@@ -154,6 +155,48 @@ class DiagnosticReportServiceTest {
     }
 
     @Test
+    void reportIncludesCurrentWeekRecommendationAndApprovalKeepsLearnerScope() {
+        LearningSession session = session(11L, LEARNER_ID, "money-count", JANUARY);
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any())).thenReturn(List.of(session));
+        AiLadderRecommendation recommendation = new AiLadderRecommendation(
+                "ladder-1",
+                LEARNER_ID,
+                "money-count",
+                session.getPublicId(),
+                List.of("session-before", session.getPublicId()),
+                "L2",
+                "L3",
+                "UPGRADE",
+                0.9,
+                10,
+                "MASTERY_AND_HIGHER_PREDICTIONS",
+                List.of(Map.of("level", "L3", "confidence", 0.9)),
+                "test-v2",
+                1,
+                "completed",
+                false,
+                JANUARY);
+        when(aiClient.evidence(LEARNER_ID, true)).thenReturn(Optional.of(new AiReportEvidence(
+                LEARNER_ID, List.of(), List.of(), List.of(), List.of(recommendation))));
+        when(aiClient.evidence(LEARNER_ID, false)).thenReturn(Optional.of(new AiReportEvidence(
+                LEARNER_ID, List.of(), List.of(), List.of(), List.of(recommendation))));
+        when(aiClient.approveLadderAnalysis("ladder-1", LEARNER_ID, 1)).thenReturn(true);
+
+        DiagnosticReport report = service.current(LEARNER_ID, REPORT_WEEK);
+        var approval = service.approveLadderRecommendation(LEARNER_ID, "ladder-1", 1);
+
+        assertThat(report.ladderRecommendations()).singleElement()
+                .satisfies(item -> {
+                    assertThat(item.skillId()).isEqualTo("money-count");
+                    assertThat(item.action()).isEqualTo("UPGRADE");
+                    assertThat(item.recommendedLevel()).isEqualTo("L3");
+                });
+        assertThat(approval.status()).isEqualTo("approved");
+        verify(aiClient).approveLadderAnalysis("ladder-1", LEARNER_ID, 1);
+    }
+
+    @Test
     void speechEvidenceUsesTheSameSelectedWeek() {
         service.speechEvidence(LEARNER_ID, "money-count", LocalDate.parse("2026-08-17"));
 
@@ -185,7 +228,9 @@ class DiagnosticReportServiceTest {
         SpeechEvidence evidence = service.speechEvidence(LEARNER_ID, "money-count", LocalDate.parse("2026-08-17"));
 
         assertThat(report.evidenceCounts().teachConversations()).isEqualTo(1);
-        assertThat(evidence.available()).isFalse();
+        assertThat(evidence.available()).isTrue();
+        assertThat(evidence.past()).isNull();
+        assertThat(evidence.recent().utterance()).isEqualTo("이번 주 발화");
     }
 
     @Test
@@ -211,7 +256,9 @@ class DiagnosticReportServiceTest {
 
         SpeechEvidence evidence = service.speechEvidence(LEARNER_ID, "money-count", LocalDate.parse("2026-08-17"));
 
-        assertThat(evidence.available()).isFalse();
+        assertThat(evidence.available()).isTrue();
+        assertThat(evidence.past()).isNull();
+        assertThat(evidence.recent().utterance()).isEqualTo("이번 주 발화");
     }
 
     @Test
@@ -597,8 +644,9 @@ class DiagnosticReportServiceTest {
 
         SpeechEvidence evidence = service.speechEvidence(LEARNER_ID, "money-count", REPORT_WEEK);
 
-        assertThat(evidence.available()).isFalse();
-        assertThat(evidence.message()).isEqualTo("비교 가능한 발화 근거가 부족합니다.");
+        assertThat(evidence.available()).isTrue();
+        assertThat(evidence.past().utterance()).isEqualTo("과거 발화");
+        assertThat(evidence.recent().utterance()).isEqualTo("최근 발화");
     }
 
     @Test
@@ -691,10 +739,10 @@ class DiagnosticReportServiceTest {
 
         SpeechEvidence evidence = service.speechEvidence(LEARNER_ID, "money-count", REPORT_WEEK);
 
-        assertThat(evidence.available()).isFalse();
-        assertThat(evidence.message()).isEqualTo("비교 가능한 발화 근거가 부족합니다.");
-        assertThat(evidence.past()).isNull();
-        assertThat(evidence.recent()).isNull();
+        assertThat(evidence.available()).isTrue();
+        assertThat(evidence.past().utterance()).isEqualTo("과거 발화");
+        assertThat(evidence.recent().utterance()).isEqualTo("최근 발화");
+        assertThat(evidence.recent().utterance()).doesNotContain("섞이면 안 되는 발화");
     }
 
     private AiReportEvidence emptyAiEvidence() {

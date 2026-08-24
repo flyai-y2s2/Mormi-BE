@@ -26,7 +26,8 @@ public final class DiagnosticReportDtos {
             Highlight improvedPoint,
             Highlight observePoint,
             EvidenceCounts evidenceCounts,
-            boolean narrativeFallback) {
+            boolean narrativeFallback,
+            List<LadderRecommendation> ladderRecommendations) {
     }
 
     public enum Mode { HOME, LIFE }
@@ -133,6 +134,28 @@ public final class DiagnosticReportDtos {
             String changeSummary) {
     }
 
+    public record LadderRecommendation(
+            String analysisId,
+            long learnerId,
+            String skillId,
+            String triggerSessionId,
+            List<String> sessionIds,
+            String currentLevel,
+            String recommendedLevel,
+            String action,
+            Double currentAccuracy,
+            int evidenceCount,
+            String reasonCode,
+            List<Map<String, Object>> recentPredictions,
+            String modelVersion,
+            int recommendationVersion,
+            boolean approved,
+            OffsetDateTime analyzedAt) {
+    }
+
+    public record LadderApprovalResponse(String analysisId, String status) {
+    }
+
     public record ReportFact(String evidenceId, FactCategory category, String statement) {
     }
 
@@ -179,7 +202,36 @@ public final class DiagnosticReportDtos {
             long learnerId,
             List<AiConversationEvidence> conversations,
             List<AiSkillEvidence> skills,
-            List<AiNoteEvidence> notes) {
+            List<AiNoteEvidence> notes,
+            List<AiLadderRecommendation> ladderRecommendations) {
+
+        AiReportEvidence(
+                long learnerId,
+                List<AiConversationEvidence> conversations,
+                List<AiSkillEvidence> skills,
+                List<AiNoteEvidence> notes) {
+            this(learnerId, conversations, skills, notes, List.of());
+        }
+    }
+
+    record AiLadderRecommendation(
+            String analysisId,
+            long learnerId,
+            String skillId,
+            String triggerSessionId,
+            List<String> sessionIds,
+            String currentLevel,
+            String recommendedLevel,
+            String action,
+            Double currentAccuracy,
+            int evidenceCount,
+            String reasonCode,
+            List<Map<String, Object>> recentPredictions,
+            String modelVersion,
+            int recommendationVersion,
+            String status,
+            boolean approved,
+            OffsetDateTime analyzedAt) {
     }
 
     record AiConversationEvidence(

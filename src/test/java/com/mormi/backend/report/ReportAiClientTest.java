@@ -9,9 +9,39 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import com.mormi.backend.session.LadderAnalysisTrigger;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class ReportAiClientTest {
+
+    @Test
+    void ladderRegistrationUsesSharedKeyAndMetadataOnlySnakeCaseContract() throws Exception {
+        AtomicReference<String> key = new AtomicReference<>();
+        AtomicReference<String> body = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/internal/ladder-analyses", exchange -> {
+            key.set(exchange.getRequestHeaders().getFirst("X-Mormi-Service-Key"));
+            body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, 202, "{\"analysis_id\":\"ladder-1\",\"status\":\"pending\"}");
+        });
+        server.start();
+        try {
+            ReportAiClient client = new ReportAiClient(
+                    "http://127.0.0.1:" + server.getAddress().getPort(), "shared-secret", 45);
+            boolean accepted = client.registerLadderAnalysis(new LadderAnalysisTrigger.Request(
+                    "key", 7L, "money-count", "session-2", List.of("session-1", "session-2"),
+                    "L2", Map.of("L2", new LadderAnalysisTrigger.Performance(9, 10)), 0));
+
+            assertThat(accepted).isTrue();
+            assertThat(key.get()).isEqualTo("shared-secret");
+            assertThat(body.get()).contains("\"idempotency_key\":\"key\"");
+            assertThat(body.get()).contains("\"performance_by_level\":{\"L2\":");
+            assertThat(body.get()).doesNotContain("utterance", "response_raw", "speech");
+        } finally {
+            server.stop(0);
+        }
+    }
 
     @Test
     void disabledConfigurationReturnsEmptyWithoutCallingAnUpstream() {
@@ -21,6 +51,10 @@ class ReportAiClientTest {
         assertThat(client.summarize("민서", List.of(
                 new ReportFact("drill:money-count", CONCEPT, "돈 세기 상태는 관찰 중입니다."))))
                 .isEmpty();
+        assertThat(client.registerLadderAnalysis(new LadderAnalysisTrigger.Request(
+                "key", 7L, "money-count", "session-2", List.of("session-1", "session-2"),
+                "L2", Map.of("L2", new LadderAnalysisTrigger.Performance(9, 10)), 0)))
+                .isFalse();
     }
 
     @Test

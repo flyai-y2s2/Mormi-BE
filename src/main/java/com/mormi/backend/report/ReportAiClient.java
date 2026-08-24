@@ -3,6 +3,7 @@ package com.mormi.backend.report;
 import com.mormi.backend.report.DiagnosticReportDtos.AiReportEvidence;
 import com.mormi.backend.report.DiagnosticReportDtos.AiSummary;
 import com.mormi.backend.report.DiagnosticReportDtos.ReportFact;
+import com.mormi.backend.session.LadderAnalysisTrigger;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
@@ -100,6 +101,50 @@ public class ReportAiClient {
         }
     }
 
+    public boolean registerLadderAnalysis(LadderAnalysisTrigger.Request request) {
+        if (!enabled) {
+            return false;
+        }
+        try {
+            restClient.post()
+                    .uri("/v1/internal/ladder-analyses")
+                    .header("X-Mormi-Service-Key", serviceKey)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(JSON.writeValueAsString(request))
+                    .retrieve()
+                    .toBodilessEntity();
+            return true;
+        } catch (RestClientResponseException error) {
+            log.warn("Mormi-AI ladder registration failed status={}", error.getStatusCode().value());
+            return false;
+        } catch (Exception error) {
+            log.warn("Mormi-AI ladder registration unavailable type={}", error.getClass().getSimpleName());
+            return false;
+        }
+    }
+
+    public boolean approveLadderAnalysis(String analysisId, long learnerId, int recommendationVersion) {
+        if (!enabled) {
+            return false;
+        }
+        try {
+            restClient.post()
+                    .uri("/v1/internal/ladder-analyses/{analysisId}/approve", analysisId)
+                    .header("X-Mormi-Service-Key", serviceKey)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(JSON.writeValueAsString(new ApprovalRequest(learnerId, recommendationVersion)))
+                    .retrieve()
+                    .toBodilessEntity();
+            return true;
+        } catch (RestClientResponseException error) {
+            log.warn("Mormi-AI ladder approval failed status={}", error.getStatusCode().value());
+            return false;
+        } catch (Exception error) {
+            log.warn("Mormi-AI ladder approval unavailable type={}", error.getClass().getSimpleName());
+            return false;
+        }
+    }
+
     private RestClient buildClient(String baseUrl, Duration readTimeout) {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(CONNECT_TIMEOUT);
@@ -114,5 +159,8 @@ public class ReportAiClient {
     }
 
     private record SummaryFact(String evidenceId, String category, String statement) {
+    }
+
+    private record ApprovalRequest(long learnerId, int recommendationVersion) {
     }
 }

@@ -36,4 +36,5 @@ public class DiagnosticReportController {
         DiagnosticReportDomains.requireSupported(domainId);
         return diagnosticReportService.speechEvidence(principal.subjectId(), domainId, weekStart);
     }
+
 }

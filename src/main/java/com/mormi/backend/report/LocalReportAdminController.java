@@ -4,6 +4,7 @@ import static com.mormi.backend.report.LocalReportAdminDtos.LocalLearnerResult;
 
 import com.mormi.backend.report.DiagnosticReportDtos.DiagnosticReport;
 import com.mormi.backend.report.DiagnosticReportDtos.SpeechEvidence;
+import com.mormi.backend.report.DiagnosticReportDtos.LadderApprovalResponse;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.LocalDate;
 import java.util.List;
@@ -21,6 +22,9 @@ import org.springframework.http.ResponseEntity;
 @RequestMapping("/v1/local-report-admin")
 @ConditionalOnProperty(name = "mormi.local-report-admin.enabled", havingValue = "true")
 public class LocalReportAdminController {
+
+    public record LadderApprovalRequest(int recommendationVersion) {
+    }
 
     private final LocalReportAdminGuard guard;
     private final LocalReportAdminService service;
@@ -79,6 +83,17 @@ public class LocalReportAdminController {
         requireAllowed(request);
         DiagnosticReportDomains.requireSupported(domainId);
         return diagnosticReportService.speechEvidence(learnerId, domainId, weekStart);
+    }
+
+    @PostMapping("/learners/{learnerId}/ladder-recommendations/{analysisId}/approve")
+    public LadderApprovalResponse approveLadderRecommendation(
+            @PathVariable long learnerId,
+            @PathVariable String analysisId,
+            @RequestBody LadderApprovalRequest approval,
+            HttpServletRequest request) {
+        requireAllowed(request);
+        return diagnosticReportService.approveLadderRecommendation(
+                learnerId, analysisId, approval.recommendationVersion());
     }
 
     private void requireAllowed(HttpServletRequest request) {
