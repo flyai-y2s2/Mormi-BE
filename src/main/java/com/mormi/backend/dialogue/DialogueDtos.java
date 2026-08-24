@@ -21,7 +21,9 @@ public final class DialogueDtos {
      *                  resume 이면 마지막 회차를 그대로 이어 준다(없으면 새로 만든다).
      * @param requestId FE가 요청마다 새로 뽑는 멱등키. 네트워크 재시도로 같은 요청이
      *                  중복 도착해도 회차가 여러 개 생기지 않게 한다.
-     * @param restart 폐기 예정. start_mode 가 없을 때만 해석한다(true=restart, false=resume).
+     * @param restart 폐기 예정. start_mode 가 없을 때만 해석한다(true=restart, 그 외=resume).
+     *                원시형이면 Jackson 3가 누락을 null→boolean 매핑 실패로 거절해 본문 전체가
+     *                400 이 되므로, 새 FE처럼 안 보내는 클라이언트를 위해 래퍼로 받는다.
      */
     public record StartCafeDialogueRequest(
             @NotBlank
@@ -31,11 +33,11 @@ public final class DialogueDtos {
             @Valid CafeContext cafeContext,
             @Pattern(regexp = "restart|resume") String startMode,
             @Size(max = 100) String requestId,
-            boolean restart) {
+            Boolean restart) {
 
         /** start_mode 가 오면 그 값을 따르고, 없으면 옛 restart boolean 을 해석한다. */
         public boolean wantsRestart() {
-            return startMode != null ? "restart".equals(startMode) : restart;
+            return startMode != null ? "restart".equals(startMode) : Boolean.TRUE.equals(restart);
         }
     }
 
