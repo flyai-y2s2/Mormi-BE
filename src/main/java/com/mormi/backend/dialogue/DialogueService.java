@@ -19,7 +19,6 @@ import com.mormi.backend.cafe.CafeDtos.QueueRequest;
 import com.mormi.backend.cafe.CafeDtos.StageResultResponse;
 import com.mormi.backend.common.ApiException;
 import com.mormi.backend.curriculum.AmusementParkCatalog;
-import com.mormi.backend.curriculum.AmusementParkCatalog.Fact;
 import com.mormi.backend.curriculum.AmusementParkCatalog.StageContent;
 import com.mormi.backend.curriculum.CurriculumCatalog;
 import com.mormi.backend.dialogue.DialogueDtos.StartCafeDialogueRequest;
@@ -238,11 +237,11 @@ public class DialogueService {
     }
 
     /**
-     * 놀이동산 대화를 시작한다. 카페와 달리 문제 사실을 프런트에서 받지 않는다.
+     * 놀이동산 대화를 시작한다. BE는 방문·스테이지 권한만 확인하고 시나리오 ID만 보낸다.
      *
-     * <p>가격과 인원은 방문 시작 시 서버가 고정했으므로, AI에 보내는 컨텍스트도 방문 행에서
-     * 만든다. 프런트가 문제를 다시 보내지 않으니 "화면·AI·서버가 다른 문제를 본다"는
-     * 불일치 자체가 생기지 않는다.
+     * <p>문제 숫자, 정답, 오개념, 발화사다리 문구, 힌트, 전이 문제는 Mormi-AI가 한 묶음으로
+     * 생성해 대화에 고정한다. BE가 완성된 park_context를 보내면 두 원장이 다시 생기므로
+     * 이 경로에서는 교육 콘텐츠를 만들거나 전달하지 않는다.
      */
     @Transactional
     public Map<String, Object> startParkDialogue(
@@ -288,11 +287,9 @@ public class DialogueService {
         int round = latest == null ? 1 : latest.getRound() + 1;
 
         Learner learner = learnerService.require(learnerId);
-        Map<String, Object> parkContext = parkContextMap(content, visit.getFacts());
         Map<String, Object> body = baseRequest(learner, "amusement_park", request.scenarioId());
-        body.put("park_context", parkContext);
         Map<String, Object> scenarioContext = new LinkedHashMap<>();
-        scenarioContext.put("park_context", parkContext);
+        scenarioContext.put("content_owner", "mormi_ai");
 
         JsonNode envelope = requireEnvelope(dialogueClient.createConversation(body));
         String conversationId = envelope.path("conversation_id").asString();
@@ -490,11 +487,7 @@ public class DialogueService {
         return stageProgress(expectedStage, nextStage, result.isCorrect(), "dialogue_verified_facts");
     }
 
-    /**
-     * 놀이동산판 대화 완료 반영. 카페와 같은 규칙으로, 검증된 사실만 단계 판정에 쓴다.
-     *
-     * <p>주어진 값(입장료·인원 등)이 방문에 고정된 값과 다르면 통과시키지 않고 재시도를 유도한다.
-     */
+    /** 놀이동산 대화 완료 반영. AI의 결정적 교육 엔진이 검증한 사실만 진행 원장에 기록한다. */
     private Map<String, Object> reconcileParkCompletion(
             DialogueConversation dialogue, JsonNode envelope) {
         StageContent content = AmusementParkCatalog.stageByScenarioId(dialogue.getScenarioId());
@@ -514,8 +507,12 @@ public class DialogueService {
 
         JsonNode turn = envelope.path("turn");
         JsonNode completion = turn.path("completion");
+        boolean stageCompletionEligible = completion.has("stage_completion_eligible")
+                ? completion.path("stage_completion_eligible").asBoolean(false)
+                // 구버전 AI와의 순차 배포 동안만 쓰는 호환 분기다.
+                : completion.path("teach_reward_eligible").asBoolean(false);
         boolean completedByDialogue = "completed".equals(turn.path("status").asString())
-                && completion.path("teach_reward_eligible").asBoolean(false)
+                && stageCompletionEligible
                 && !"bright_exit".equals(completion.path("outcome").asString());
         if (!completedByDialogue) {
             return parkStageProgress(expectedStage, visit.stage(), false, "pending");
@@ -536,12 +533,14 @@ public class DialogueService {
         int stateVersion = Math.min(Math.max(1, turn.path("state_version").asInt(1)), 999);
         int attemptNo = 900_000 + (dialogue.getRound() - 1) * 1_000 + stateVersion;
         com.mormi.backend.amusementpark.AmusementParkDtos.StageResultResponse result =
-                amusementParkService.submitVerifiedFacts(
+                amusementParkService.completeFromDialogue(
                         dialogue.getLearnerId(),
                         visit.getPublicId(),
                         content.stageId(),
                         verified,
-                        attemptNo);
+                        attemptNo,
+                        completion.path("outcome").asString(),
+                        completion.path("teach_reward_eligible").asBoolean(false));
         if (result.isCorrect()) {
             dialogue.markCleared();
         }
@@ -563,60 +562,6 @@ public class DialogueService {
         progress.put("next_stage", nextStage.value());
         progress.put("source", source);
         return progress;
-    }
-
-    /**
-     * AI 요청과 회차 저장에 같은 snake_case 계약 키를 쓴다.
-     * 모르미의 오개념·전략·전이 문장은 서버가 소유하므로 AI가 새로 지어내지 않게 함께 보낸다.
-     *
-     * <p>facts 에는 주어진 값뿐 아니라 아이가 구해야 하는 값까지 <b>모두</b> 담는다. AI의
-     * SessionCreate 는 required_verified_fact_keys 의 모든 키가 facts 에 있고 그 값들이
-     * 서로 아귀가 맞는지(총액 = 단가 × 인원 등)까지 검증하기 때문에, 주어진 값만 보내면
-     * 대화 시작 자체가 422 로 거절된다.
-     *
-     * <p>구한 값은 {@link AmusementParkCatalog#verifiedFacts} 가 방문에 고정된 숫자로 계산한
-     * 서버 판정값이다. 프런트에서 정답을 받아 채우면 화면이 보낸 수가 곧 판정 기준이 되므로
-     * 그 경로는 두지 않는다. label·unit 도 카탈로그가 소유해 화면과 같은 이름으로 나간다.
-     */
-    static Map<String, Object> parkContextMap(StageContent content, Map<String, Integer> visitFacts) {
-        Map<String, Integer> verified =
-                AmusementParkCatalog.verifiedFacts(content.stageId(), visitFacts);
-        List<Map<String, Object>> facts = new ArrayList<>();
-        for (Fact fact : content.allFacts()) {
-            Integer value = verified.get(fact.key());
-            if (value == null) {
-                throw new IllegalStateException("missing amusement park fact: " + fact.key());
-            }
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("key", fact.key());
-            item.put("label", fact.label());
-            item.put("value", value);
-            item.put("unit", fact.unit());
-            facts.add(item);
-        }
-        // 전이 문장도 이 방문에 뽑힌 숫자에서 만든다. AI가 다른 숫자를 지어내지 못하게 함께 보낸다.
-        AmusementParkCatalog.Transfer stageTransfer =
-                AmusementParkCatalog.transfer(content.stageId(), visitFacts);
-        Map<String, Object> transfer = new LinkedHashMap<>();
-        transfer.put("prompt", stageTransfer.prompt());
-        transfer.put("equation", stageTransfer.equation());
-        transfer.put("conclusion", stageTransfer.conclusion());
-
-        Map<String, Object> context = new LinkedHashMap<>();
-        context.put("theme_id", AmusementParkCatalog.THEME_ID);
-        context.put("stage_id", content.stageId());
-        context.put("title", content.title());
-        context.put("mission", content.mission());
-        // FE가 쓰는 multiply/divide/compare enum 대신 AI가 발화에 활용할 한국어 개념을 보낸다.
-        context.put("skill", content.skillLabel());
-        context.put("strategy", content.strategy());
-        context.put("mormi_misconception", content.mormiMisconception());
-        // 화면용 존댓말 지시문은 L4 첫 대사로 쓰지 않는다. 첫 턴은 LLM을 거치지 않기 때문이다.
-        context.put("prompt", AmusementParkCatalog.mormiPrompt(content.stageId(), visitFacts));
-        context.put("facts", facts);
-        context.put("required_verified_fact_keys", content.requiredVerifiedFactKeys());
-        context.put("transfer", transfer);
-        return context;
     }
 
     private StageResultResponse syncQueue(

@@ -114,7 +114,7 @@ erDiagram
         varchar   public_id UK
         bigint    learner_id FK
         varchar   stage "ticket|snack_split|pass_break_even|complete"
-        jsonb     facts "방문 시작 시 고정된 가격·인원. 같은 방문에서 바뀌지 않는다"
+        jsonb     facts "폐기 예정 호환 컬럼. 문제 스냅샷은 Mormi-AI 대화 상태가 소유"
         timestamptz started_at
         timestamptz completed_at
     }

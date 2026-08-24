@@ -20,6 +20,7 @@
 - 마지막 반복 기록 이후 `POST /v1/learning-sessions/{id}/teaching` 한 번으로 반복 결과 집계 + AI 가르치기 시작
 - AI `TurnContract` 전체를 변경 없이 FE에 전달
 - 카페 네 단계 판정과 단계별 AI 대화 생성, 최초 문제 맥락의 새로고침 복구
+- 놀이동산은 방문·해금만 관리하고 문제·정답·힌트·전이 콘텐츠는 Mormi-AI에 단일화
 - AI가 도움 경로까지 완료하면 `completion.verified_facts`만 사용해 카페 단계 기록을
   동기화하고 `stage_progress`를 FE에 반환
 - AI 완료 대화만 가르치기 보상으로 인정하며 세션당 한 번만 지급
@@ -27,7 +28,8 @@
 
 아이 원문은 Spring DB의 `attempts.answer_meta`나 `cafe_visit_stages.payload`에 넣지 않습니다. 원문은 대화 응답 순간 AI로만 전달되고, Mormi-AI가 학습자의 동의 정책에 따라 암호화 저장하거나 즉시 폐기합니다.
 AI가 생성한 문장도 단계 정답으로 신뢰하지 않으며, Mormi-AI의 결정형
-오케스트레이터가 검증한 `completion.verified_facts`만 사용합니다.
+오케스트레이터가 검증한 `completion.verified_facts`만 사용합니다. 생활 스테이지 진행은
+`stage_completion_eligible`, 아이 주도 가르치기 보상은 `teach_reward_eligible`로 분리합니다.
 
 ## 실행
 

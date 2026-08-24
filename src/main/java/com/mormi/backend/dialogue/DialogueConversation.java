@@ -130,7 +130,7 @@ public class DialogueConversation {
                 scenarioContext, requestId);
     }
 
-    /** 놀이동산 방문 회차. 문제 사실은 프런트가 아니라 방문 행에서 끌어와 저장한다. */
+    /** 놀이동산 방문 회차. BE에는 방문 연결만 저장하고 문제 스냅샷은 AI 대화가 소유한다. */
     public static DialogueConversation forParkVisit(
             String conversationId,
             Long learnerId,

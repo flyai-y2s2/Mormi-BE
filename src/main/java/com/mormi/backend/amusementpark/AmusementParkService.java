@@ -1,7 +1,6 @@
 package com.mormi.backend.amusementpark;
 
 import com.mormi.backend.amusementpark.AmusementParkDtos.ParkVisitView;
-import com.mormi.backend.amusementpark.AmusementParkDtos.StageAttemptRequest;
 import com.mormi.backend.amusementpark.AmusementParkDtos.StageAttemptView;
 import com.mormi.backend.amusementpark.AmusementParkDtos.StageResultResponse;
 import com.mormi.backend.amusementpark.AmusementParkDtos.StageView;
@@ -39,46 +38,59 @@ public class AmusementParkService {
         }
         AmusementParkVisit visit = visitRepository
                 .findFirstByLearnerIdAndCompletedAtIsNullOrderByIdDesc(learnerId)
-                .orElseGet(() -> visitRepository.save(newVisitAfterLatest(learnerId)));
+                .orElseGet(() -> visitRepository.save(AmusementParkVisit.start(learnerId)));
         return view(learnerId, visit.getPublicId());
     }
 
-    /** 화면에서 직접 답을 제출하는 결정적 경로. 정답은 방문에 고정된 값으로 서버가 계산한다. */
-    @Transactional
-    public StageResultResponse submit(
-            Long learnerId, String publicId, String stageId, StageAttemptRequest request) {
-        AmusementParkVisit visit = requireOwned(learnerId, publicId);
-        AmusementParkStage stage = requirePlayableStage(stageId);
-        requireStageReached(visit, stage);
-
-        StageContent content = AmusementParkCatalog.stage(stageId);
-        Map<String, Integer> answers =
-                AmusementParkProblemContract.requireDerivedAnswers(content, request.answers());
-        return judge(visit, stage, content, answers, request.attemptNo(), request.elapsedMs());
-    }
-
     /**
-     * 대화 완료 경로. AI가 돌려준 verified_facts 를 결정적 제출과 같은 길로 흘려보낸다.
+     * AI 소유 대화의 완료 경로. BE는 문제를 다시 채점하지 않고 검증된 증거와 진행만 기록한다.
      *
-     * <p>자유 발화 원문이나 모르미 대사는 절대 단계 정답으로 쓰지 않는다. 여기 들어오는 값은
-     * DialogueService 가 완료 턴의 verified_facts 에서 뽑아낸 숫자뿐이다.
+     * <p>문제·정답 원장은 Mormi-AI의 대화 스냅샷과 결정적 교육 엔진에 있다. 여기서 BE가
+     * 방문용 임시 숫자로 다시 채점하면 서로 다른 문제를 비교하게 되므로, 허용된 사실 키와
+     * 값 범위만 검증한 뒤 인증된 AI 완료 이벤트를 스테이지 완료로 기록한다.
      */
     @Transactional
-    public StageResultResponse submitVerifiedFacts(
+    public StageResultResponse completeFromDialogue(
             Long learnerId,
             String publicId,
             String stageId,
             Map<String, Integer> verifiedFacts,
-            int attemptNo) {
+            int attemptNo,
+            String completionOutcome,
+            boolean teachRewardEligible) {
         AmusementParkVisit visit = requireOwned(learnerId, publicId);
         AmusementParkStage stage = requirePlayableStage(stageId);
         requireStageReached(visit, stage);
 
         StageContent content = AmusementParkCatalog.stage(stageId);
-        AmusementParkProblemContract.requireGivenFactsMatch(content, visit.getFacts(), verifiedFacts);
-        Map<String, Integer> answers =
-                AmusementParkProblemContract.requireDerivedAnswers(content, derivedOnly(content, verifiedFacts));
-        return judge(visit, stage, content, answers, attemptNo, null);
+        Map<String, Integer> evidence =
+                AmusementParkProblemContract.requireVerifiedFacts(content, verifiedFacts);
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("verified_facts", evidence);
+        payload.put("completion_outcome", completionOutcome);
+        payload.put("teach_reward_eligible", teachRewardEligible);
+        payload.put("content_owner", "mormi_ai");
+
+        var existing = stageRepository.findByParkVisitIdAndStageAndAttemptNo(
+                visit.getId(), stage.value(), attemptNo);
+        if (existing.isEmpty()) {
+            stageRepository.save(AmusementParkVisitStage.record(
+                    visit.getId(), stage, attemptNo, true, null, payload));
+        }
+
+        AmusementParkStage next = stage.next();
+        visit.advanceTo(next);
+        if (next == AmusementParkStage.COMPLETE) {
+            themeProgressService.markAmusementParkCompleted(visit.getLearnerId());
+        }
+        return new StageResultResponse(
+                visit.getPublicId(),
+                stage.value(),
+                true,
+                visit.getStage(),
+                true,
+                stageRepository.countByParkVisitIdAndStage(visit.getId(), stage.value()));
     }
 
     @Transactional
@@ -96,10 +108,9 @@ public class AmusementParkService {
     @Transactional(readOnly = true)
     public ParkVisitView view(Long learnerId, String publicId) {
         AmusementParkVisit visit = requireOwned(learnerId, publicId);
-        Map<String, Integer> facts = visit.getFacts();
 
         List<StageView> stages = AmusementParkCatalog.stages().stream()
-                .map(content -> StageView.of(content, facts))
+                .map(StageView::of)
                 .toList();
         List<StageAttemptView> attempts = stageRepository
                 .findByParkVisitIdOrderByIdAsc(visit.getId())
@@ -126,71 +137,6 @@ public class AmusementParkService {
         return visit;
     }
 
-    private AmusementParkVisit newVisitAfterLatest(Long learnerId) {
-        Map<String, Integer> previousFacts = visitRepository.findFirstByLearnerIdOrderByIdDesc(learnerId)
-                .map(AmusementParkVisit::getFacts)
-                .orElse(null);
-        if (previousFacts == null) {
-            return AmusementParkVisit.start(learnerId);
-        }
-
-        for (int index = 0; index < 20; index++) {
-            Map<String, Integer> facts = AmusementParkCatalog.initialFacts();
-            if (!facts.equals(previousFacts)) {
-                return AmusementParkVisit.start(learnerId, facts);
-            }
-        }
-        Map<String, Integer> facts = new LinkedHashMap<>(previousFacts);
-        int ticketPrice = facts.getOrDefault("ticket_price", 2000);
-        facts.put("ticket_price", ticketPrice >= 5000 ? 2000 : ticketPrice + 1000);
-        return AmusementParkVisit.start(learnerId, facts);
-    }
-
-    /** 시도를 저장하고, 정답이면 다음 단계로 진행시킨다. 같은 attempt_no 재전송은 첫 결과를 돌려준다. */
-    private StageResultResponse judge(
-            AmusementParkVisit visit,
-            AmusementParkStage stage,
-            StageContent content,
-            Map<String, Integer> answers,
-            int attemptNo,
-            Integer elapsedMs) {
-
-        Map<String, Integer> expected =
-                AmusementParkCatalog.expectedAnswers(content.stageId(), visit.getFacts());
-        boolean correct = expected.equals(answers);
-
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("given_facts", givenOnly(content, visit.getFacts()));
-        payload.put("answers", answers);
-        payload.put("expected_answers", expected);
-
-        var existing = stageRepository.findByParkVisitIdAndStageAndAttemptNo(
-                visit.getId(), stage.value(), attemptNo);
-        if (existing.isEmpty()) {
-            stageRepository.save(AmusementParkVisitStage.record(
-                    visit.getId(), stage, attemptNo, correct, elapsedMs, payload));
-        } else {
-            correct = existing.get().isCorrect();
-        }
-
-        if (correct) {
-            AmusementParkStage next = stage.next();
-            visit.advanceTo(next);
-            if (next == AmusementParkStage.COMPLETE) {
-                themeProgressService.markAmusementParkCompleted(visit.getLearnerId());
-            }
-        }
-        return new StageResultResponse(
-                visit.getPublicId(),
-                stage.value(),
-                correct,
-                visit.getStage(),
-                correct,
-                stageRepository.countByParkVisitIdAndStage(visit.getId(), stage.value()),
-                expected,
-                answers,
-                feedbackCode(content, expected, answers, correct));
-    }
 
     /**
      * 스테이지별 잠금 상태. 완료된 방문은 세 칸이 모두 completed 다.
@@ -211,39 +157,6 @@ public class AmusementParkService {
             progress.put(stage.value(), state);
         }
         return progress;
-    }
-
-    private String feedbackCode(
-            StageContent content,
-            Map<String, Integer> expected,
-            Map<String, Integer> answers,
-            boolean correct) {
-        String stageId = content.stageId();
-        if (correct) {
-            return stageId + "_correct";
-        }
-        // 답이 하나뿐인 단계는 모자란지 넘쳤는지까지 알려 주어 모르미 되묻기를 고를 수 있게 한다.
-        if (expected.size() == 1) {
-            String key = expected.keySet().iterator().next();
-            return answers.get(key) < expected.get(key) ? stageId + "_short" : stageId + "_over";
-        }
-        return stageId + "_wrong";
-    }
-
-    private Map<String, Integer> givenOnly(StageContent content, Map<String, Integer> facts) {
-        Map<String, Integer> given = new LinkedHashMap<>();
-        content.factKeys().forEach(key -> given.put(key, facts.get(key)));
-        return given;
-    }
-
-    private Map<String, Integer> derivedOnly(StageContent content, Map<String, Integer> facts) {
-        Map<String, Integer> derived = new LinkedHashMap<>();
-        content.derivedKeys().forEach(key -> {
-            if (facts.containsKey(key)) {
-                derived.put(key, facts.get(key));
-            }
-        });
-        return derived;
     }
 
     private AmusementParkStage requirePlayableStage(String stageId) {

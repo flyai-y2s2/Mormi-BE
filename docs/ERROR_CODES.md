@@ -101,10 +101,6 @@
 | `queue_context_required` | 400 | 줄 서기 대화 시작에 `queue_context` 누락 | 화면 버그. 좌우 인원 함께 전송 |
 | `cafe_context_required` | 400 | 메뉴 대화 시작에 `cafe_context` 누락 | 화면 버그. 메뉴 목록 함께 전송 |
 | `dialogue_scenario_invalid` | 400 | 지원하지 않는 카페·놀이동산 시나리오 id | 화면 버그. 시나리오 id 확인 |
-| `stage_unknown` | 400 | 놀이동산 계약에 없는 `stage_id` 로 제출 | 화면 버그. `stage_order` 동기화 |
-| `answer_missing` | 400 | 그 단계가 요구하는 답 키가 빠짐 | 입력 UI에서 필수 항목 확인 |
-| `answer_unknown` | 400 | 그 단계에서 받지 않는 키를 `answers` 에 실음 | 주어진 값은 보내지 않는다 |
-| `answer_range` | 400 | 답이 0~1,000,000 범위를 벗어남 | 입력 UI에서 미리 제한 |
 | `invalid_request` | 400 | 본문을 JSON으로 읽지 못함 (깨진 JSON, 타입 불일치, 본문 누락, 원시 필드 누락) | **재시도 금지.** 요청 구성 버그 |
 | `invalid_request` | 400 | 그 밖의 잘못된 요청 | 개발 로그만 남기고 일반 오류 표시 |
 
@@ -167,7 +163,9 @@ AI가 200을 줬지만 내용이 계약과 다른 경우다. 전부 503이다.
 | `dialogue_invalid_response` | `conversation_id` 나 `turn` 이 없음 |
 | `dialogue_completion_facts_missing` | 완료했는데 `verified_facts` 가 없음 |
 | `dialogue_completion_fact_invalid` | `verified_facts` 값이 숫자·문자로 해석 불가 |
-| `dialogue_completion_fact_mismatch` | 검증된 줄 인원이 화면 문제와 다름 |
+| `dialogue_completion_fact_mismatch` | 검증된 카페 줄 인원이 화면 문제와 다름 |
+| `dialogue_completion_fact_range` | AI의 놀이동산 완료 숫자가 안전 범위를 벗어남 |
+| `dialogue_completion_fact_unknown` | AI의 놀이동산 완료 증거에 계약 밖 키가 있음 |
 | `dialogue_context_missing` | 저장해 둔 카페 문제 정보를 못 찾음 |
 | `dialogue_context_invalid` | 저장된 카페 문제 정보가 손상됨 |
 
