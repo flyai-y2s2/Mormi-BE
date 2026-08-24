@@ -3,6 +3,8 @@ package com.mormi.backend.curriculum;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.random.RandomGenerator;
 
 /**
  * 놀이동산 생활수학 3스테이지의 서버 소유 콘텐츠와 판정 규칙.
@@ -10,9 +12,9 @@ import java.util.Map;
  * <p>카페는 문제 본문과 메뉴판을 프런트 정적 커리큘럼이 갖고 있지만, 놀이동산은 화면 문구까지
  * 서버가 내려준다. 프런트가 정답·설명문·전이 문장을 임의로 만들지 못하게 하려는 계약이다.
  *
- * <p>가격과 인원은 방문 시작 시 한 번 고정되어 방문 행에 저장된다. 여기 값은 그 초기값이고,
- * 판정은 언제나 방문에 저장된 값으로 한다. 나중에 방문마다 숫자를 다르게 뽑고 싶어지면
- * {@link #initialFacts()} 만 바꾸면 되고 판정식은 그대로 쓴다.
+ * <p>가격과 인원은 방문 시작 시 {@link #initialFacts()} 가 뽑아 방문 행에 저장하고, 같은 방문
+ * 안에서는 바뀌지 않는다. 판정({@link #expectedAnswers})과 전이 문장({@link #transfer})은 언제나
+ * 방문에 저장된 값만 보므로, 숫자를 어떻게 뽑든 판정식은 손대지 않는다.
  */
 public final class AmusementParkCatalog {
 
@@ -21,11 +23,21 @@ public final class AmusementParkCatalog {
 
     public static final String THEME_ID = "amusement_park";
 
-    /** 화면에 그대로 표시되는 주어진 사실 한 줄. */
-    public record Fact(String key, String label, int value, String unit) {
+    /**
+     * 화면에 그대로 표시되는 주어진 사실 한 줄. 값은 여기 없다.
+     *
+     * <p>숫자를 방문마다 뽑으므로 카탈로그가 기본값을 들고 있으면, 방문 값이 비었을 때
+     * 화면은 기본값을 보여 주고 판정은 막히는 어긋남이 생긴다. 값은 방문 행에만 둔다.
+     */
+    public record Fact(String key, String label, String unit) {
     }
 
-    /** 배운 전략을 새 숫자에 다시 적용해 보는 전이 턴. 문장은 서버가 소유한다. */
+    /**
+     * 배운 전략을 새 숫자에 다시 적용해 보는 전이 턴. 문장은 서버가 소유한다.
+     *
+     * <p>{@link #transfer(String, Map)} 가 방문 숫자에서 만들어 낸다. 카탈로그에 고정 문장으로
+     * 두면 본문제가 우연히 같은 숫자로 뽑혔을 때 "새 숫자에 다시 적용"이 되지 않는다.
+     */
     public record Transfer(String prompt, String equation, String conclusion) {
     }
 
@@ -45,8 +57,7 @@ public final class AmusementParkCatalog {
             String mormiMisconception,
             String prompt,
             List<Fact> facts,
-            List<String> derivedKeys,
-            Transfer transfer) {
+            List<String> derivedKeys) {
 
         public List<String> factKeys() {
             return facts.stream().map(Fact::key).toList();
@@ -68,13 +79,9 @@ public final class AmusementParkCatalog {
             "표가 여러 장이어도 한 장 값만 내면 되는 줄 알았어.",
             "1인 입장료와 일행 수를 이용해 총액을 설명해 주세요.",
             List.of(
-                    new Fact("ticket_price", "1인 입장료", 3000, "원"),
-                    new Fact("party_count", "우리 일행", 2, "명")),
-            List.of("total_price"),
-            new Transfer(
-                    "그럼 1인 3,500원이고 4명이면?",
-                    "3,500 × 4 = 14,000",
-                    "3,500원을 네 번 더한 것과 같으니까 14,000원이야!"));
+                    new Fact("ticket_price", "1인 입장료", "원"),
+                    new Fact("party_count", "우리 일행", "명")),
+            List.of("total_price"));
 
     private static final StageContent SNACK_SPLIT = new StageContent(
             "snack_split",
@@ -86,13 +93,9 @@ public final class AmusementParkCatalog {
             "간식을 같이 먹어도 산 사람만 돈을 내는 줄 알았어.",
             "간식 전체 값과 나눠 낼 사람 수를 이용해 한 사람이 낼 돈을 설명해 주세요.",
             List.of(
-                    new Fact("snack_total", "간식 전체 값", 6000, "원"),
-                    new Fact("payer_count", "나눠 낼 사람", 3, "명")),
-            List.of("per_person"),
-            new Transfer(
-                    "그럼 8,000원을 4명이 나눠 내면?",
-                    "8,000 ÷ 4 = 2,000",
-                    "8,000원을 똑같이 네 묶음으로 나눴으니까 한 사람은 2,000원이야!"));
+                    new Fact("snack_total", "간식 전체 값", "원"),
+                    new Fact("payer_count", "나눠 낼 사람", "명")),
+            List.of("per_person"));
 
     private static final StageContent PASS_BREAK_EVEN = new StageContent(
             "pass_break_even",
@@ -104,13 +107,9 @@ public final class AmusementParkCatalog {
             "자유이용권이 더 비싸 보이니까 무조건 손해인 줄 알았어.",
             "1회 이용권 값과 자유이용권 값을 이용해 몇 번부터 자유이용권이 이득인지 설명해 주세요.",
             List.of(
-                    new Fact("single_ride_price", "1회 이용권", 2000, "원"),
-                    new Fact("day_pass_price", "자유이용권", 10000, "원")),
-            List.of("break_even_rides", "benefit_from_rides"),
-            new Transfer(
-                    "그럼 1회 3,000원이고 자유이용권이 12,000원이면?",
-                    "12,000 ÷ 3,000 = 4",
-                    "네 번 타면 본전이고, 다섯 번째부터는 자유이용권이 이득이야!"));
+                    new Fact("single_ride_price", "1회 이용권", "원"),
+                    new Fact("day_pass_price", "자유이용권", "원")),
+            List.of("break_even_rides", "benefit_from_rides"));
 
     /** 이슈 계약의 스테이지 순서. AmusementParkStage 열거형과 같은 순서를 유지한다. */
     private static final List<StageContent> STAGES = List.of(TICKET, SNACK_SPLIT, PASS_BREAK_EVEN);
@@ -144,17 +143,135 @@ public final class AmusementParkCatalog {
         return BY_SCENARIO_ID.get(scenarioId);
     }
 
+    // ── 출제 범위. 아동 생활수학 범위에서 천 원 단위 금액과 2~5명 인원만 쓴다. ──
+    private static final int[] TICKET_PRICES = {2000, 3000, 4000, 5000};
+    private static final int[] PARTY_COUNTS = {2, 3, 4, 5};
+    private static final int[] SNACK_PER_PERSON = {1000, 2000, 3000};
+    private static final int[] PAYER_COUNTS = {2, 3, 4, 5};
+    private static final int[] SINGLE_RIDE_PRICES = {1000, 2000, 3000};
+    private static final int[] BREAK_EVEN_RIDES = {3, 4, 5, 6};
+
+    /** 전이 문장에서 한 칸 올릴 폭. 본문제와 반드시 다른 숫자가 되게 하는 장치다. */
+    private static final int TRANSFER_PRICE_STEP = 1000;
+    private static final int TRANSFER_COUNT_STEP = 1;
+
     /**
      * 방문 시작 시 고정할 숫자 묶음. 키는 세 스테이지를 통틀어 겹치지 않으므로 한 장으로 담는다.
+     *
+     * <p>방문마다 새로 뽑는다. 같은 문제를 반복하면 아이가 계산 대신 답을 외워 통과할 수 있다.
      */
     public static Map<String, Integer> initialFacts() {
+        return initialFacts(ThreadLocalRandom.current());
+    }
+
+    /**
+     * 숫자를 뽑는 실제 구현. 테스트가 시드를 고정해 재현할 수 있도록 난수원을 받는다.
+     *
+     * <p>제약이 있는 두 단계는 <b>답을 먼저 뽑고 문제를 곱셈으로 되돌린다.</b> 예를 들어
+     * 간식값은 "1인당 2,000원 × 3명 = 6,000원" 순서로 만들기 때문에 나누어떨어지지 않는
+     * 조합 자체가 나올 수 없다. 아무 값이나 뽑아 놓고 제약을 어기면 버리고 다시 뽑는 방식과
+     * 달리 재시도 루프가 필요 없고, 뽑히는 값의 분포도 한눈에 보인다.
+     */
+    public static Map<String, Integer> initialFacts(RandomGenerator random) {
         Map<String, Integer> facts = new LinkedHashMap<>();
-        for (StageContent content : STAGES) {
-            for (Fact fact : content.facts()) {
-                facts.put(fact.key(), fact.value());
-            }
-        }
+
+        // 매표소: 곱셈이라 제약이 없다. 두 값을 그대로 뽑는다.
+        facts.put("ticket_price", pick(random, TICKET_PRICES));
+        facts.put("party_count", pick(random, PARTY_COUNTS));
+
+        // 간식가게: 1인당 낼 돈(정답)을 먼저 뽑아 전체 값을 되돌린다 → 항상 나누어떨어진다.
+        int payerCount = pick(random, PAYER_COUNTS);
+        facts.put("snack_total", pick(random, SNACK_PER_PERSON) * payerCount);
+        facts.put("payer_count", payerCount);
+
+        // 자유이용권: 본전 횟수(정답)를 먼저 뽑아 이용권 값을 되돌린다 → 본전이 항상 정수다.
+        int singleRidePrice = pick(random, SINGLE_RIDE_PRICES);
+        facts.put("single_ride_price", singleRidePrice);
+        facts.put("day_pass_price", singleRidePrice * pick(random, BREAK_EVEN_RIDES));
+
+        requireSolvable(facts);
         return facts;
+    }
+
+    /**
+     * 뽑은 숫자로 세 단계가 모두 풀리는지 확인한다. 하나라도 어긋나면 출제 자체를 막는다.
+     *
+     * <p>지금 구조에서는 깨질 수 없지만, 나중에 범위를 손대다 제약을 깨뜨리면 아이가 풀 수
+     * 없는 방문이 DB에 저장된 뒤 제출 시점에 터진다. 그 전에 여기서 막는다.
+     */
+    private static void requireSolvable(Map<String, Integer> facts) {
+        for (StageContent content : STAGES) {
+            for (String key : content.factKeys()) {
+                require(facts, key);
+            }
+            expectedAnswers(content.stageId(), facts);
+        }
+    }
+
+    private static int pick(RandomGenerator random, int[] candidates) {
+        return candidates[random.nextInt(candidates.length)];
+    }
+
+    /**
+     * 방문에 고정된 값을 꺼낸다. 없으면 화면·AI에 엉뚱한 기본값을 보이지 않고 막는다.
+     */
+    public static int factValue(Map<String, Integer> visitFacts, String key) {
+        return require(visitFacts, key);
+    }
+
+    /**
+     * 이 방문의 전이 문장. 방문 숫자에서 한 칸 올린 <b>새 숫자</b>로 만든다.
+     *
+     * <p>배운 전략을 다른 수에 다시 적용해 보는 턴이라 본문제와 숫자가 같으면 안 된다.
+     * 방문 facts 만 보고 계산하므로 따로 저장하지 않아도 같은 방문에서는 늘 같은 문장이 나온다.
+     */
+    public static Transfer transfer(String stageId, Map<String, Integer> visitFacts) {
+        switch (stageId) {
+            case "ticket" -> {
+                int price = require(visitFacts, "ticket_price") + TRANSFER_PRICE_STEP;
+                int count = require(visitFacts, "party_count") + TRANSFER_COUNT_STEP;
+                int total = price * count;
+                return new Transfer(
+                        "그럼 1인 %s원이고 %d명이면?".formatted(won(price), count),
+                        "%s × %d = %s".formatted(won(price), count, won(total)),
+                        "%s원을 %d번 더한 것과 같으니까 %s원이야!".formatted(won(price), count, won(total)));
+            }
+            case "snack_split" -> {
+                int perPerson = expected(stageId, visitFacts, "per_person") + TRANSFER_PRICE_STEP;
+                int payers = require(visitFacts, "payer_count") + TRANSFER_COUNT_STEP;
+                int total = perPerson * payers;
+                return new Transfer(
+                        "그럼 %s원을 %d명이 나눠 내면?".formatted(won(total), payers),
+                        "%s ÷ %d = %s".formatted(won(total), payers, won(perPerson)),
+                        "%s원을 똑같이 %d묶음으로 나눴으니까 한 사람은 %s원이야!"
+                                .formatted(won(total), payers, won(perPerson)));
+            }
+            case "pass_break_even" -> {
+                int single = require(visitFacts, "single_ride_price") + TRANSFER_PRICE_STEP;
+                int breakEven = expected(stageId, visitFacts, "break_even_rides") + TRANSFER_COUNT_STEP;
+                int pass = single * breakEven;
+                return new Transfer(
+                        "그럼 1회 %s원이고 자유이용권이 %s원이면?".formatted(won(single), won(pass)),
+                        "%s ÷ %s = %d".formatted(won(pass), won(single), breakEven),
+                        "%d번 타면 본전이고, %d번째부터는 자유이용권이 이득이야!"
+                                .formatted(breakEven, breakEven + 1));
+            }
+            default -> throw new IllegalArgumentException("unknown amusement park stage: " + stageId);
+        }
+    }
+
+    /** 전이 숫자도 본문제와 같은 판정식에서 출발하도록 정답을 되쓴다. */
+    private static int expected(String stageId, Map<String, Integer> visitFacts, String key) {
+        Integer value = expectedAnswers(stageId, visitFacts).get(key);
+        if (value == null) {
+            throw new IllegalStateException("missing amusement park expected answer: " + key);
+        }
+        return value;
+    }
+
+    /** 아이가 읽는 금액이라 천 단위 쉼표를 넣어 문장에 그대로 쓴다. */
+    private static String won(int amount) {
+        return "%,d".formatted(amount);
     }
 
     /**

@@ -16,6 +16,18 @@ class AmusementParkProblemContractTest {
     private final StageContent ticket = AmusementParkCatalog.stage("ticket");
     private final StageContent pass = AmusementParkCatalog.stage("pass_break_even");
 
+    /** 출제가 방문마다 달라지므로, 계약 검증은 값을 직접 못 박은 방문으로 한다. */
+    private static Map<String, Integer> visitFacts() {
+        Map<String, Integer> facts = new LinkedHashMap<>();
+        facts.put("ticket_price", 3000);
+        facts.put("party_count", 2);
+        facts.put("snack_total", 6000);
+        facts.put("payer_count", 3);
+        facts.put("single_ride_price", 2000);
+        facts.put("day_pass_price", 10000);
+        return facts;
+    }
+
     @Test
     void 요구하는_답이_다_있으면_통과한다() {
         assertThat(AmusementParkProblemContract.requireDerivedAnswers(
@@ -52,7 +64,7 @@ class AmusementParkProblemContractTest {
 
     @Test
     void 대화가_돌려준_주어진_값이_방문과_같으면_통과한다() {
-        Map<String, Integer> visitFacts = AmusementParkCatalog.initialFacts();
+        Map<String, Integer> visitFacts = visitFacts();
 
         assertThatCode(() -> AmusementParkProblemContract.requireGivenFactsMatch(
                 ticket, visitFacts, Map.of("ticket_price", 3000, "party_count", 2, "total_price", 6000)))
@@ -61,7 +73,7 @@ class AmusementParkProblemContractTest {
 
     @Test
     void 대화가_다른_문제를_보고_있으면_통과시키지_않는다() {
-        Map<String, Integer> visitFacts = AmusementParkCatalog.initialFacts();
+        Map<String, Integer> visitFacts = visitFacts();
 
         assertThatThrownBy(() -> AmusementParkProblemContract.requireGivenFactsMatch(
                 ticket, visitFacts, Map.of("ticket_price", 3500, "party_count", 2)))

@@ -43,16 +43,21 @@ public final class AmusementParkDtos {
     public record FactView(String key, String label, int value, String unit) {
 
         public static FactView of(Fact fact, Map<String, Integer> visitFacts) {
-            // 라벨·단위는 카탈로그, 값은 방문에 고정된 것을 쓴다.
+            // 라벨·단위는 카탈로그, 값은 방문에 뽑혀 고정된 것을 쓴다. 없으면 기본값으로
+            // 얼버무리지 않고 막는다(화면과 판정이 다른 숫자를 보게 되는 게 더 나쁘다).
             return new FactView(
                     fact.key(),
                     fact.label(),
-                    visitFacts.getOrDefault(fact.key(), fact.value()),
+                    AmusementParkCatalog.factValue(visitFacts, fact.key()),
                     fact.unit());
         }
     }
 
     public record TransferView(String prompt, String equation, String conclusion) {
+
+        public static TransferView of(AmusementParkCatalog.Transfer transfer) {
+            return new TransferView(transfer.prompt(), transfer.equation(), transfer.conclusion());
+        }
     }
 
     public record StageView(
@@ -80,10 +85,7 @@ public final class AmusementParkDtos {
                     content.prompt(),
                     content.facts().stream().map(fact -> FactView.of(fact, visitFacts)).toList(),
                     AmusementParkCatalog.verifiedFacts(content.stageId(), visitFacts),
-                    new TransferView(
-                            content.transfer().prompt(),
-                            content.transfer().equation(),
-                            content.transfer().conclusion()));
+                    TransferView.of(AmusementParkCatalog.transfer(content.stageId(), visitFacts)));
         }
     }
 
