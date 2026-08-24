@@ -4,3 +4,13 @@ spring:
     username: ${DB_USERNAME}
     password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
+
+# 배포 서버의 8080 은 인터넷에 열려 있다. springdoc 은 기본 활성이라 그대로 두면
+# /swagger-ui, /v3/api-docs 로 전체 API 명세가 인증 없이 공개된다.
+# (SecurityConfig 의 anyRequest().permitAll() 은 /v1/** 밖 경로를 막지 않는다.)
+# 로컬(local 프로필)에서는 계속 열리므로 개발에는 지장이 없다.
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
