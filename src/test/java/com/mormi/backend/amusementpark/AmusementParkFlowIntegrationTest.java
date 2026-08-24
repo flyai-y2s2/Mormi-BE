@@ -295,6 +295,44 @@ class AmusementParkFlowIntegrationTest {
     }
 
     @Test
+    void 같은_학습자가_완료_뒤_다시_시작하면_새_방문과_새_숫자를_받는다() throws Exception {
+        String token = unlockedParkToken("지우", "MORMI-R47");
+        ParkProblem first = startParkVisit(token);
+        completeParkStages(token, first);
+
+        String body = mockMvc.perform(post("/v1/amusement-park-visits").header("Authorization", token))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.visit_id").value(org.hamcrest.Matchers.not(first.visitId())))
+                .andExpect(jsonPath("$.stage_progress.ticket").value("available"))
+                .andExpect(jsonPath("$.stage_progress.snack_split").value("locked"))
+                .andExpect(jsonPath("$.stage_progress.pass_break_even").value("locked"))
+                .andExpect(jsonPath("$.completed_at").doesNotExist())
+                .andExpect(jsonPath("$.attempts.length()").value(0))
+                .andReturn().getResponse().getContentAsString();
+
+        JsonNode root = objectMapper.readTree(body);
+        ParkProblem second = new ParkProblem(root.get("visit_id").asString(), readFacts(root));
+        assertThat(second.facts()).isNotEqualTo(first.facts());
+    }
+
+    @Test
+    void 완료된_방문_id로_대화를_restart하면_새_방문_시작을_요구한다() throws Exception {
+        String token = unlockedParkToken("로아", "MORMI-R48");
+        ParkProblem problem = startParkVisit(token);
+        completeParkStages(token, problem);
+
+        mockMvc.perform(post("/v1/amusement-park-visits/{id}/dialogues", problem.visitId())
+                        .header("Authorization", token)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(Map.of(
+                                "scenario_id", "amusement_ticket_multiply",
+                                "start_mode", "restart",
+                                "request_id", "restart-completed-visit"))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("park_visit_completed"));
+    }
+
+    @Test
     void 계약에_없는_단계나_답은_판정_전에_거절한다() throws Exception {
         String token = unlockedParkToken("유진", "MORMI-P04");
         String visitId = startParkVisit(token).visitId();
@@ -412,6 +450,19 @@ class AmusementParkFlowIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
         JsonNode root = objectMapper.readTree(body);
         return new ParkProblem(root.get("visit_id").asString(), readFacts(root));
+    }
+
+    private void completeParkStages(String token, ParkProblem problem) throws Exception {
+        mockMvc.perform(submit(token, problem.visitId(), "ticket",
+                        Map.of("total_price", problem.totalPrice()), 1))
+                .andExpect(jsonPath("$.is_correct").value(true));
+        mockMvc.perform(submit(token, problem.visitId(), "snack_split",
+                        Map.of("per_person", problem.perPerson()), 1))
+                .andExpect(jsonPath("$.is_correct").value(true));
+        mockMvc.perform(submit(token, problem.visitId(), "pass_break_even",
+                        Map.of("break_even_rides", problem.breakEvenRides(),
+                                "benefit_from_rides", problem.breakEvenRides() + 1), 1))
+                .andExpect(jsonPath("$.is_correct").value(true));
     }
 
     /** 방문 응답의 세 스테이지에 흩어진 주어진 값을 한 장으로 모은다. */

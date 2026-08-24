@@ -65,6 +65,10 @@ public class AmusementParkVisit {
         return new AmusementParkVisit(learnerId, AmusementParkCatalog.initialFacts());
     }
 
+    static AmusementParkVisit start(Long learnerId, Map<String, Integer> facts) {
+        return new AmusementParkVisit(learnerId, facts);
+    }
+
     public AmusementParkStage stage() {
         return AmusementParkStage.from(stage);
     }
