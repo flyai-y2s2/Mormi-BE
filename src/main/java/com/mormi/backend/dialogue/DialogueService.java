@@ -602,10 +602,12 @@ public class DialogueService {
         context.put("stage_id", content.stageId());
         context.put("title", content.title());
         context.put("mission", content.mission());
-        context.put("skill", content.skill());
+        // FE가 쓰는 multiply/divide/compare enum 대신 AI가 발화에 활용할 한국어 개념을 보낸다.
+        context.put("skill", content.skillLabel());
         context.put("strategy", content.strategy());
         context.put("mormi_misconception", content.mormiMisconception());
-        context.put("prompt", content.prompt());
+        // 화면용 존댓말 지시문은 L4 첫 대사로 쓰지 않는다. 첫 턴은 LLM을 거치지 않기 때문이다.
+        context.put("prompt", AmusementParkCatalog.mormiPrompt(content.stageId(), visitFacts));
         context.put("facts", facts);
         context.put("required_verified_fact_keys", content.requiredVerifiedFactKeys());
         context.put("transfer", transfer);
