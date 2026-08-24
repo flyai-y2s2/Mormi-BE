@@ -173,6 +173,8 @@ class AmusementParkFlowIntegrationTest {
                 .andExpect(jsonPath("$.stages[0].scenario_id").value("amusement_ticket_multiply"))
                 .andExpect(jsonPath("$.stages[0].title").value("매표소"))
                 .andExpect(jsonPath("$.stages[0].skill").value("multiply"))
+                .andExpect(jsonPath("$.stages[0].prompt")
+                        .value("1인 입장료와 일행 수를 이용해 총액을 설명해 주세요."))
                 .andExpect(jsonPath("$.stages[0].mormi_misconception").isNotEmpty())
                 .andExpect(jsonPath("$.stages[0].facts[0].key").value("ticket_price"))
                 .andExpect(jsonPath("$.stages[0].facts[1].key").value("party_count"))

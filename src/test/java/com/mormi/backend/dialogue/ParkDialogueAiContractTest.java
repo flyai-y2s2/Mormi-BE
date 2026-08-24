@@ -107,6 +107,39 @@ class ParkDialogueAiContractTest {
     }
 
     @Test
+    void 첫_턴은_방문_숫자가_담긴_모르미_반말_질문이고_skill은_한국어_설명이다() {
+        Map<String, Integer> visitFacts = Map.of(
+                "ticket_price", 3000,
+                "party_count", 2,
+                "snack_total", 6000,
+                "payer_count", 3,
+                "single_ride_price", 2000,
+                "day_pass_price", 10000);
+        Map<String, String> expectedPrompts = Map.of(
+                "amusement_ticket_multiply", "표 한 장이 3,000원이고 2명이 가면 모두 얼마야?",
+                "amusement_snack_divide", "6,000원인 간식을 3명이 똑같이 내려면 한 명은 얼마씩 내야 해?",
+                "amusement_pass_compare",
+                        "한 번에 2,000원이고 자유이용권은 10,000원이야. 몇 번부터 자유이용권이 더 이득일까?");
+
+        for (String scenarioId : SCENARIO_IDS) {
+            StageContent content = AmusementParkCatalog.stageByScenarioId(scenarioId);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> context =
+                    (Map<String, Object>) sessionCreateBody(scenarioId, visitFacts).get("park_context");
+
+            assertThat(context.get("prompt"))
+                    .isEqualTo(expectedPrompts.get(scenarioId))
+                    .asString()
+                    .endsWith("?")
+                    .doesNotContain("설명해 주세요", "이용해", "하세요", "주세요");
+            assertThat(context.get("prompt")).isNotEqualTo(content.prompt());
+            assertThat(context.get("skill"))
+                    .isEqualTo(content.skillLabel())
+                    .isNotEqualTo(content.skill());
+        }
+    }
+
+    @Test
     void 세_시나리오_본문은_실제_AI_SessionCreate_스키마를_통과한다() throws Exception {
         Random random = new Random(20260824L);
         List<Map<String, Object>> accept = new ArrayList<>();

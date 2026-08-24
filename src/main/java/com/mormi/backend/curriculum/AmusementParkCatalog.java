@@ -50,6 +50,9 @@ public final class AmusementParkCatalog {
      *
      * @param facts        화면에 주어지는 값. 방문에 고정 저장된다.
      * @param derivedFacts 아이가 직접 구해야 하는 값. 정오 판정 대상이고, 값은 서버가 계산한다.
+     * @param skill        FE가 완료 화면 라벨을 고를 때 쓰는 고정 enum
+     * @param skillLabel   AI가 아이에게 설명할 때 쓰는 한국어 개념 이름
+     * @param prompt       화면에 표시하는 문제 지시문. AI 첫 대사는 {@code mormiPrompt}가 만든다.
      */
     public record StageContent(
             String stageId,
@@ -57,6 +60,7 @@ public final class AmusementParkCatalog {
             String title,
             String mission,
             String skill,
+            String skillLabel,
             String strategy,
             String mormiMisconception,
             String prompt,
@@ -94,6 +98,7 @@ public final class AmusementParkCatalog {
             "매표소",
             "우리 일행 표 사기",
             "multiply",
+            "같은 값 여러 번 더하기",
             "같은 돈이 여러 번이면 곱하면 돼",
             "표가 여러 장이어도 한 장 값만 내면 되는 줄 알았어.",
             "1인 입장료와 일행 수를 이용해 총액을 설명해 주세요.",
@@ -108,6 +113,7 @@ public final class AmusementParkCatalog {
             "간식가게",
             "간식값 똑같이 나눠 내기",
             "divide",
+            "똑같이 나누기",
             "여럿이 똑같이 나눠 내면 나누면 돼",
             "간식을 같이 먹어도 산 사람만 돈을 내는 줄 알았어.",
             "간식 전체 값과 나눠 낼 사람 수를 이용해 한 사람이 낼 돈을 설명해 주세요.",
@@ -122,6 +128,7 @@ public final class AmusementParkCatalog {
             "자유이용권 창구",
             "자유이용권이 이득인지 따져보기",
             "compare",
+            "값을 나누고 비교하기",
             "낱개 값을 계속 더해서 묶음 값과 견줘 보면 돼",
             "자유이용권이 더 비싸 보이니까 무조건 손해인 줄 알았어.",
             "1회 이용권 값과 자유이용권 값을 이용해 몇 번부터 자유이용권이 이득인지 설명해 주세요.",
@@ -238,6 +245,31 @@ public final class AmusementParkCatalog {
      */
     public static int factValue(Map<String, Integer> visitFacts, String key) {
         return require(visitFacts, key);
+    }
+
+    /**
+     * AI가 L4 첫 턴에 그대로 말하는 모르미 대사.
+     *
+     * <p>{@link StageContent#prompt()}는 화면용 존댓말 지시문이라 AI에 보내지 않는다. 첫 턴은
+     * LLM을 거치지 않으므로 여기서 방문에 고정된 숫자를 넣고, 모르미 페르소나에 맞는 반말
+     * 질문으로 완성한다.
+     */
+    public static String mormiPrompt(String stageId, Map<String, Integer> visitFacts) {
+        return switch (stageId) {
+            case "ticket" -> "표 한 장이 %s원이고 %d명이 가면 모두 얼마야?".formatted(
+                    won(require(visitFacts, "ticket_price")),
+                    require(visitFacts, "party_count"));
+            case "snack_split" -> "%s원인 간식을 %d명이 똑같이 내려면 한 명은 얼마씩 내야 해?"
+                    .formatted(
+                            won(require(visitFacts, "snack_total")),
+                            require(visitFacts, "payer_count"));
+            case "pass_break_even" ->
+                    "한 번에 %s원이고 자유이용권은 %s원이야. 몇 번부터 자유이용권이 더 이득일까?"
+                            .formatted(
+                                    won(require(visitFacts, "single_ride_price")),
+                                    won(require(visitFacts, "day_pass_price")));
+            default -> throw new IllegalArgumentException("unknown amusement park stage: " + stageId);
+        };
     }
 
     /**
