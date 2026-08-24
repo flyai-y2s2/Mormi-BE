@@ -368,12 +368,30 @@ public class DialogueService {
     }
 
     private Map<String, Object> baseRequest(Learner learner, String scene, String scenarioId) {
+        return baseRequest(
+                learner.getId(),
+                learner.isConversationStorageConsent(),
+                learner.getRetentionPolicy(),
+                scene,
+                scenarioId);
+    }
+
+    /**
+     * 모든 대화 시작 요청이 공유하는 AI SessionCreate 의 겉봉. 계약 테스트가 학습자 행 없이도
+     * 같은 함수로 본문을 만들 수 있도록 값만 받는 정적 메서드로 둔다.
+     */
+    static Map<String, Object> baseRequest(
+            Long learnerId,
+            boolean conversationStorageConsent,
+            String retentionPolicy,
+            String scene,
+            String scenarioId) {
         Map<String, Object> request = new LinkedHashMap<>();
-        request.put("learner_id", learner.getId());
+        request.put("learner_id", learnerId);
         request.put("scene", scene);
         request.put("scenario_id", scenarioId);
-        request.put("conversation_storage_consent", learner.isConversationStorageConsent());
-        request.put("retention_policy", learner.getRetentionPolicy());
+        request.put("conversation_storage_consent", conversationStorageConsent);
+        request.put("retention_policy", retentionPolicy);
         return request;
     }
 
@@ -530,14 +548,29 @@ public class DialogueService {
     /**
      * AI 요청과 회차 저장에 같은 snake_case 계약 키를 쓴다.
      * 모르미의 오개념·전략·전이 문장은 서버가 소유하므로 AI가 새로 지어내지 않게 함께 보낸다.
+     *
+     * <p>facts 에는 주어진 값뿐 아니라 아이가 구해야 하는 값까지 <b>모두</b> 담는다. AI의
+     * SessionCreate 는 required_verified_fact_keys 의 모든 키가 facts 에 있고 그 값들이
+     * 서로 아귀가 맞는지(총액 = 단가 × 인원 등)까지 검증하기 때문에, 주어진 값만 보내면
+     * 대화 시작 자체가 422 로 거절된다.
+     *
+     * <p>구한 값은 {@link AmusementParkCatalog#verifiedFacts} 가 방문에 고정된 숫자로 계산한
+     * 서버 판정값이다. 프런트에서 정답을 받아 채우면 화면이 보낸 수가 곧 판정 기준이 되므로
+     * 그 경로는 두지 않는다. label·unit 도 카탈로그가 소유해 화면과 같은 이름으로 나간다.
      */
-    private Map<String, Object> parkContextMap(StageContent content, Map<String, Integer> visitFacts) {
+    static Map<String, Object> parkContextMap(StageContent content, Map<String, Integer> visitFacts) {
+        Map<String, Integer> verified =
+                AmusementParkCatalog.verifiedFacts(content.stageId(), visitFacts);
         List<Map<String, Object>> facts = new ArrayList<>();
-        for (Fact fact : content.facts()) {
+        for (Fact fact : content.allFacts()) {
+            Integer value = verified.get(fact.key());
+            if (value == null) {
+                throw new IllegalStateException("missing amusement park fact: " + fact.key());
+            }
             Map<String, Object> item = new LinkedHashMap<>();
             item.put("key", fact.key());
             item.put("label", fact.label());
-            item.put("value", AmusementParkCatalog.factValue(visitFacts, fact.key()));
+            item.put("value", value);
             item.put("unit", fact.unit());
             facts.add(item);
         }

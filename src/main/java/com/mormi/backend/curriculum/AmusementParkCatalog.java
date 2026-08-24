@@ -24,10 +24,14 @@ public final class AmusementParkCatalog {
     public static final String THEME_ID = "amusement_park";
 
     /**
-     * 화면에 그대로 표시되는 주어진 사실 한 줄. 값은 여기 없다.
+     * 화면·AI에 한 줄로 나가는 사실의 이름표. 주어진 값과 아이가 구할 값 모두 이 형태로 둔다.
      *
-     * <p>숫자를 방문마다 뽑으므로 카탈로그가 기본값을 들고 있으면, 방문 값이 비었을 때
-     * 화면은 기본값을 보여 주고 판정은 막히는 어긋남이 생긴다. 값은 방문 행에만 둔다.
+     * <p>값은 여기 없다. 숫자를 방문마다 뽑으므로 카탈로그가 기본값을 들고 있으면, 방문 값이
+     * 비었을 때 화면은 기본값을 보여 주고 판정은 막히는 어긋남이 생긴다. 값은 방문 행에만 둔다.
+     *
+     * <p>파생값의 label·unit 도 여기서 관리한다. AI park_context.facts 는 주어진 값과 구한 값을
+     * 같은 모양으로 요구하므로, 파생값 이름표를 프런트나 대화 계층이 지어내면 화면·AI가 서로
+     * 다른 말로 같은 수를 부르게 된다.
      */
     public record Fact(String key, String label, String unit) {
     }
@@ -44,8 +48,8 @@ public final class AmusementParkCatalog {
     /**
      * 스테이지 한 칸의 콘텐츠.
      *
-     * @param factKeys    화면에 주어지는 값의 키. 방문에 고정 저장된다.
-     * @param derivedKeys 아이가 직접 구해야 하는 값의 키. 정오 판정 대상이다.
+     * @param facts        화면에 주어지는 값. 방문에 고정 저장된다.
+     * @param derivedFacts 아이가 직접 구해야 하는 값. 정오 판정 대상이고, 값은 서버가 계산한다.
      */
     public record StageContent(
             String stageId,
@@ -57,15 +61,30 @@ public final class AmusementParkCatalog {
             String mormiMisconception,
             String prompt,
             List<Fact> facts,
-            List<String> derivedKeys) {
+            List<Fact> derivedFacts) {
 
         public List<String> factKeys() {
             return facts.stream().map(Fact::key).toList();
         }
 
+        public List<String> derivedKeys() {
+            return derivedFacts.stream().map(Fact::key).toList();
+        }
+
+        /**
+         * 주어진 값 + 구한 값을 화면 순서 그대로. AI park_context.facts 가 이 순서를 그대로 쓴다.
+         *
+         * <p>구한 값의 <b>수</b>는 {@link AmusementParkCatalog#verifiedFacts} 가 방문 숫자에서
+         * 계산하고, 여기서는 그 수에 붙는 이름표만 준다. 두 목록의 키가 같아야 하므로
+         * {@link #requiredVerifiedFactKeys()} 도 이 목록에서 뽑는다.
+         */
+        public List<Fact> allFacts() {
+            return java.util.stream.Stream.concat(facts.stream(), derivedFacts.stream()).toList();
+        }
+
         /** 대화 완료 시 AI가 반드시 채워 보내야 하는 키. 주어진 값 + 구한 값이다. */
         public List<String> requiredVerifiedFactKeys() {
-            return java.util.stream.Stream.concat(factKeys().stream(), derivedKeys.stream()).toList();
+            return allFacts().stream().map(Fact::key).toList();
         }
     }
 
@@ -81,7 +100,7 @@ public final class AmusementParkCatalog {
             List.of(
                     new Fact("ticket_price", "1인 입장료", "원"),
                     new Fact("party_count", "우리 일행", "명")),
-            List.of("total_price"));
+            List.of(new Fact("total_price", "우리 일행 표값", "원")));
 
     private static final StageContent SNACK_SPLIT = new StageContent(
             "snack_split",
@@ -95,7 +114,7 @@ public final class AmusementParkCatalog {
             List.of(
                     new Fact("snack_total", "간식 전체 값", "원"),
                     new Fact("payer_count", "나눠 낼 사람", "명")),
-            List.of("per_person"));
+            List.of(new Fact("per_person", "한 사람이 낼 돈", "원")));
 
     private static final StageContent PASS_BREAK_EVEN = new StageContent(
             "pass_break_even",
@@ -109,7 +128,9 @@ public final class AmusementParkCatalog {
             List.of(
                     new Fact("single_ride_price", "1회 이용권", "원"),
                     new Fact("day_pass_price", "자유이용권", "원")),
-            List.of("break_even_rides", "benefit_from_rides"));
+            List.of(
+                    new Fact("break_even_rides", "본전이 되는 횟수", "번"),
+                    new Fact("benefit_from_rides", "이득이 시작되는 횟수", "번")));
 
     /** 이슈 계약의 스테이지 순서. AmusementParkStage 열거형과 같은 순서를 유지한다. */
     private static final List<StageContent> STAGES = List.of(TICKET, SNACK_SPLIT, PASS_BREAK_EVEN);
