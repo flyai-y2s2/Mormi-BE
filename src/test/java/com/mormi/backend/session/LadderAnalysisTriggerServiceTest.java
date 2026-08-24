@@ -64,6 +64,83 @@ class LadderAnalysisTriggerServiceTest {
     }
 
     @Test
+    void usesLatestTeachingLevelWhenProductionDrillAttemptsDoNotCarryALevel() {
+        LearningSession older = completed(11L, 7L, "number-count", "session-old", 1);
+        LearningSession latest = completed(12L, 7L, "number-count", "session-new", 2);
+        when(sessionRepository.findByPublicId("session-new")).thenReturn(Optional.of(latest));
+        when(sessionRepository.findTop2ByLearnerIdAndCurriculumSessionIdAndCompletedAtIsNotNullOrderByCompletedAtDescIdDesc(
+                        7L, "number-count"))
+                .thenReturn(List.of(latest, older));
+        when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(List.of(11L, 12L)))
+                .thenReturn(List.of(
+                        attemptWithoutLevel(11L, 1, true),
+                        attemptWithoutLevel(11L, 2, false),
+                        attemptWithoutLevel(12L, 1, true),
+                        attemptWithoutLevel(12L, 2, true)));
+        when(reportAiClient.latestExpressionLevel(
+                        7L, "number-count", List.of("session-old", "session-new")))
+                .thenReturn(Optional.of("L2"));
+
+        service.evaluate(new LadderAnalysisTrigger(7L, "session-new"));
+
+        ArgumentCaptor<LadderAnalysisTrigger.Request> request =
+                ArgumentCaptor.forClass(LadderAnalysisTrigger.Request.class);
+        verify(reportAiClient).registerLadderAnalysis(request.capture());
+        assertThat(request.getValue().currentLevel()).isEqualTo("L2");
+        assertThat(request.getValue().performanceByLevel().get("L2"))
+                .isEqualTo(new LadderAnalysisTrigger.Performance(3, 4));
+    }
+
+    @Test
+    void keepsLegacyLevelledPerformanceSeparateFromLatestProductionAttempts() {
+        LearningSession older = completed(11L, 7L, "number-count", "session-old", 1);
+        LearningSession latest = completed(12L, 7L, "number-count", "session-new", 2);
+        when(sessionRepository.findByPublicId("session-new")).thenReturn(Optional.of(latest));
+        when(sessionRepository.findTop2ByLearnerIdAndCurriculumSessionIdAndCompletedAtIsNotNullOrderByCompletedAtDescIdDesc(
+                        7L, "number-count"))
+                .thenReturn(List.of(latest, older));
+        when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(List.of(11L, 12L)))
+                .thenReturn(List.of(
+                        attempt(11L, 1, true, "L3"),
+                        attempt(11L, 2, false, "L3"),
+                        attemptWithoutLevel(12L, 1, true),
+                        attemptWithoutLevel(12L, 2, true)));
+        when(reportAiClient.latestExpressionLevel(
+                        7L, "number-count", List.of("session-old", "session-new")))
+                .thenReturn(Optional.of("L2"));
+
+        service.evaluate(new LadderAnalysisTrigger(7L, "session-new"));
+
+        ArgumentCaptor<LadderAnalysisTrigger.Request> request =
+                ArgumentCaptor.forClass(LadderAnalysisTrigger.Request.class);
+        verify(reportAiClient).registerLadderAnalysis(request.capture());
+        assertThat(request.getValue().currentLevel()).isEqualTo("L2");
+        assertThat(request.getValue().performanceByLevel().get("L3"))
+                .isEqualTo(new LadderAnalysisTrigger.Performance(1, 2));
+        assertThat(request.getValue().performanceByLevel().get("L2"))
+                .isEqualTo(new LadderAnalysisTrigger.Performance(2, 2));
+    }
+
+    @Test
+    void retriesInsteadOfLosingACompletionWhenNeitherDrillNorTeachingLevelIsAvailable() {
+        LearningSession older = completed(11L, 7L, "number-count", "session-old", 1);
+        LearningSession latest = completed(12L, 7L, "number-count", "session-new", 2);
+        when(sessionRepository.findByPublicId("session-new")).thenReturn(Optional.of(latest));
+        when(sessionRepository.findTop2ByLearnerIdAndCurriculumSessionIdAndCompletedAtIsNotNullOrderByCompletedAtDescIdDesc(
+                        7L, "number-count"))
+                .thenReturn(List.of(latest, older));
+        when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(List.of(11L, 12L)))
+                .thenReturn(List.of(attemptWithoutLevel(11L, 1, true)));
+        when(reportAiClient.latestExpressionLevel(
+                        7L, "number-count", List.of("session-old", "session-new")))
+                .thenReturn(Optional.empty());
+
+        assertThat(service.evaluate(new LadderAnalysisTrigger(7L, "session-new")))
+                .isEqualTo(ReportAiClient.LadderRegistrationResult.RETRY);
+        verify(reportAiClient, never()).registerLadderAnalysis(org.mockito.ArgumentMatchers.any());
+    }
+
+    @Test
     void ignoresOneSessionDifferentSubunitsAndReplayedOlderCompletion() {
         LearningSession latest = completed(12L, 7L, "money-count", "session-new", 2);
         when(sessionRepository.findByPublicId("session-new")).thenReturn(java.util.Optional.of(latest));
@@ -190,5 +267,19 @@ class LadderAnalysisTriggerServiceTest {
                 null,
                 null,
                 Map.of("expression_level", level));
+    }
+
+    private Attempt attemptWithoutLevel(Long sessionId, int no, boolean correct) {
+        return Attempt.record(
+                sessionId,
+                "drill",
+                no,
+                "item-" + no,
+                no,
+                correct,
+                100,
+                null,
+                null,
+                Map.of("input_kind", "choices"));
     }
 }

@@ -5,9 +5,11 @@ import com.mormi.backend.report.DiagnosticReportDtos.AiSummary;
 import com.mormi.backend.report.DiagnosticReportDtos.ReportFact;
 import com.mormi.backend.session.LadderAnalysisTrigger;
 import java.time.Duration;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -67,6 +69,44 @@ public class ReportAiClient {
             log.warn("Mormi-AI report evidence unavailable type={}", error.getClass().getSimpleName());
             return Optional.empty();
         }
+    }
+
+    /**
+     * Reads only ladder metadata from the two owned teaching sessions. Raw child speech is never
+     * requested. Production drill attempts are choice records and therefore do not carry an
+     * expression level; the latest teaching turn is the authoritative fallback.
+     */
+    public Optional<String> latestExpressionLevel(
+            long learnerId, String skillId, List<String> learningSessionIds) {
+        Set<String> ownedSessions = Set.copyOf(learningSessionIds == null ? List.of() : learningSessionIds);
+        Optional<AiReportEvidence> evidence = evidence(learnerId, false);
+        if (evidence.isEmpty()) {
+            return Optional.empty();
+        }
+        Optional<String> fromTurns = evidence.orElseThrow().conversations().stream()
+                .filter(item -> item != null && ownedSessions.contains(item.learningSessionId()))
+                .flatMap(item -> item.turns().stream())
+                .filter(item -> item != null
+                        && item.expressionLevel() != null
+                        && !item.expressionLevel().isBlank())
+                .max(Comparator.comparing(
+                        DiagnosticReportDtos.AiTurnEvidence::createdAt,
+                        Comparator.nullsFirst(Comparator.naturalOrder())))
+                .map(item -> canonicalLevel(item.expressionLevel()));
+        if (fromTurns.isPresent()) {
+            return fromTurns;
+        }
+        return evidence.orElseThrow().skills().stream()
+                .filter(item -> item != null && skillId.equals(item.skillId()))
+                .map(DiagnosticReportDtos.AiSkillEvidence::highestStableExpressionLevel)
+                .filter(value -> value != null && !value.isBlank())
+                .map(ReportAiClient::canonicalLevel)
+                .findFirst();
+    }
+
+    private static String canonicalLevel(String value) {
+        String normalized = value.toUpperCase(Locale.ROOT);
+        return "L1".equals(normalized) ? "L2" : normalized;
     }
 
     public Optional<AiSummary> summarize(String learnerLabel, List<ReportFact> facts) {
