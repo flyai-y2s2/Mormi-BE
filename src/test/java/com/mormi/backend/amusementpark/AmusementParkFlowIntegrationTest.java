@@ -251,6 +251,19 @@ class AmusementParkFlowIntegrationTest {
                 .andExpect(jsonPath("$.is_correct").value(true))
                 .andExpect(jsonPath("$.next_stage").value("complete"));
 
+        // FE는 방문 completed_at이 이미 있으면 /complete를 호출하지 않는다(#45).
+        // 마지막 정답 처리와 같은 트랜잭션에서 장소 완료 원장도 반드시 함께 기록돼야 한다.
+        Map<String, Object> completion = jdbc.queryForMap(
+                "SELECT visit.completed_at AS visit_completed_at, theme.completed_at AS theme_completed_at "
+                        + "FROM amusement_park_visits visit "
+                        + "JOIN theme_progress theme ON theme.learner_id = visit.learner_id "
+                        + "AND theme.theme_id = 'amusement_park' "
+                        + "WHERE visit.public_id = ?",
+                visitId);
+        assertThat(completion.get("visit_completed_at")).isNotNull();
+        assertThat(completion.get("theme_completed_at")).isNotNull();
+
+        // 명시적 완료 API는 기존 계약대로 멱등 호출로 남는다.
         mockMvc.perform(post("/v1/amusement-park-visits/{id}/complete", visitId)
                         .header("Authorization", token))
                 .andExpect(status().isOk())

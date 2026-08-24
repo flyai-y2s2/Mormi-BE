@@ -156,7 +156,11 @@ public class AmusementParkService {
         }
 
         if (correct) {
-            visit.advanceTo(stage.next());
+            AmusementParkStage next = stage.next();
+            visit.advanceTo(next);
+            if (next == AmusementParkStage.COMPLETE) {
+                themeProgressService.markAmusementParkCompleted(visit.getLearnerId());
+            }
         }
         return new StageResultResponse(
                 visit.getPublicId(),
