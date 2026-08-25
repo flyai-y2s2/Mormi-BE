@@ -230,7 +230,7 @@
 
 가르치기 대화는 `.../teaching` 호출 때 BE가 생성하고 세션에 귀속합니다. 완료 요청이 임의의 `conversation_id`를 지정할 수 없으며, BE가 저장한 대화의 `completion.teach_reward_eligible`만 확인합니다. 보상 멱등키는 세션당 하나인 `teach-reward:{session}`입니다.
 
-`.../teaching`은 정답 처리된 서로 다른 반복 문제 5개가 모두 저장된 뒤에만 성공합니다. 시도에서 `PracticeSummary`를 집계하고, 결정형 `practice_result_id`와 인라인 요약을 AI에 전달한 뒤 최초 전체 `TurnContract`를 반환합니다. body 없이(또는 `start_mode` 없이) 다시 보내면 마지막 회차 대화를 복구합니다.
+`.../teaching`은 정답 처리된 서로 다른 반복 문제 5개가 모두 저장된 뒤에만 성공합니다. 시도에서 `PracticeSummary`를 집계하고, 결정형 `practice_result_id`, 인라인 요약, 현재 `conversation_round`를 AI에 전달한 뒤 최초 전체 `TurnContract`를 반환합니다. body 없이(또는 `start_mode` 없이) 다시 보내면 마지막 회차 대화를 복구합니다.
 
 ```jsonc
 // POST .../teaching  — body 는 선택
@@ -240,7 +240,8 @@
 `start_mode: "restart"` 는 기존 대화를 보존한 채 새 회차(`round` 증가)의 새 대화를 만들어
 첫 턴부터 시작합니다. 세션이 신뢰하는 대화(`learning_sessions.conversation_id`)는 항상
 마지막 회차를 가리키고, 가르치기 보상 멱등키는 세션당 하나라 재시작해도 보상이 중복되지
-않습니다. `request_id` 규칙은 카페 재시작(E 절)과 같습니다.
+않습니다. BE의 `round`는 AI의 `conversation_round`로 전달되며, 같은 회차 재시도만 기존
+대화를 반환합니다. `request_id` 규칙은 카페 재시작(E 절)과 같습니다.
 
 ### E. 카페
 

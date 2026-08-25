@@ -130,6 +130,9 @@ public class DialogueService {
 
         Map<String, Object> body = baseRequest(learner, "home_teach", "home_teach");
         body.put("learning_session_id", session.getPublicId());
+        // AI idempotency is scoped to (learner, learning session, round).
+        // A retry reuses this round while an explicit restart increments it.
+        body.put("conversation_round", round);
         body.put("practice_result_id", practiceResultId);
         body.put("practice_summary", buildPracticeSummary(session));
 
@@ -139,10 +142,9 @@ public class DialogueService {
         session.setPracticeResultId(practiceResultId);
         // 세션이 신뢰하는 대화는 항상 마지막 회차. 이전 회차는 분석용으로만 남는다.
         session.setConversationId(conversationId);
-        // AI는 같은 학습 세션이면 새로 만들지 않고 기존 대화를 그대로 돌려준다
-        // (learning_session_id 멱등). 그 경우 새 회차가 아니라 같은 대화의 복구이므로
-        // 행을 다시 만들지 않는다. 무조건 INSERT 하면 uq_dialogue_conversation_id 에
-        // 걸려 두 번째 시작부터 항상 500 이 된다. (#37)
+        // 현재 AI는 (learning_session_id, conversation_round)로 새 회차를 구분한다.
+        // 다만 구버전 AI와의 순차 배포 또는 비정상 상류 응답이 같은 conversation_id를
+        // 돌려줄 수 있으므로, 그때는 새 행을 INSERT하지 않고 안전하게 기존 행을 유지한다.
         DialogueConversation existing =
                 dialogueRepository.findByConversationId(conversationId).orElse(null);
         if (existing == null) {

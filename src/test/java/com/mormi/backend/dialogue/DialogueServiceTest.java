@@ -722,6 +722,11 @@ class DialogueServiceTest {
         // 세션이 신뢰하는 대화가 새 회차로 바뀌어야 완료 보상 검증도 새 회차를 본다.
         assertThat(session.getConversationId()).isEqualTo("conversation-teach-2");
 
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> request = ArgumentCaptor.forClass(Map.class);
+        verify(dialogueClient).createConversation(request.capture());
+        assertThat(request.getValue()).containsEntry("conversation_round", 2);
+
         ArgumentCaptor<DialogueConversation> saved =
                 ArgumentCaptor.forClass(DialogueConversation.class);
         verify(dialogueRepository).save(saved.capture());
@@ -729,9 +734,9 @@ class DialogueServiceTest {
         assertThat(saved.getValue().getRequestId()).isEqualTo("req-7");
     }
 
-    /** #37: AI는 같은 학습 세션이면 기존 대화를 돌려준다. 그때 새 행을 만들면 유니크 제약에 걸린다. */
+    /** 순차 배포 방어선: 구버전 AI가 같은 대화를 반환해도 유니크 제약으로 500이 나지 않는다. */
     @Test
-    void homeTeachingRestartReusesTheRowWhenAiReturnsTheSameConversation() throws Exception {
+    void homeTeachingRestartSafelyReusesTheRowWhenAiReturnsTheSameConversation() throws Exception {
         DialogueClient dialogueClient = mock(DialogueClient.class);
         DialogueConversationRepository dialogueRepository = mock(DialogueConversationRepository.class);
         LearningSessionRepository sessionRepository = mock(LearningSessionRepository.class);
@@ -1031,6 +1036,7 @@ class DialogueServiceTest {
                 .containsEntry("learner_id", 7L)
                 .containsEntry("scene", "home_teach")
                 .containsEntry("scenario_id", "home_teach")
+                .containsEntry("conversation_round", 1)
                 .containsEntry("conversation_storage_consent", true)
                 .containsEntry("retention_policy", "permanent")
                 .doesNotContainKeys("display_name", "child_text", "raw_response");
