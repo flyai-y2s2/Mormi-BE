@@ -31,6 +31,10 @@ public class Learner {
     @Setter
     private String displayName;
 
+    /** 아이가 온보딩에서 지어 준 캐릭터 이름. NULL 이면 아직 안 지은 것이다. */
+    @Column(name = "character_name", length = 12)
+    private String characterName;
+
     @Column(name = "research_code", nullable = false, length = 40, updatable = false)
     private String researchCode;
 
@@ -86,5 +90,17 @@ public class Learner {
         }
         this.conversationStorageConsent = consent;
         this.retentionPolicy = consent ? policy : "no_raw";
+    }
+
+    /**
+     * 아이가 지은 캐릭터 이름을 저장한다. 다시 부르면 덮어쓴다.
+     * 길이는 display_name 과 같은 규칙으로 앞뒤 공백을 턴 뒤 1~12자여야 한다.
+     */
+    public void nameCharacter(String name) {
+        String trimmed = name == null ? "" : name.trim();
+        if (trimmed.isEmpty() || trimmed.length() > 12) {
+            throw new IllegalArgumentException("캐릭터 이름은 공백을 뺀 1~12자여야 합니다.");
+        }
+        this.characterName = trimmed;
     }
 }

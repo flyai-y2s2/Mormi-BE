@@ -63,6 +63,7 @@ public class ProgressService {
         return new ProgressResponse(
                 learner.getId(),
                 learner.getDisplayName(),
+                learner.getCharacterName(),
                 learner.getAnalyticsId(),
                 learner.getOnboardingCompletedAt() != null,
                 completed,

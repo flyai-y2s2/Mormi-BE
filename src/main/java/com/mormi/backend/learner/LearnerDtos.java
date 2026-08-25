@@ -19,6 +19,13 @@ public final class LearnerDtos {
     }
 
     /**
+     * 아이가 지은 캐릭터 이름. 공백·길이 검증은 Learner.nameCharacter 가 맡는다.
+     * 빈 값과 길이 초과를 한 곳에서 보면 둘 다 같은 400 으로 나간다.
+     */
+    public record CharacterNameRequest(String characterName) {
+    }
+
+    /**
      * access_token 은 생성·복구 응답에만 실린다. 조회 응답에는 넣지 않는다.
      * display_name 은 화면 표시 전용이고, PostHog 에는 analytics_id 만 쓴다.
      */
@@ -26,6 +33,7 @@ public final class LearnerDtos {
     public record LearnerResponse(
             Long id,
             String displayName,
+            String characterName,
             String researchCode,
             UUID analyticsId,
             boolean conversationStorageConsent,
@@ -37,6 +45,7 @@ public final class LearnerDtos {
             return new LearnerResponse(
                     learner.getId(),
                     learner.getDisplayName(),
+                    learner.getCharacterName(),
                     learner.getResearchCode(),
                     learner.getAnalyticsId(),
                     learner.isConversationStorageConsent(),

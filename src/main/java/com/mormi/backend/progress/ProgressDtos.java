@@ -15,6 +15,7 @@ public final class ProgressDtos {
     public record ProgressResponse(
             Long learnerId,
             String displayName,
+            String characterName,
             UUID analyticsId,
             boolean onboardingComplete,
             List<String> completedSessionIds,
