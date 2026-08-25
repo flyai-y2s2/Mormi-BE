@@ -1,5 +1,7 @@
 package com.mormi.backend.curriculum;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -49,7 +51,56 @@ public final class CurriculumCatalog {
     public static final List<String> CAFE_REQUIRED_SESSION_IDS =
             List.of("number-count", "number-compare", "money-count", "money-price", "money-budget");
 
+    /**
+     * 전체 반복학습 세션의 리포트 표시 이름.
+     *
+     * <p>카페 해금에 필요한 세션과 리포트에 포함할 세션은 서로 다른 개념이다. 리포트는
+     * 완료된 전체 교육과정을 다루며, 선언 순서는 교사용 리포트의 기본 표시 순서로 사용한다.
+     */
+    public static final Map<String, String> SESSION_REPORT_LABELS = sessionReportLabels();
+
     public static final String THEME_CAFE = "cafe";
+
+    private static Map<String, String> sessionReportLabels() {
+        Map<String, String> labels = new LinkedHashMap<>();
+        labels.put("number-count", "수 세기");
+        labels.put("number-compare", "수 비교");
+        labels.put("number-make-ten", "10 만들기와 가르기");
+        labels.put("number-place-value", "십과 일 나누기");
+        labels.put("add-pictures", "그림 덧셈");
+        labels.put("add-place", "자리끼리 덧셈");
+        labels.put("add-make-ten", "10 만들기 덧셈");
+        labels.put("sub-pictures", "그림 뺄셈");
+        labels.put("sub-place", "자리끼리 뺄셈");
+        labels.put("sub-borrow", "받아내림 뺄셈");
+        labels.put("multiply-groups", "같은 수 묶기");
+        labels.put("multiply-addition", "같은 수 이어 더하기");
+        labels.put("multiply-easy-tables", "2·5·10단 활용");
+        labels.put("multiply-tables", "곱셈구구 관계");
+        labels.put("divide-share", "똑같이 나누기");
+        labels.put("divide-group", "묶음 수 찾기");
+        labels.put("money-count", "돈 세기");
+        labels.put("money-price", "가격 합산");
+        labels.put("money-budget", "예산과 거스름돈");
+        labels.put("money-mission", "마트 심부름");
+        labels.put("clock-basic", "정각과 30분");
+        labels.put("clock-quarter", "15분과 45분");
+        labels.put("time-duration", "걸린 시간");
+        labels.put("time-calendar", "달력과 날짜");
+        labels.put("measure-compare", "길이 비교");
+        labels.put("measure-ruler", "자로 길이 재기");
+        labels.put("measure-weight-capacity", "무게와 들이 비교");
+        labels.put("geometry-shapes", "도형의 특징");
+        labels.put("geometry-compose", "도형 나누고 합치기");
+        labels.put("geometry-position", "위치와 방향");
+        labels.put("pattern-repeat", "반복 규칙");
+        labels.put("pattern-number", "수의 변화 규칙");
+        labels.put("pattern-unknown", "규칙의 빈칸");
+        labels.put("data-classify", "기준에 따라 분류하기");
+        labels.put("data-chart", "표와 그래프 읽기");
+        labels.put("data-chance", "가능성 말하기");
+        return Collections.unmodifiableMap(labels);
+    }
 
     /** 카페 메뉴 고정 6종. CafeJourney.tsx 의 menu 와 가격이 같아야 한다. */
     public static final Map<String, Integer> CAFE_MENU_PRICES = Map.of(

@@ -126,6 +126,48 @@ class DiagnosticReportServiceTest {
     }
 
     @Test
+    void currentIncludesCompletedHomeSessionOutsideCafePrerequisites() {
+        LearningSession clockSession = session(
+                11L,
+                LEARNER_ID,
+                "clock-basic",
+                OffsetDateTime.parse("2026-08-19T10:00:00+09:00"));
+        when(sessionRepository
+                .findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                        eq(LEARNER_ID), any(), any()))
+                .thenReturn(List.of(clockSession));
+        when(attemptRepository.findByLearningSessionIdInOrderByCreatedAtAscIdAsc(List.of(11L)))
+                .thenReturn(List.of(attempt(
+                        101L,
+                        11L,
+                        1,
+                        true,
+                        OffsetDateTime.parse("2026-08-19T10:01:00+09:00"))));
+
+        DiagnosticReport report = service.current(LEARNER_ID, LocalDate.parse("2026-08-17"));
+
+        assertThat(report.dataRange().totalHomeSessions()).isEqualTo(1);
+        assertThat(homeTrend(report, "clock-basic").label()).isEqualTo("정각과 30분 단원 · 반복학습");
+    }
+
+    @Test
+    void currentUsesEveryCurriculumSessionWhenFindingAvailableReportWeeks() {
+        when(sessionRepository.findCompletedAtByLearnerIdAndCurriculumSessionIdInOrderByCompletedAtAsc(
+                        eq(LEARNER_ID), anyList()))
+                .thenAnswer(invocation -> {
+                    List<String> requestedSessionIds = invocation.getArgument(1);
+                    return requestedSessionIds.contains("clock-basic")
+                            ? List.of(OffsetDateTime.parse("2026-08-05T10:00:00+09:00"))
+                            : List.of();
+                });
+
+        DiagnosticReport report = service.current(LEARNER_ID, null);
+
+        assertThat(report.period().weekStart()).isEqualTo(LocalDate.parse("2026-08-03"));
+        assertThat(report.period().availableWeekStarts()).containsExactly(LocalDate.parse("2026-08-03"));
+    }
+
+    @Test
     void currentUsesOnlyCompletedRecordsInsideRequestedWeek() {
         when(sessionRepository
                 .findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
@@ -177,14 +219,14 @@ class DiagnosticReportServiceTest {
     }
 
     @Test
-    void reportIncludesCurrentWeekRecommendationAndApprovalKeepsLearnerScope() {
-        LearningSession session = session(11L, LEARNER_ID, "money-count", JANUARY);
+    void reportIncludesCurrentWeekRecommendationForEveryCurriculumSessionAndApprovalKeepsLearnerScope() {
+        LearningSession session = session(11L, LEARNER_ID, "clock-basic", JANUARY);
         when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
                 eq(LEARNER_ID), any(), any())).thenReturn(List.of(session));
         AiLadderRecommendation recommendation = new AiLadderRecommendation(
                 "ladder-1",
                 LEARNER_ID,
-                "money-count",
+                "clock-basic",
                 session.getPublicId(),
                 List.of("session-before", session.getPublicId()),
                 "L2",
@@ -210,7 +252,7 @@ class DiagnosticReportServiceTest {
 
         assertThat(report.ladderRecommendations()).singleElement()
                 .satisfies(item -> {
-                    assertThat(item.skillId()).isEqualTo("money-count");
+                    assertThat(item.skillId()).isEqualTo("clock-basic");
                     assertThat(item.action()).isEqualTo("UPGRADE");
                     assertThat(item.recommendedLevel()).isEqualTo("L3");
                 });
@@ -219,8 +261,8 @@ class DiagnosticReportServiceTest {
     }
 
     @Test
-    void speechEvidenceUsesTheSameSelectedWeek() {
-        service.speechEvidence(LEARNER_ID, "money-count", LocalDate.parse("2026-08-17"));
+    void speechEvidenceSupportsEveryCurriculumSessionAndUsesTheSameSelectedWeek() {
+        service.speechEvidence(LEARNER_ID, "clock-basic", LocalDate.parse("2026-08-17"));
 
         verify(sessionRepository)
                 .findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
@@ -930,6 +972,15 @@ class DiagnosticReportServiceTest {
                         "conversation-owned", moneySession.getPublicId(), "같은 과제", "설명했어", "H0", JANUARY)),
                 List.of(),
                 List.of())));
+    }
+
+    private DomainTrend homeTrend(DiagnosticReport report, String domainId) {
+        return report.modes().stream()
+                .filter(mode -> mode.mode() == HOME)
+                .flatMap(mode -> mode.domains().stream())
+                .filter(domain -> domain.domainId().equals(domainId))
+                .findFirst()
+                .orElseThrow();
     }
 
     private DomainTrend lifeTrend(DiagnosticReport report, String domainId) {
