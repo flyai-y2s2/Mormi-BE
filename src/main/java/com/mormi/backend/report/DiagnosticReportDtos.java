@@ -44,7 +44,8 @@ public final class DiagnosticReportDtos {
             LocalDate weekEnd,
             String timezone,
             LocalDate earliestWeekStart,
-            LocalDate latestWeekStart) {
+            LocalDate latestWeekStart,
+            List<LocalDate> availableWeekStarts) {
     }
 
     public record DataRange(

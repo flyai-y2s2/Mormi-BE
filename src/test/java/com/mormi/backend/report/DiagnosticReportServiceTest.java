@@ -93,6 +93,9 @@ class DiagnosticReportServiceTest {
         ReflectionTestUtils.setField(learner, "id", LEARNER_ID);
         ReflectionTestUtils.setField(learner, "createdAt", OffsetDateTime.parse("2026-01-01T09:00:00+09:00"));
         when(learnerService.require(LEARNER_ID)).thenReturn(learner);
+        when(sessionRepository.findCompletedAtByLearnerIdAndCurriculumSessionIdInOrderByCompletedAtAsc(
+                eq(LEARNER_ID), anyList())).thenReturn(List.of());
+        when(cafeVisitRepository.findCompletedAtByLearnerIdOrderByCompletedAtAsc(LEARNER_ID)).thenReturn(List.of());
         when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
                 eq(LEARNER_ID), any(), any()))
                 .thenReturn(List.of());
@@ -102,6 +105,24 @@ class DiagnosticReportServiceTest {
         when(dialogueRepository.findByLearnerIdOrderByCreatedAtAsc(LEARNER_ID)).thenReturn(List.of());
         when(aiClient.evidence(LEARNER_ID, true)).thenReturn(Optional.empty());
         when(aiClient.summarize(anyString(), anyList())).thenReturn(Optional.empty());
+    }
+
+    @Test
+    void currentDefaultsToLatestWeekWithCompletedDataAndListsEveryAvailableWeek() {
+        when(sessionRepository.findCompletedAtByLearnerIdAndCurriculumSessionIdInOrderByCompletedAtAsc(
+                eq(LEARNER_ID), anyList())).thenReturn(List.of(
+                OffsetDateTime.parse("2026-08-05T10:00:00+09:00"),
+                OffsetDateTime.parse("2026-08-19T10:00:00+09:00")));
+        when(cafeVisitRepository.findCompletedAtByLearnerIdOrderByCompletedAtAsc(LEARNER_ID)).thenReturn(List.of(
+                OffsetDateTime.parse("2026-08-12T10:00:00+09:00")));
+
+        DiagnosticReport report = service.current(LEARNER_ID, null);
+
+        assertThat(report.period().weekStart()).isEqualTo(LocalDate.parse("2026-08-17"));
+        assertThat(report.period().availableWeekStarts()).containsExactly(
+                LocalDate.parse("2026-08-03"),
+                LocalDate.parse("2026-08-10"),
+                LocalDate.parse("2026-08-17"));
     }
 
     @Test
