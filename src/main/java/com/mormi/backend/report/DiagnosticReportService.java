@@ -54,8 +54,10 @@ import com.mormi.backend.session.LearningSessionRepository;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -68,6 +70,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -146,7 +149,11 @@ public class DiagnosticReportService {
     @Transactional(readOnly = true)
     public DiagnosticReport current(long learnerId, LocalDate weekStart) {
         Learner learner = learnerService.require(learnerId);
-        WeeklyReportPeriod period = WeeklyReportPeriod.resolve(weekStart, learner.getCreatedAt(), reportClock);
+        WeeklyReportPeriod period = WeeklyReportPeriod.resolve(
+                weekStart,
+                learner.getCreatedAt(),
+                reportClock,
+                availableReportWeeks(learnerId));
         RecordContext records = loadRecords(learnerId, true, period);
         boolean includeRaw = rawEvidencePermitted(learner);
         Optional<AiReportEvidence> aiEvidence = safeEvidence(learnerId, includeRaw);
@@ -189,7 +196,8 @@ public class DiagnosticReportService {
                         period.weekEnd(),
                         WeeklyReportPeriod.REPORT_ZONE.getId(),
                         period.earliestWeekStart(),
-                        period.latestWeekStart()),
+                        period.latestWeekStart(),
+                        period.availableWeekStarts()),
                 new DataRange(
                         occurrences.isEmpty() ? null : occurrences.getFirst(),
                         occurrences.isEmpty() ? null : occurrences.getLast(),
@@ -208,6 +216,22 @@ public class DiagnosticReportService {
                         speechSamples),
                 narrative.fallback(),
                 ladderRecommendations);
+    }
+
+    private List<LocalDate> availableReportWeeks(long learnerId) {
+        return Stream.concat(
+                        safeList(sessionRepository
+                                .findCompletedAtByLearnerIdAndCurriculumSessionIdInOrderByCompletedAtAsc(
+                                        learnerId, List.copyOf(HOME_LABELS.keySet())))
+                                .stream(),
+                        safeList(cafeVisitRepository.findCompletedAtByLearnerIdOrderByCompletedAtAsc(learnerId)).stream())
+                .filter(Objects::nonNull)
+                .map(completedAt -> completedAt.atZoneSameInstant(WeeklyReportPeriod.REPORT_ZONE)
+                        .toLocalDate()
+                        .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)))
+                .distinct()
+                .sorted()
+                .toList();
     }
 
     public LadderApprovalResponse approveLadderRecommendation(

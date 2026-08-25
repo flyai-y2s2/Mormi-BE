@@ -29,6 +29,17 @@ public interface LearningSessionRepository extends JpaRepository<LearningSession
 
     List<LearningSession> findByLearnerIdAndCompletedAtIsNotNullOrderByCompletedAtDesc(Long learnerId);
 
+    @Query("""
+            SELECT s.completedAt FROM LearningSession s
+            WHERE s.learnerId = :learnerId
+              AND s.curriculumSessionId IN :curriculumSessionIds
+              AND s.completedAt IS NOT NULL
+            ORDER BY s.completedAt ASC
+            """)
+    List<OffsetDateTime> findCompletedAtByLearnerIdAndCurriculumSessionIdInOrderByCompletedAtAsc(
+            @Param("learnerId") Long learnerId,
+            @Param("curriculumSessionIds") List<String> curriculumSessionIds);
+
     List<LearningSession> findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
             Long learnerId, OffsetDateTime startInclusive, OffsetDateTime endExclusive);
 
