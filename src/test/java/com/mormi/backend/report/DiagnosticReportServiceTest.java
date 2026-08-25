@@ -47,6 +47,7 @@ import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Answers;
 import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -619,6 +620,59 @@ class DiagnosticReportServiceTest {
         assertThat(evidence.past().hintLevel()).isEqualTo("H3");
         assertThat(evidence.recent().hintLevel()).isEqualTo("H0");
         assertThat(evidence.verifiedElements()).containsExactly("amount");
+    }
+
+    @Test
+    void speechEvidencePrefersAiBeforeAfterAnalysisOverTheFactualFallback() {
+        aiClient = mock(ReportAiClient.class, invocation -> {
+            if (invocation.getMethod().getName().equals("summarizeSpeechChange")) {
+                return Optional.of(
+                        "답만 짧게 말하던 모습에서 수를 세는 순서를 말로 표현하는 모습으로 변화했습니다.");
+            }
+            return Answers.RETURNS_DEFAULTS.answer(invocation);
+        });
+        service = new DiagnosticReportService(
+                aiClient,
+                learnerService,
+                sessionRepository,
+                attemptRepository,
+                cafeVisitRepository,
+                cafeVisitStageRepository,
+                dialogueRepository,
+                CLOCK);
+        LearningSession pastSession = session(11L, LEARNER_ID, "money-count", JANUARY);
+        LearningSession recentSession = session(12L, LEARNER_ID, "money-count", FEBRUARY);
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
+                .thenReturn(List.of(pastSession, recentSession));
+        when(dialogueRepository.findByLearnerIdOrderByCreatedAtAsc(LEARNER_ID))
+                .thenReturn(List.of(
+                        DialogueConversation.forLearningSession("conversation-past", LEARNER_ID, 11L),
+                        DialogueConversation.forLearningSession("conversation-recent", LEARNER_ID, 12L)));
+        when(aiClient.evidence(LEARNER_ID, true)).thenReturn(Optional.of(new AiReportEvidence(
+                LEARNER_ID,
+                List.of(
+                        completedConversation(
+                                "conversation-past",
+                                pastSession.getPublicId(),
+                                "같은 과제",
+                                "점 3개야",
+                                "H0",
+                                JANUARY),
+                        completedConversation(
+                                "conversation-recent",
+                                recentSession.getPublicId(),
+                                "같은 과제",
+                                "하나 둘 셋 3개",
+                                "H0",
+                                FEBRUARY)),
+                List.of(),
+                List.of())));
+
+        SpeechEvidence evidence = service.speechEvidence(LEARNER_ID, "money-count", REPORT_WEEK);
+
+        assertThat(evidence.changeSummary()).isEqualTo(
+                "답만 짧게 말하던 모습에서 수를 세는 순서를 말로 표현하는 모습으로 변화했습니다.");
     }
 
     @Test

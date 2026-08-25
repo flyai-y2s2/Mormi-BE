@@ -143,6 +143,47 @@ public class ReportAiClient {
         }
     }
 
+    public Optional<String> summarizeSpeechChange(
+            String domainLabel,
+            String pastUtterance,
+            String pastExpressionLevel,
+            String pastHintLevel,
+            String recentUtterance,
+            String recentExpressionLevel,
+            String recentHintLevel) {
+        if (!enabled
+                || pastUtterance == null
+                || pastUtterance.isBlank()
+                || recentUtterance == null
+                || recentUtterance.isBlank()) {
+            return Optional.empty();
+        }
+        try {
+            SpeechChangeSummaryRequest request = new SpeechChangeSummaryRequest(
+                    domainLabel,
+                    new SpeechChangeSample(pastUtterance, pastExpressionLevel, pastHintLevel),
+                    new SpeechChangeSample(recentUtterance, recentExpressionLevel, recentHintLevel));
+            String response = restClient.post()
+                    .uri("/v1/internal/speech-change-summaries")
+                    .header("X-Mormi-Service-Key", serviceKey)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(JSON.writeValueAsString(request))
+                    .retrieve()
+                    .body(String.class);
+            if (response == null || response.isBlank()) {
+                return Optional.empty();
+            }
+            String text = JSON.readValue(response, SpeechChangeSummaryResponse.class).text();
+            return text == null || text.isBlank() ? Optional.empty() : Optional.of(text);
+        } catch (RestClientResponseException error) {
+            log.warn("Mormi-AI speech change summary failed status={}", error.getStatusCode().value());
+            return Optional.empty();
+        } catch (Exception error) {
+            log.warn("Mormi-AI speech change summary unavailable type={}", error.getClass().getSimpleName());
+            return Optional.empty();
+        }
+    }
+
     public LadderRegistrationResult registerLadderAnalysis(LadderAnalysisTrigger.Request request) {
         if (!enabled) {
             return LadderRegistrationResult.RETRY;
@@ -214,6 +255,21 @@ public class ReportAiClient {
     }
 
     private record SummaryFact(String evidenceId, String category, String statement) {
+    }
+
+    private record SpeechChangeSummaryRequest(
+            String domainLabel,
+            SpeechChangeSample past,
+            SpeechChangeSample recent) {
+    }
+
+    private record SpeechChangeSample(
+            String utterance,
+            String expressionLevel,
+            String hintLevel) {
+    }
+
+    private record SpeechChangeSummaryResponse(String text, List<String> evidenceSpans) {
     }
 
     private record ApprovalRequest(long learnerId, int recommendationVersion) {

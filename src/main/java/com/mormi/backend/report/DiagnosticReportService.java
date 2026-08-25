@@ -255,7 +255,10 @@ public class DiagnosticReportService {
                     selected.past().sample(),
                     selected.recent().sample(),
                     selected.verifiedElements(),
-                    changeSummary(selected.past().sample(), selected.recent().sample()));
+                    analyzedChangeSummary(
+                            domainId,
+                            selected.past().sample(),
+                            selected.recent().sample()));
         }
         List<SpeechCandidate> fallback = fallbackSpeechCandidates(
                 records, evidence.orElseThrow(), domainId, period);
@@ -271,7 +274,9 @@ public class DiagnosticReportService {
                 past,
                 recent,
                 List.of(),
-                past == null ? "최근 발화 1건을 확인했습니다." : changeSummary(past, recent));
+                past == null
+                        ? "최근 발화 1건을 확인했습니다."
+                        : analyzedChangeSummary(domainId, past, recent));
     }
 
     private List<LadderRecommendation> ladderRecommendations(
@@ -1088,6 +1093,18 @@ public class DiagnosticReportService {
         }
         return "도움 수준이 " + valueOrUnknown(past.hintLevel()) + "에서 "
                 + valueOrUnknown(recent.hintLevel()) + "로 바뀌었습니다.";
+    }
+
+    private String analyzedChangeSummary(String domainId, SpeechSample past, SpeechSample recent) {
+        return aiClient.summarizeSpeechChange(
+                        labelFor(domainId),
+                        past.utterance(),
+                        past.expressionLevel(),
+                        past.hintLevel(),
+                        recent.utterance(),
+                        recent.expressionLevel(),
+                        recent.hintLevel())
+                .orElseGet(() -> changeSummary(past, recent));
     }
 
     private String labelFor(String domainId) {
