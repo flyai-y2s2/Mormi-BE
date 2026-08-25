@@ -650,6 +650,47 @@ class DiagnosticReportServiceTest {
     }
 
     @Test
+    void speechEvidenceSkipsStructuredChoicePayloadsThatAreNotChildSpeech() {
+        LearningSession pastSession = session(11L, LEARNER_ID, "money-count", JANUARY);
+        LearningSession recentSession = session(12L, LEARNER_ID, "money-count", FEBRUARY);
+        when(sessionRepository.findByLearnerIdAndCompletedAtGreaterThanEqualAndCompletedAtLessThanOrderByCompletedAtAsc(
+                eq(LEARNER_ID), any(), any()))
+                .thenReturn(List.of(recentSession, pastSession));
+        when(dialogueRepository.findByLearnerIdOrderByCreatedAtAsc(LEARNER_ID))
+                .thenReturn(List.of(
+                        DialogueConversation.forLearningSession("conversation-past", LEARNER_ID, 11L),
+                        DialogueConversation.forLearningSession("conversation-recent", LEARNER_ID, 12L)));
+        AiConversationEvidence structured = withResponseType(
+                completedConversationWithoutSnapshots(
+                        "conversation-recent",
+                        recentSession.getPublicId(),
+                        "같은 과제",
+                        "{'answer': '3', 'tracking': 'count_each_once'}",
+                        "H3",
+                        FEBRUARY),
+                "choice");
+        when(aiClient.evidence(LEARNER_ID, true)).thenReturn(Optional.of(new AiReportEvidence(
+                LEARNER_ID,
+                List.of(
+                        completedConversationWithoutSnapshots(
+                                "conversation-past",
+                                pastSession.getPublicId(),
+                                "같은 과제",
+                                "점을 하나씩 세어서 3개야",
+                                "H0",
+                                JANUARY),
+                        structured),
+                List.of(),
+                List.of())));
+
+        SpeechEvidence evidence = service.speechEvidence(LEARNER_ID, "money-count", REPORT_WEEK);
+
+        assertThat(evidence.available()).isTrue();
+        assertThat(evidence.past()).isNull();
+        assertThat(evidence.recent().utterance()).isEqualTo("점을 하나씩 세어서 3개야");
+    }
+
+    @Test
     void speechEvidenceUsesEvidenceIdAsTieBreakerWhenComparableTurnsShareATimestamp() {
         LearningSession firstSession = session(11L, LEARNER_ID, "money-count", JANUARY);
         LearningSession secondSession = session(12L, LEARNER_ID, "money-count", JANUARY.plusMinutes(1));
@@ -990,6 +1031,34 @@ class DiagnosticReportServiceTest {
                 conversation.turns(),
                 conversation.createdAt(),
                 updatedAt);
+    }
+
+    private AiConversationEvidence withResponseType(
+            AiConversationEvidence conversation, String responseType) {
+        AiTurnEvidence turn = conversation.turns().getFirst();
+        AiTurnEvidence replaced = new AiTurnEvidence(
+                turn.turnId(),
+                turn.taskId(),
+                turn.response(),
+                responseType,
+                turn.responseCategory(),
+                turn.expressionLevel(),
+                turn.hintLevel(),
+                turn.pedagogy(),
+                turn.createdAt());
+        return new AiConversationEvidence(
+                conversation.conversationId(),
+                conversation.learningSessionId(),
+                conversation.scene(),
+                conversation.scenarioId(),
+                conversation.status(),
+                conversation.completionOutcome(),
+                conversation.teachRewardEligible(),
+                conversation.verifiedSlots(),
+                conversation.taskMaxHint(),
+                List.of(replaced),
+                conversation.createdAt(),
+                conversation.updatedAt());
     }
 
     private AiConversationEvidence completedCafeConversation(

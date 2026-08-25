@@ -83,6 +83,7 @@ public class DiagnosticReportService {
     private static final Set<String> COMPLETION_OUTCOMES = Set.of("taught", "supported", "bright_exit");
     private static final Set<String> VERIFIED_RESPONSE_CATEGORIES =
             Set.of("correct_full", "correct_partial", "self_correction");
+    private static final String CHILD_SPEECH_RESPONSE_TYPE = "text";
     private static final List<String> REQUIRED_LIFE_STAGES =
             List.of("queue", "menu", "calculate", "change");
     private static final Map<String, String> HOME_LABELS = Map.of(
@@ -606,6 +607,7 @@ public class DiagnosticReportService {
                         || turn.response() == null
                         || turn.response().isBlank()
                         || turn.createdAt() == null
+                        || !CHILD_SPEECH_RESPONSE_TYPE.equals(normalize(turn.responseType()))
                         || !VERIFIED_RESPONSE_CATEGORIES.contains(normalize(turn.responseCategory()))) {
                     continue;
                 }
@@ -665,6 +667,7 @@ public class DiagnosticReportService {
                     .filter(item -> item.turnId() != null && seenTurnIds.add(item.turnId()))
                     .filter(item -> item.response() != null && !item.response().isBlank())
                     .filter(item -> item.createdAt() != null && isWithin(period, item.createdAt()))
+                    .filter(item -> CHILD_SPEECH_RESPONSE_TYPE.equals(normalize(item.responseType())))
                     .filter(item -> VERIFIED_RESPONSE_CATEGORIES.contains(normalize(item.responseCategory())))
                     .sorted(Comparator
                             .comparing(AiTurnEvidence::createdAt)

@@ -29,11 +29,11 @@ class ReportAiClientTest {
         try {
             ReportAiClient client = new ReportAiClient(
                     "http://127.0.0.1:" + server.getAddress().getPort(), "shared-secret", 45);
-            boolean accepted = client.registerLadderAnalysis(new LadderAnalysisTrigger.Request(
+            var accepted = client.registerLadderAnalysis(new LadderAnalysisTrigger.Request(
                     "key", 7L, "money-count", "session-2", List.of("session-1", "session-2"),
                     "L2", Map.of("L2", new LadderAnalysisTrigger.Performance(9, 10)), 0));
 
-            assertThat(accepted).isTrue();
+            assertThat(accepted).isEqualTo(ReportAiClient.LadderRegistrationResult.ACCEPTED);
             assertThat(key.get()).isEqualTo("shared-secret");
             assertThat(body.get()).contains("\"idempotency_key\":\"key\"");
             assertThat(body.get()).contains("\"performance_by_level\":{\"L2\":");
@@ -54,7 +54,34 @@ class ReportAiClientTest {
         assertThat(client.registerLadderAnalysis(new LadderAnalysisTrigger.Request(
                 "key", 7L, "money-count", "session-2", List.of("session-1", "session-2"),
                 "L2", Map.of("L2", new LadderAnalysisTrigger.Performance(9, 10)), 0)))
-                .isFalse();
+                .isEqualTo(ReportAiClient.LadderRegistrationResult.RETRY);
+    }
+
+    @Test
+    void ladderRegistrationRetriesTemporaryErrorsAndRejectsPermanentClientErrors() throws Exception {
+        var status = new java.util.concurrent.atomic.AtomicInteger(503);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/internal/ladder-analyses", exchange ->
+                respond(exchange, status.get(), "{}"));
+        server.start();
+        try {
+            ReportAiClient client = new ReportAiClient(
+                    "http://127.0.0.1:" + server.getAddress().getPort(), "shared-secret", 45);
+            var request = new LadderAnalysisTrigger.Request(
+                    "key", 7L, "money-count", "session-2", List.of("session-1", "session-2"),
+                    "L2", Map.of("L2", new LadderAnalysisTrigger.Performance(9, 10)), 0);
+
+            assertThat(client.registerLadderAnalysis(request))
+                    .isEqualTo(ReportAiClient.LadderRegistrationResult.RETRY);
+            status.set(422);
+            assertThat(client.registerLadderAnalysis(request))
+                    .isEqualTo(ReportAiClient.LadderRegistrationResult.REJECTED);
+            status.set(409);
+            assertThat(client.registerLadderAnalysis(request))
+                    .isEqualTo(ReportAiClient.LadderRegistrationResult.ACCEPTED);
+        } finally {
+            server.stop(0);
+        }
     }
 
     @Test
@@ -135,6 +162,8 @@ class ReportAiClientTest {
                     "http://127.0.0.1:" + server.getAddress().getPort(), "shared-secret", 45);
 
             var evidence = client.evidence(7L, true);
+            assertThat(evidenceQuery.get()).isEqualTo("include_raw=true");
+            var latestLevel = client.latestExpressionLevel(7L, "addition", List.of("session-1"));
             var summary = client.summarize("민서", List.of(
                     new ReportFact("drill:money-count", CONCEPT, "돈 세기 상태는 관찰 중입니다.")));
 
@@ -142,8 +171,9 @@ class ReportAiClientTest {
             assertThat(evidence.orElseThrow().conversations().getFirst().turns().getFirst().response())
                     .isEqualTo("500원과 100원을 더했어");
             assertThat(evidence.orElseThrow().skills().getFirst().skillId()).isEqualTo("addition");
+            assertThat(latestLevel).contains("L3");
             assertThat(summary).isPresent();
-            assertThat(evidenceQuery.get()).isEqualTo("include_raw=true");
+            assertThat(evidenceQuery.get()).isEqualTo("include_raw=false");
             assertThat(evidenceKey.get()).isEqualTo("shared-secret");
             assertThat(summaryKey.get()).isEqualTo("shared-secret");
             assertThat(summaryBody.get()).contains("\"learner_label\":\"민서\"");
