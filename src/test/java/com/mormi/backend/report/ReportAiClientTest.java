@@ -7,13 +7,62 @@ import com.mormi.backend.report.DiagnosticReportDtos.ReportFact;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.lang.reflect.Method;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import com.mormi.backend.session.LadderAnalysisTrigger;
 import java.util.Map;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 
 class ReportAiClientTest {
+
+    @Test
+    void speechChangeSummaryUsesSharedKeyAndBeforeAfterContract() throws Exception {
+        AtomicReference<String> key = new AtomicReference<>();
+        AtomicReference<String> body = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/internal/speech-change-summaries", exchange -> {
+            key.set(exchange.getRequestHeaders().getFirst("X-Mormi-Service-Key"));
+            body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            respond(exchange, 200, """
+                    {
+                      "text": "답만 말하던 모습에서 수를 세는 순서를 표현하는 모습으로 변화했습니다.",
+                      "evidence_spans": ["점 3개야", "하나 둘 셋 3개"]
+                    }
+                    """);
+        });
+        server.start();
+        try {
+            ReportAiClient client = new ReportAiClient(
+                    "http://127.0.0.1:" + server.getAddress().getPort(), "shared-secret", 45);
+            Method method = Arrays.stream(ReportAiClient.class.getMethods())
+                    .filter(candidate -> candidate.getName().equals("summarizeSpeechChange"))
+                    .findFirst()
+                    .orElse(null);
+
+            assertThat(method).as("the report client must expose a speech comparison call").isNotNull();
+            Object result = method.invoke(
+                    client,
+                    "수 세기",
+                    "점 3개야",
+                    "L4",
+                    "H0",
+                    "하나 둘 셋 3개",
+                    "L4",
+                    "H0");
+
+            assertThat(result).isEqualTo(Optional.of(
+                    "답만 말하던 모습에서 수를 세는 순서를 표현하는 모습으로 변화했습니다."));
+            assertThat(key.get()).isEqualTo("shared-secret");
+            assertThat(body.get()).contains("\"domain_label\":\"수 세기\"");
+            assertThat(body.get()).contains("\"utterance\":\"점 3개야\"");
+            assertThat(body.get()).contains("\"utterance\":\"하나 둘 셋 3개\"");
+        } finally {
+            server.stop(0);
+        }
+    }
 
     @Test
     void ladderRegistrationUsesSharedKeyAndMetadataOnlySnakeCaseContract() throws Exception {
