@@ -84,7 +84,9 @@ public class ReportAiClient {
             return Optional.empty();
         }
         Optional<String> fromTurns = evidence.orElseThrow().conversations().stream()
-                .filter(item -> item != null && ownedSessions.contains(item.learningSessionId()))
+                .filter(item -> item != null
+                        && item.learningSessionId() != null
+                        && ownedSessions.contains(item.learningSessionId()))
                 .flatMap(item -> item.turns().stream())
                 .filter(item -> item != null
                         && item.expressionLevel() != null

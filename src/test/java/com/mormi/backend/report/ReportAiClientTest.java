@@ -185,6 +185,66 @@ class ReportAiClientTest {
     }
 
     @Test
+    void latestExpressionLevelIgnoresConversationsWithoutLearningSessionId() throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/internal/learners/7/report-evidence", exchange -> respond(exchange, 200, """
+                {
+                  "learner_id": 7,
+                  "conversations": [{
+                    "conversation_id": "cafe-conversation",
+                    "learning_session_id": null,
+                    "scene": "cafe",
+                    "scenario_id": "cafe_queue",
+                    "status": "completed",
+                    "completion_outcome": "completed",
+                    "teach_reward_eligible": false,
+                    "verified_slots": {},
+                    "task_max_hint": "H0",
+                    "turns": [],
+                    "created_at": "2026-01-10T08:00:00+09:00",
+                    "updated_at": "2026-01-10T08:05:00+09:00"
+                  }, {
+                    "conversation_id": "teaching-conversation",
+                    "learning_session_id": "session-1",
+                    "scene": "home_teach",
+                    "scenario_id": "home_teach",
+                    "status": "completed",
+                    "completion_outcome": "taught",
+                    "teach_reward_eligible": true,
+                    "verified_slots": {},
+                    "task_max_hint": "H1",
+                    "turns": [{
+                      "turn_id": "turn-1",
+                      "task_id": "explain-money",
+                      "response": null,
+                      "response_type": "text",
+                      "response_category": "correct_full",
+                      "expression_level": "L3",
+                      "hint_level": "H1",
+                      "pedagogy": {},
+                      "created_at": "2026-01-10T09:00:00+09:00"
+                    }],
+                    "created_at": "2026-01-10T08:55:00+09:00",
+                    "updated_at": "2026-01-10T09:00:00+09:00"
+                  }],
+                  "skills": [],
+                  "notes": []
+                }
+                """));
+        server.start();
+
+        try {
+            ReportAiClient client = new ReportAiClient(
+                    "http://127.0.0.1:" + server.getAddress().getPort(), "shared-secret", 45);
+
+            assertThat(client.latestExpressionLevel(7L, "addition", List.of("session-1")))
+                    .contains("L3");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     void connectionAndServerFailuresReturnEmpty() throws Exception {
         HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/v1/internal/learners/7/report-evidence", exchange ->
