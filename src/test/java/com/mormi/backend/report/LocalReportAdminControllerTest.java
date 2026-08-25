@@ -61,10 +61,10 @@ class LocalReportAdminControllerTest {
     void speechEvidenceUsesTheSameSelectedLearner() {
         LocalDate monday = LocalDate.of(2026, 8, 17);
 
-        controller.speechEvidence(19L, "money-count", monday, requestWithLoopbackAndKey());
+        controller.speechEvidence(19L, "clock-basic", monday, requestWithLoopbackAndKey());
 
         verify(guard).requireAllowed("local-secret", "127.0.0.1");
-        verify(diagnosticReportService).speechEvidence(19L, "money-count", monday);
+        verify(diagnosticReportService).speechEvidence(19L, "clock-basic", monday);
     }
 
     @Test

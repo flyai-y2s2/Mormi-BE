@@ -13,6 +13,7 @@ import com.mormi.backend.cafe.CafeVisit;
 import com.mormi.backend.cafe.CafeVisitRepository;
 import com.mormi.backend.cafe.CafeVisitStage;
 import com.mormi.backend.cafe.CafeVisitStageRepository;
+import com.mormi.backend.curriculum.CurriculumCatalog;
 import com.mormi.backend.dialogue.DialogueConversation;
 import com.mormi.backend.dialogue.DialogueConversationRepository;
 import com.mormi.backend.learner.Learner;
@@ -89,12 +90,7 @@ public class DiagnosticReportService {
     private static final String CHILD_SPEECH_RESPONSE_TYPE = "text";
     private static final List<String> REQUIRED_LIFE_STAGES =
             List.of("queue", "menu", "calculate", "change");
-    private static final Map<String, String> HOME_LABELS = Map.of(
-            "number-count", "수 세기",
-            "number-compare", "수 비교",
-            "money-count", "돈 세기",
-            "money-price", "가격 합산",
-            "money-budget", "예산과 거스름돈");
+    private static final Map<String, String> HOME_LABELS = CurriculumCatalog.SESSION_REPORT_LABELS;
     private static final Map<String, String> LIFE_LABELS = Map.of(
             "queue", "줄 서기",
             "menu", "메뉴 고르기",
@@ -106,17 +102,10 @@ public class DiagnosticReportService {
             "cafe_budget_menu", "menu",
             "cafe_menu_total", "calculate",
             "cafe_change", "change");
-    private static final List<String> REPORT_DOMAINS = List.of(
-            "number-count",
-            "number-compare",
-            "money-count",
-            "money-price",
-            "money-budget",
-            "queue",
-            "menu",
-            "calculate",
-            "change",
-            "complete");
+    private static final List<String> REPORT_DOMAINS = Stream.concat(
+                    HOME_LABELS.keySet().stream(),
+                    List.of("queue", "menu", "calculate", "change", "complete").stream())
+            .toList();
 
     private final ReportAiClient aiClient;
     private final LearnerService learnerService;
