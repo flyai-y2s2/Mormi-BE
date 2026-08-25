@@ -39,6 +39,7 @@ erDiagram
         bigserial id PK
         bigint    account_id FK "UK. 로그인 정보는 accounts 가 관리"
         varchar   display_name
+        varchar   character_name "아이가 온보딩에서 지은 캐릭터 이름 1~12자. NULL 이면 아직 안 지음"
         varchar   research_code UK "연구 식별자. 인증에는 쓰지 않는다"
         uuid      analytics_id  UK "PostHog 등 외부 분석용"
         boolean   conversation_storage_consent

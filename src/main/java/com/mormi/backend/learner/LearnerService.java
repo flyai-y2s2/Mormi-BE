@@ -1,6 +1,7 @@
 package com.mormi.backend.learner;
 
 import com.mormi.backend.common.ApiException;
+import com.mormi.backend.learner.LearnerDtos.CharacterNameRequest;
 import com.mormi.backend.learner.LearnerDtos.ConversationConsentRequest;
 import com.mormi.backend.learner.LearnerDtos.LearnerResponse;
 import org.springframework.stereotype.Service;
@@ -32,6 +33,14 @@ public class LearnerService {
         // 상태 캐시만 바꾸면 이전 동의가 사라진다. 장부에 철회·재동의를 함께 남긴다.
         // 아이 기기에서 스스로 바꾼 것이라 수집 주체(collected_by)는 비워 둔다.
         consentRecordService.recordChange(learnerId, learner.isConversationStorageConsent(), null);
+        return LearnerResponse.of(learner, null);
+    }
+
+    /** 아이가 지은 캐릭터 이름을 저장한다. 이전 이름은 남기지 않고 덮어쓴다. */
+    @Transactional
+    public LearnerResponse updateCharacterName(Long learnerId, CharacterNameRequest request) {
+        Learner learner = require(learnerId);
+        learner.nameCharacter(request.characterName());
         return LearnerResponse.of(learner, null);
     }
 

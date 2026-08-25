@@ -50,6 +50,7 @@
 {
   "id": 1, "display_name": "민준", "research_code": "MORMI-A03",
   "analytics_id": "4fc04095-...",   // PostHog identify 전용 가명 ID
+  // "character_name": "몽이"       // 아이가 지은 뒤부터 실린다. 가입 직후에는 없음
   "conversation_storage_consent": true, "retention_policy": "permanent",
   "access_token": "KMw_gyMdWRtm..."
 }
@@ -91,9 +92,21 @@
 |---|---|---|---|
 | `GET` | `/v1/learners/{learner_id}` | ✓ | 프로필 조회 (본인만) |
 | `PATCH` | `/v1/learners/me/conversation-consent` | ✓ | 자유 발화 암호화 저장 동의·보존기간 변경 |
+| `PATCH` | `/v1/learners/me/character-name` | ✓ | 아이가 지은 캐릭터 이름 저장 (덮어쓰기) |
 | `GET` | `/v1/learners/{learner_id}/star-notes` | ✓ | 별노트 목록 (본인만). 상세는 G-3 |
 
+```jsonc
+// PATCH /v1/learners/me/character-name
+{ "character_name": "몽이" }
+// 200 → LearnerResponse (character_name 포함)
+// 400 → 앞뒤 공백을 턴 뒤 비어 있거나 12자 초과
+```
+
 - `display_name` 은 화면 표시 전용. PostHog 와 AI 프롬프트에는 `analytics_id` 만 씁니다.
+- `character_name` 은 온보딩에서 아이가 직접 지은 캐릭터 이름입니다. 저장 전에는 응답에
+  키가 실리지 않으며(전역 `non_null` 직렬화), 프런트는 그 상태를 이름 짓기 화면 신호로 씁니다.
+  화면 기본값 '모르미' 는 프런트 폴백이고 서버는 채워 넣지 않습니다.
+  `PATCH` 를 다시 부르면 이력 없이 덮어씁니다.
 - 구 연구 코드 온보딩(`POST /v1/learners`, `POST /v1/learners/auth`)은 **제거됐습니다.**
   V13 이전에 그 경로로만 온보딩한 학습자는 로그인 수단이 없어 접근이 끊기지만,
   행과 학습 기록은 연구 산출물로 남습니다.
@@ -141,6 +154,8 @@
 // GET /v1/progress
 {
   "learner_id": 1, "display_name": "민준", "analytics_id": "...",
+  "character_name": "몽이",           // 아직 안 지었으면 키 자체가 없음
+
   "onboarding_complete": true,
   "completed_session_ids": ["money-count", "money-price"],
   "wallet_balance": 7850,
@@ -675,9 +690,10 @@ AI에서 처리가 끝났지만 응답만 유실된 경우도 있으므로, FE�
 ```
 accounts             id, login_id UNIQUE, password_hash, role(learner|educator), created_at
 auth_tokens          id, account_id, token_hash UNIQUE, expires_at, revoked_at, created_at
-learners             id, account_id UNIQUE, display_name, research_code UNIQUE,
-                     analytics_id UUID UNIQUE, conversation_storage_consent,
-                     retention_policy, onboarding_completed_at, created_at
+learners             id, account_id UNIQUE, display_name, character_name NULL,
+                     research_code UNIQUE, analytics_id UUID UNIQUE,
+                     conversation_storage_consent, retention_policy,
+                     onboarding_completed_at, created_at
 organizations        id, name, created_at
 educators            id, organization_id, account_id UNIQUE, display_name, role(직위), created_at
 cohorts              id, organization_id, name, class_code UNIQUE, created_at

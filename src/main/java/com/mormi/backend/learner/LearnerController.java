@@ -1,6 +1,7 @@
 package com.mormi.backend.learner;
 
 import com.mormi.backend.auth.AccountPrincipal;
+import com.mormi.backend.learner.LearnerDtos.CharacterNameRequest;
 import com.mormi.backend.learner.LearnerDtos.ConversationConsentRequest;
 import com.mormi.backend.learner.LearnerDtos.LearnerResponse;
 import jakarta.validation.Valid;
@@ -33,5 +34,13 @@ public class LearnerController {
             @AuthenticationPrincipal AccountPrincipal principal,
             @Valid @RequestBody ConversationConsentRequest request) {
         return learnerService.updateConversationConsent(principal.subjectId(), request);
+    }
+
+    /** 본인 토큰으로만 부른다. 경로에 learner_id 를 두지 않아 남의 캐릭터를 건드릴 수 없다. */
+    @PatchMapping("/me/character-name")
+    public LearnerResponse updateCharacterName(
+            @AuthenticationPrincipal AccountPrincipal principal,
+            @RequestBody CharacterNameRequest request) {
+        return learnerService.updateCharacterName(principal.subjectId(), request);
     }
 }
