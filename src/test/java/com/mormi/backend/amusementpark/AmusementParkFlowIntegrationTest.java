@@ -14,7 +14,6 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -38,10 +37,8 @@ import tools.jackson.databind.ObjectMapper;
 /**
  * 놀이동산 3스테이지 방문 계약(#29)을 실제 PostgreSQL 로 검증한다.
  * 1) 카페를 마쳐야 열린다
- * 2) 단계는 서버 판정으로만 해금된다
- * 3) 정답은 방문에 고정된 값으로 서버가 계산한다
- *
- * <p>문제 숫자는 방문마다 뽑히므로(#31) 테스트도 값을 못 박지 않고 방문 응답에서 읽어 계산한다.
+ * 2) 단계는 인증된 AI 완료 증거로만 해금된다
+ * 3) 방문 응답에는 문제·정답·힌트가 섞이지 않는다
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -104,6 +101,9 @@ class AmusementParkFlowIntegrationTest {
     @Autowired
     JdbcTemplate jdbc;
 
+    @Autowired
+    AmusementParkService amusementParkService;
+
     @Test
     void 카페를_마쳐야_놀이동산이_열린다() throws Exception {
         String token = learnerToken("하준", "MORMI-P01");
@@ -158,7 +158,7 @@ class AmusementParkFlowIntegrationTest {
     }
 
     @Test
-    void 방문_응답은_스테이지_콘텐츠와_잠금_상태를_함께_내려준다() throws Exception {
+    void 방문_응답은_지도_껍데기와_잠금_상태만_내려준다() throws Exception {
         String token = unlockedParkToken("서우", "MORMI-P02");
 
         String body = mockMvc.perform(
@@ -173,73 +173,44 @@ class AmusementParkFlowIntegrationTest {
                 .andExpect(jsonPath("$.stages[0].scenario_id").value("amusement_ticket_multiply"))
                 .andExpect(jsonPath("$.stages[0].title").value("매표소"))
                 .andExpect(jsonPath("$.stages[0].skill").value("multiply"))
-                .andExpect(jsonPath("$.stages[0].prompt")
-                        .value("1인 입장료와 일행 수를 이용해 총액을 설명해 주세요."))
-                .andExpect(jsonPath("$.stages[0].mormi_misconception").isNotEmpty())
-                .andExpect(jsonPath("$.stages[0].facts[0].key").value("ticket_price"))
-                .andExpect(jsonPath("$.stages[0].facts[1].key").value("party_count"))
+                .andExpect(jsonPath("$.stages[0].prompt").doesNotExist())
+                .andExpect(jsonPath("$.stages[0].mormi_misconception").doesNotExist())
+                .andExpect(jsonPath("$.stages[0].facts").doesNotExist())
+                .andExpect(jsonPath("$.stages[0].verified_facts").doesNotExist())
+                .andExpect(jsonPath("$.stages[0].transfer").doesNotExist())
                 .andReturn().getResponse().getContentAsString();
 
-        // 숫자는 방문마다 다르므로 "값"이 아니라 "값들 사이의 관계"를 검증한다.
+        // 문제·정답·힌트·전이 문제는 AI 대화를 연 뒤에만 내려온다.
         JsonNode root = objectMapper.readTree(body);
-        Map<String, Integer> facts = readFacts(root);
-        assertThat(facts.get("snack_total") % facts.get("payer_count")).isZero();
-        assertThat(facts.get("day_pass_price") % facts.get("single_ride_price")).isZero();
-
-        int breakEven = facts.get("day_pass_price") / facts.get("single_ride_price");
-        assertThat(root.get("stages").get(0).get("verified_facts").get("total_price").asInt())
-                .isEqualTo(facts.get("ticket_price") * facts.get("party_count"));
-        assertThat(root.get("stages").get(1).get("verified_facts").get("per_person").asInt())
-                .isEqualTo(facts.get("snack_total") / facts.get("payer_count"));
-        assertThat(root.get("stages").get(2).get("verified_facts").get("break_even_rides").asInt())
-                .isEqualTo(breakEven);
-        assertThat(root.get("stages").get(2).get("verified_facts").get("benefit_from_rides").asInt())
-                .isEqualTo(breakEven + 1);
-
-        // 전이 턴은 "배운 전략을 새 숫자에 다시 적용"이라 본문제와 같은 식이면 안 된다.
-        assertThat(root.get("stages").get(0).get("transfer").get("equation").asString())
-                .isNotEqualTo("%,d × %d = %,d".formatted(
-                        facts.get("ticket_price"),
-                        facts.get("party_count"),
-                        facts.get("ticket_price") * facts.get("party_count")));
+        assertThat(root.toString()).doesNotContain(
+                "ticket_price", "total_price", "mormi_misconception", "expected_answers");
     }
 
     @Test
-    void 앞_단계를_통과해야_다음_단계가_열리고_완료까지_기록이_남는다() throws Exception {
+    void AI가_검증한_완료만_순서대로_진행시키고_증거를_기록한다() throws Exception {
         String token = unlockedParkToken("나은", "MORMI-P03");
-        ParkProblem problem = startParkVisit(token);
-        String visitId = problem.visitId();
+        String visitId = startParkVisit(token);
+        Long learnerId = parkLearnerId(visitId);
 
-        // 아직 열리지 않은 단계는 제출 자체가 막힌다.
-        mockMvc.perform(submit(token, visitId, "snack_split",
-                        Map.of("per_person", problem.perPerson()), 1))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("stage_locked"));
+        assertThatThrownBy(() -> amusementParkService.completeFromDialogue(
+                        learnerId,
+                        visitId,
+                        "snack_split",
+                        Map.of("snack_total", 6000, "payer_count", 3, "per_person", 2000),
+                        900001,
+                        "independent",
+                        true))
+                .hasFieldOrPropertyWithValue("code", "stage_locked");
 
-        // 매표소: 먼저 한 장 값만 내는 오개념으로 틀린다(일행이 2명 이상이라 늘 모자란 답이다).
-        int oneTicket = problem.fact("ticket_price");
-        mockMvc.perform(submit(token, visitId, "ticket", Map.of("total_price", oneTicket), 1))
-                .andExpect(jsonPath("$.is_correct").value(false))
-                .andExpect(jsonPath("$.feedback_code").value("ticket_short"))
-                .andExpect(jsonPath("$.expected_answers.total_price").value(problem.totalPrice()))
-                .andExpect(jsonPath("$.next_stage").value("ticket"));
-
-        mockMvc.perform(submit(token, visitId, "ticket",
-                        Map.of("total_price", problem.totalPrice()), 2))
-                .andExpect(jsonPath("$.is_correct").value(true))
-                .andExpect(jsonPath("$.next_stage").value("snack_split"));
-
-        mockMvc.perform(submit(token, visitId, "snack_split",
-                        Map.of("per_person", problem.perPerson()), 1))
-                .andExpect(jsonPath("$.is_correct").value(true))
-                .andExpect(jsonPath("$.next_stage").value("pass_break_even"));
-
-        // 자유이용권: 본전 횟수는 맞혔지만 "그 다음 한 번부터 이득"을 놓쳐 틀린다.
-        mockMvc.perform(submit(token, visitId, "pass_break_even",
-                        Map.of("break_even_rides", problem.breakEvenRides(),
-                                "benefit_from_rides", problem.breakEvenRides()), 1))
-                .andExpect(jsonPath("$.is_correct").value(false))
-                .andExpect(jsonPath("$.feedback_code").value("pass_break_even_wrong"));
+        var ticket = amusementParkService.completeFromDialogue(
+                learnerId,
+                visitId,
+                "ticket",
+                Map.of("ticket_price", 3000, "party_count", 2, "total_price", 6000),
+                900001,
+                "independent",
+                true);
+        assertThat(ticket.nextStage()).isEqualTo("snack_split");
 
         // 세 단계를 다 마치기 전에는 완료할 수 없다.
         mockMvc.perform(post("/v1/amusement-park-visits/{id}/complete", visitId)
@@ -247,11 +218,29 @@ class AmusementParkFlowIntegrationTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("stage_incomplete"));
 
-        mockMvc.perform(submit(token, visitId, "pass_break_even",
-                        Map.of("break_even_rides", problem.breakEvenRides(),
-                                "benefit_from_rides", problem.breakEvenRides() + 1), 2))
-                .andExpect(jsonPath("$.is_correct").value(true))
-                .andExpect(jsonPath("$.next_stage").value("complete"));
+        var snack = amusementParkService.completeFromDialogue(
+                learnerId,
+                visitId,
+                "snack_split",
+                Map.of("snack_total", 6000, "payer_count", 3, "per_person", 2000),
+                900002,
+                "supported",
+                true);
+        assertThat(snack.nextStage()).isEqualTo("pass_break_even");
+
+        var pass = amusementParkService.completeFromDialogue(
+                learnerId,
+                visitId,
+                "pass_break_even",
+                Map.of(
+                        "single_ride_price", 2000,
+                        "day_pass_price", 10000,
+                        "break_even_rides", 5,
+                        "benefit_from_rides", 6),
+                900003,
+                "supported",
+                false);
+        assertThat(pass.nextStage()).isEqualTo("complete");
 
         // FE는 방문 completed_at이 이미 있으면 /complete를 호출하지 않는다(#45).
         // 마지막 정답 처리와 같은 트랜잭션에서 장소 완료 원장도 반드시 함께 기록돼야 한다.
@@ -272,37 +261,24 @@ class AmusementParkFlowIntegrationTest {
                 .andExpect(jsonPath("$.completed_at").isNotEmpty())
                 .andExpect(jsonPath("$.stage_progress.pass_break_even").value("completed"));
 
-        // 새로고침해도 복구되고 틀린 시도까지 남는다.
+        // 새로고침해도 AI 완료 증거와 공동 수행 여부가 보존된다.
         mockMvc.perform(get("/v1/amusement-park-visits/{id}", visitId).header("Authorization", token))
-                .andExpect(jsonPath("$.attempts.length()").value(5))
-                .andExpect(jsonPath("$.attempts[0].is_correct").value(false))
-                .andExpect(jsonPath("$.attempts[0].payload.answers.total_price").value(oneTicket))
-                .andExpect(jsonPath("$.attempts[0].payload.expected_answers.total_price")
-                        .value(problem.totalPrice()))
-                .andExpect(jsonPath("$.attempts[0].payload.given_facts.ticket_price").value(oneTicket));
+                .andExpect(jsonPath("$.attempts.length()").value(3))
+                .andExpect(jsonPath("$.attempts[0].is_correct").value(true))
+                .andExpect(jsonPath("$.attempts[0].payload.content_owner").value("mormi_ai"))
+                .andExpect(jsonPath("$.attempts[0].payload.verified_facts.total_price").value(6000))
+                .andExpect(jsonPath("$.attempts[2].payload.teach_reward_eligible").value(false));
     }
 
     @Test
-    void 방문을_새로_시작하면_문제_숫자를_다시_뽑는다() throws Exception {
-        // 같은 문제만 반복되면 아이가 계산 대신 답을 외워 통과할 수 있다(#31).
-        java.util.Set<Map<String, Integer>> drawn = new java.util.LinkedHashSet<>();
-        for (int i = 0; i < 3; i++) {
-            String token = unlockedParkToken("도윤" + i, "MORMI-R0" + i);
-            drawn.add(startParkVisit(token).facts());
-        }
-
-        assertThat(drawn).hasSizeGreaterThan(1);
-    }
-
-    @Test
-    void 같은_학습자가_완료_뒤_다시_시작하면_새_방문과_새_숫자를_받는다() throws Exception {
+    void 같은_학습자가_완료_뒤_다시_시작하면_빈_진행도의_새_방문을_받는다() throws Exception {
         String token = unlockedParkToken("지우", "MORMI-R47");
-        ParkProblem first = startParkVisit(token);
-        completeParkStages(token, first);
+        String firstVisitId = startParkVisit(token);
+        completeParkStages(firstVisitId);
 
         String body = mockMvc.perform(post("/v1/amusement-park-visits").header("Authorization", token))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.visit_id").value(org.hamcrest.Matchers.not(first.visitId())))
+                .andExpect(jsonPath("$.visit_id").value(org.hamcrest.Matchers.not(firstVisitId)))
                 .andExpect(jsonPath("$.stage_progress.ticket").value("available"))
                 .andExpect(jsonPath("$.stage_progress.snack_split").value("locked"))
                 .andExpect(jsonPath("$.stage_progress.pass_break_even").value("locked"))
@@ -311,17 +287,16 @@ class AmusementParkFlowIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
 
         JsonNode root = objectMapper.readTree(body);
-        ParkProblem second = new ParkProblem(root.get("visit_id").asString(), readFacts(root));
-        assertThat(second.facts()).isNotEqualTo(first.facts());
+        assertThat(root.get("visit_id").asString()).isNotEqualTo(firstVisitId);
     }
 
     @Test
     void 완료된_방문_id로_대화를_restart하면_새_방문_시작을_요구한다() throws Exception {
         String token = unlockedParkToken("로아", "MORMI-R48");
-        ParkProblem problem = startParkVisit(token);
-        completeParkStages(token, problem);
+        String visitId = startParkVisit(token);
+        completeParkStages(visitId);
 
-        mockMvc.perform(post("/v1/amusement-park-visits/{id}/dialogues", problem.visitId())
+        mockMvc.perform(post("/v1/amusement-park-visits/{id}/dialogues", visitId)
                         .header("Authorization", token)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(Map.of(
@@ -333,29 +308,9 @@ class AmusementParkFlowIntegrationTest {
     }
 
     @Test
-    void 계약에_없는_단계나_답은_판정_전에_거절한다() throws Exception {
-        String token = unlockedParkToken("유진", "MORMI-P04");
-        String visitId = startParkVisit(token).visitId();
-
-        mockMvc.perform(submit(token, visitId, "roller_coaster", Map.of("total_price", 6000), 1))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("stage_unknown"));
-
-        // 주어진 값은 서버가 갖고 있으므로 아이가 덮어쓸 수 없다.
-        mockMvc.perform(submit(token, visitId, "ticket",
-                        Map.of("total_price", 6000, "ticket_price", 1), 1))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("answer_unknown"));
-
-        mockMvc.perform(submit(token, visitId, "ticket", Map.of("party_count", 2), 1))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("answer_missing"));
-    }
-
-    @Test
     void 다른_학습자의_방문은_열어볼_수_없다() throws Exception {
         String owner = unlockedParkToken("건우", "MORMI-P05");
-        String visitId = startParkVisit(owner).visitId();
+        String visitId = startParkVisit(owner);
         String stranger = unlockedParkToken("예린", "MORMI-P06");
 
         mockMvc.perform(get("/v1/amusement-park-visits/{id}", visitId)
@@ -374,7 +329,7 @@ class AmusementParkFlowIntegrationTest {
     @Test
     void 놀이동산_대화_시작이_방문_소유로_저장된다() throws Exception {
         String token = unlockedParkToken("소율", "MORMI-P07");
-        String visitId = startParkVisit(token).visitId();
+        String visitId = startParkVisit(token);
 
         String body = mockMvc.perform(post("/v1/amusement-park-visits/{id}/dialogues", visitId)
                         .header("Authorization", token)
@@ -383,7 +338,8 @@ class AmusementParkFlowIntegrationTest {
                                 "scenario_id", "amusement_ticket_multiply"))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.stage_progress.stage").value("ticket"))
-                .andExpect(jsonPath("$.scenario_context.park_context.facts").isNotEmpty())
+                .andExpect(jsonPath("$.scenario_context.content_owner").value("mormi_ai"))
+                .andExpect(jsonPath("$.scenario_context.park_context").doesNotExist())
                 .andReturn().getResponse().getContentAsString();
 
         String conversationId = objectMapper.readTree(body).get("conversation_id").asString();
@@ -411,72 +367,50 @@ class AmusementParkFlowIntegrationTest {
                 .hasMessageContaining("ck_dialogue_owner_scope");
     }
 
-    private org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder submit(
-            String token, String visitId, String stageId, Map<String, Integer> answers, int attemptNo)
-            throws Exception {
-        return post("/v1/amusement-park-visits/{id}/stages/{stage}", visitId, stageId)
-                .header("Authorization", token)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(Map.of(
-                        "answers", answers, "attempt_no", attemptNo)));
-    }
-
-    /**
-     * 이 방문에 뽑힌 문제. 값이 방문마다 달라 테스트도 응답을 읽고 정답을 계산한다.
-     * 계산식은 서버와 같은 규칙(곱셈·나눗셈)을 테스트가 독립적으로 다시 세운 것이다.
-     */
-    private record ParkProblem(String visitId, Map<String, Integer> facts) {
-
-        int fact(String key) {
-            return facts.get(key);
-        }
-
-        int totalPrice() {
-            return fact("ticket_price") * fact("party_count");
-        }
-
-        int perPerson() {
-            return fact("snack_total") / fact("payer_count");
-        }
-
-        int breakEvenRides() {
-            return fact("day_pass_price") / fact("single_ride_price");
-        }
-    }
-
-    private ParkProblem startParkVisit(String token) throws Exception {
+    private String startParkVisit(String token) throws Exception {
         String body = mockMvc.perform(post("/v1/amusement-park-visits").header("Authorization", token))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
-        JsonNode root = objectMapper.readTree(body);
-        return new ParkProblem(root.get("visit_id").asString(), readFacts(root));
+        return objectMapper.readTree(body).get("visit_id").asString();
     }
 
-    private void completeParkStages(String token, ParkProblem problem) throws Exception {
-        mockMvc.perform(submit(token, problem.visitId(), "ticket",
-                        Map.of("total_price", problem.totalPrice()), 1))
-                .andExpect(jsonPath("$.is_correct").value(true));
-        mockMvc.perform(submit(token, problem.visitId(), "snack_split",
-                        Map.of("per_person", problem.perPerson()), 1))
-                .andExpect(jsonPath("$.is_correct").value(true));
-        mockMvc.perform(submit(token, problem.visitId(), "pass_break_even",
-                        Map.of("break_even_rides", problem.breakEvenRides(),
-                                "benefit_from_rides", problem.breakEvenRides() + 1), 1))
-                .andExpect(jsonPath("$.is_correct").value(true));
+    private Long parkLearnerId(String visitId) {
+        return jdbc.queryForObject(
+                "SELECT learner_id FROM amusement_park_visits WHERE public_id = ?",
+                Long.class,
+                visitId);
     }
 
-    /** 방문 응답의 세 스테이지에 흩어진 주어진 값을 한 장으로 모은다. */
-    private static Map<String, Integer> readFacts(JsonNode visit) {
-        Map<String, Integer> facts = new LinkedHashMap<>();
-        JsonNode stages = visit.get("stages");
-        for (int i = 0; i < stages.size(); i++) {
-            JsonNode stageFacts = stages.get(i).get("facts");
-            for (int j = 0; j < stageFacts.size(); j++) {
-                JsonNode fact = stageFacts.get(j);
-                facts.put(fact.get("key").asString(), fact.get("value").asInt());
-            }
-        }
-        return facts;
+    private void completeParkStages(String visitId) {
+        Long learnerId = parkLearnerId(visitId);
+        amusementParkService.completeFromDialogue(
+                learnerId,
+                visitId,
+                "ticket",
+                Map.of("ticket_price", 3000, "party_count", 2, "total_price", 6000),
+                900001,
+                "independent",
+                true);
+        amusementParkService.completeFromDialogue(
+                learnerId,
+                visitId,
+                "snack_split",
+                Map.of("snack_total", 6000, "payer_count", 3, "per_person", 2000),
+                900002,
+                "supported",
+                true);
+        amusementParkService.completeFromDialogue(
+                learnerId,
+                visitId,
+                "pass_break_even",
+                Map.of(
+                        "single_ride_price", 2000,
+                        "day_pass_price", 10000,
+                        "break_even_rides", 5,
+                        "benefit_from_rides", 6),
+                900003,
+                "supported",
+                false);
     }
 
     private String learnerToken(String name, String code) throws Exception {

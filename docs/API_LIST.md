@@ -330,38 +330,20 @@
   "request_id": "9f4c…(요청마다 새 UUID)" }
 ```
 
-### E-2. 놀이동산 (이슈 #29)
+### E-2. 놀이동산 (Mormi-AI #39, #40)
 
 | Method | Path | 설명 |
 |---|---|---|
 | `POST` | `/v1/amusement-park-visits` | 방문 시작 (해금 검증, 진행 중 방문 있으면 이어받고 완료 뒤에는 새 방문 생성) |
-| `GET` | `/v1/amusement-park-visits/{id}` | 진행 복구 (스테이지 콘텐츠 + 시도 전체) |
-| `POST` | `/v1/amusement-park-visits/{id}/stages/{stage_id}` | 단계 답 제출 |
+| `GET` | `/v1/amusement-park-visits/{id}` | 진행 복구 (지도 껍데기 + AI 완료 시도) |
 | `POST` | `/v1/amusement-park-visits/{id}/complete` | 완료 |
 | `POST` | `/v1/amusement-park-visits/{id}/dialogues` | 현재 놀이동산 단계의 AI 대화 시작·복구 |
 
 `stage_id = ticket | snack_split | pass_break_even`. **카페를 완료해야 열립니다.** 해금 전 방문은 403.
 
-카페와 두 가지가 다릅니다.
-
-1. **콘텐츠를 서버가 내려줍니다.** 제목·미션·전략·모르미 오개념·전이 문장까지 방문 응답에
-   담습니다. FE는 정답·설명문을 임의로 만들지 않고 이 값을 표시만 합니다.
-2. **문제 숫자를 방문 시작 시 뽑아 고정합니다.** 가격과 인원은 방문을 시작할 때 서버가
-   새로 뽑아 `amusement_park_visits.facts` 에 저장하고, 같은 `visit_id` 안에서는 바뀌지
-   않습니다. 그래서 제출·대화 요청에 문제를 함께 싣지 않습니다(카페는 화면이 매번 새로 뽑아
-   함께 보냅니다). **아래 예시의 숫자는 한 번 뽑힌 결과일 뿐이니 FE는 값을 하드코딩하지 말고
-   응답을 그대로 표시하세요.** 출제 범위는 다음과 같습니다.
-
-   | 단계 | 주어지는 값 | 범위 |
-   |---|---|---|
-   | `ticket` | `ticket_price` / `party_count` | 2,000~5,000원(천 원 단위) / 2~5명 |
-   | `snack_split` | `snack_total` / `payer_count` | 1인당 1,000~3,000원 × 인원 / 2~5명 |
-   | `pass_break_even` | `single_ride_price` / `day_pass_price` | 1,000~3,000원 / 1회 값 × 본전 3~6회 |
-
-   `snack_total` 은 `payer_count` 로, `day_pass_price` 는 `single_ride_price` 로 **항상
-   나누어떨어집니다.** 정답(1인당 낼 돈·본전 횟수)을 먼저 뽑고 문제를 곱셈으로 되돌려 만들기
-   때문입니다. `transfer` 문장의 숫자도 이 방문 값에서 한 칸 올려(금액 +1,000원, 인원 +1명)
-   만들므로 본문제와 절대 같지 않습니다.
+놀이동산 방문 API는 방문·단계 순서·해금 상태와 지도용 껍데기만 소유합니다. 문제 숫자,
+정답, 오개념, 모르미 질문, 힌트와 전이 문제는 Mormi-AI가 대화를 열 때 생성하고
+`TurnContract`로 내려줍니다. FE는 방문 응답에서 문제를 찾거나 하드코딩하지 않습니다.
 
 ```jsonc
 // GET /v1/amusement-park-visits/{id}
@@ -376,20 +358,7 @@
     {
       "stage_id": "ticket",
       "scenario_id": "amusement_ticket_multiply",
-      "title": "매표소", "mission": "우리 일행 표 사기", "skill": "multiply",
-      "strategy": "같은 돈이 여러 번이면 곱하면 돼",
-      "mormi_misconception": "표가 여러 장이어도 한 장 값만 내면 되는 줄 알았어.",
-      "prompt": "1인 입장료와 일행 수를 이용해 총액을 설명해 주세요.",
-      "facts": [                        // ← 값은 방문마다 새로 뽑힌다. 하드코딩 금지
-        { "key": "ticket_price", "label": "1인 입장료", "value": 3000, "unit": "원" },
-        { "key": "party_count",  "label": "우리 일행",  "value": 2,    "unit": "명" }
-      ],
-      "verified_facts": { "ticket_price": 3000, "party_count": 2, "total_price": 6000 },
-      "transfer": {                     // ← 본문제에서 한 칸 올린 새 숫자
-        "prompt": "그럼 1인 4,000원이고 3명이면?",
-        "equation": "4,000 × 3 = 12,000",
-        "conclusion": "4,000원을 3번 더한 것과 같으니까 12,000원이야!"
-      }
+      "title": "매표소", "mission": "우리 일행 표 사기", "skill": "multiply"
     }
     // snack_split, pass_break_even …
   ],
@@ -397,7 +366,7 @@
 }
 ```
 
-단계별 필수 `verified_facts` 키는 이슈 계약과 같습니다.
+AI 완료 증거의 단계별 필수 `verified_facts` 키는 다음과 같습니다.
 
 | 단계 | 주어지는 값 | 아이가 구하는 값 |
 |---|---|---|
@@ -405,44 +374,28 @@
 | `snack_split` | `snack_total`, `payer_count` | `per_person` |
 | `pass_break_even` | `single_ride_price`, `day_pass_price` | `break_even_rides`, `benefit_from_rides` |
 
-```jsonc
-// POST .../stages/ticket   answers 에는 "아이가 구하는 값"만 담는다
-{ "answers": { "total_price": 3000 }, "attempt_no": 1, "elapsed_ms": 4200 }
-// 200
-{ "visit_id": "park_visit_…", "stage": "ticket", "is_correct": false,
-  "next_stage": "ticket", "next_stage_unlocked": false, "attempts": 1,
-  "expected_answers": { "total_price": 6000 },
-  "submitted_answers": { "total_price": 3000 },
-  "feedback_code": "ticket_short" }
-
-// POST .../stages/pass_break_even   답이 두 개인 단계는 둘 다 맞아야 통과
-{ "answers": { "break_even_rides": 5, "benefit_from_rides": 6 }, "attempt_no": 1 }
-```
-
-- 주어진 값(`ticket_price` 등)을 `answers` 에 실으면 `answer_unknown` 400 입니다.
-  정답은 서버가 방문에 고정된 값으로만 계산합니다.
-- `feedback_code` 는 답이 하나인 단계에서 `{stage}_short` / `{stage}_over` 로 방향까지
-  알려주고, 답이 둘인 단계는 `{stage}_wrong` 입니다. 정답은 `{stage}_correct`.
+- 문제 응답과 단계 완료는 AI 대화 경로로만 처리합니다. BE에는 별도 출제·정답 제출 API가
+  없습니다.
 - 세 단계를 모두 통과하기 전 완료 요청은 `stage_incomplete` 409 입니다.
-- 완료된 뒤 다시 `POST /v1/amusement-park-visits` 를 호출하면 새 `visit_id` 와 새 숫자 묶음을
-  받습니다. 직전 완료 방문과 같은 숫자 조합이 뽑히면 다시 뽑아 답 외우기 반복을 줄입니다.
-- 같은 `visit_id` 안에서는 숫자가 바뀌지 않습니다. 완료된 `visit_id` 로 대화를 `restart` 하면
-  409 `park_visit_completed` 입니다. 새 방문을 시작한 뒤 그 `visit_id` 로 대화를 열어 주세요.
+- 완료된 뒤 다시 `POST /v1/amusement-park-visits` 를 호출하면 새 `visit_id`를 받습니다.
+  각 새 대화는 AI가 새 문제 스냅샷을 생성합니다.
+- 완료된 `visit_id` 로 대화를 `restart` 하면 409 `park_visit_completed` 입니다.
 
 ```jsonc
-// POST .../dialogues   문제 사실은 서버가 방문에서 꺼내므로 컨텍스트를 보내지 않는다
+// POST .../dialogues   BE는 권한 확인 뒤 scenario_id만 AI에 전달한다
 { "scenario_id": "amusement_ticket_multiply",   // | amusement_snack_divide | amusement_pass_compare
   "start_mode": "resume",                       // restart | resume
   "request_id": "9f4c…(요청마다 새 UUID)" }
 ```
 
-대화 완료 턴의 `completion.verified_facts` 는 카페와 같은 방식으로 단계를 통과시킵니다.
-주어진 값이 방문에 고정된 값과 다르면 통과시키지 않고 `dialogue_completion_fact_mismatch`
-503 으로 재시도를 유도합니다. 자유 발화 원문이나 모르미 대사는 절대 정답으로 쓰지 않습니다.
+대화 완료 턴에서 `completion.stage_completion_eligible=true`이면 단계를 통과시킵니다.
+`verified_facts`는 허용 키와 숫자 범위만 검증해 시도 증거로 저장합니다. 정답 판정은 이미
+Mormi-AI의 결정적 교육 엔진이 수행했으므로 BE의 다른 문제로 재채점하지 않습니다.
+L0/H3 공동 수행은 단계는 완료하지만 `teach_reward_eligible=false`로 기록됩니다.
 
-> Mormi-AI#36 이후 `amusement_*` 세 시나리오는 AI 대화 경로에서도 동작합니다.
-> AI는 대화 완료 시 `verified_facts` 를 위 키로 채워 주며, 결정적 제출 경로
-> (`POST .../stages/{stage_id}`)는 AI 없이도 계속 동작합니다.
+> Mormi-AI#39·#40 이후 `amusement_*` 세 시나리오의 교육 콘텐츠와 완료 판정 원장은 AI입니다.
+> AI는 완료 시 주어진 값은 문제 스냅샷에서, 구한 값은 실제 검증된 기본 과제 슬롯에서
+> `verified_facts`로 채웁니다. 자유 발화 원문이나 모르미 대사는 정답 증거가 아닙니다.
 
 ### F. 인증된 AI 대화 프록시
 

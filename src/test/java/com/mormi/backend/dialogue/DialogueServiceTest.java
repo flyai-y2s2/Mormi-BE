@@ -3,6 +3,8 @@ package com.mormi.backend.dialogue;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -11,6 +13,7 @@ import static org.mockito.Mockito.when;
 import com.mormi.backend.cafe.CafeVisitRepository;
 import com.mormi.backend.cafe.CafeVisit;
 import com.mormi.backend.amusementpark.AmusementParkService;
+import com.mormi.backend.amusementpark.AmusementParkVisit;
 import com.mormi.backend.amusementpark.AmusementParkVisitRepository;
 import com.mormi.backend.cafe.CafeService;
 import com.mormi.backend.cafe.CafeStage;
@@ -41,6 +44,87 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 class DialogueServiceTest {
+
+    @Test
+    void jointParkCompletionUnlocksStageWithoutTeachingReward() throws Exception {
+        DialogueClient dialogueClient = mock(DialogueClient.class);
+        DialogueConversationRepository dialogueRepository = mock(DialogueConversationRepository.class);
+        AmusementParkVisitRepository visitRepository = mock(AmusementParkVisitRepository.class);
+        AmusementParkService parkService = mock(AmusementParkService.class);
+        DialogueService service = new DialogueService(
+                dialogueClient,
+                dialogueRepository,
+                mock(LearningSessionRepository.class),
+                mock(AttemptRepository.class),
+                mock(CafeVisitRepository.class),
+                mock(CafeService.class),
+                visitRepository,
+                parkService,
+                mock(LearnerService.class),
+                mock(RewardService.class));
+
+        AmusementParkVisit visit = AmusementParkVisit.start(7L);
+        ReflectionTestUtils.setField(visit, "id", 31L);
+        DialogueConversation dialogue = DialogueConversation.forParkVisit(
+                "conversation-park-1",
+                7L,
+                31L,
+                "amusement_ticket_multiply",
+                1,
+                Map.of("content_owner", "mormi_ai"),
+                null);
+        JsonNode childResponse = new ObjectMapper().readTree("{\"turn_id\":\"turn-1\"}");
+        JsonNode envelope = new ObjectMapper().readTree("""
+                {
+                  "conversation_id": "conversation-park-1",
+                  "turn": {
+                    "status": "completed",
+                    "state_version": 5,
+                    "completion": {
+                      "outcome": "supported",
+                      "teach_reward_eligible": false,
+                      "stage_completion_eligible": true,
+                      "verified_facts": {
+                        "ticket_price": 3000,
+                        "party_count": 2,
+                        "total_price": 6000
+                      }
+                    }
+                  }
+                }
+                """);
+
+        when(dialogueRepository.findByConversationId("conversation-park-1"))
+                .thenReturn(Optional.of(dialogue));
+        when(visitRepository.findById(31L)).thenReturn(Optional.of(visit));
+        when(dialogueClient.respond("conversation-park-1", childResponse)).thenReturn(envelope);
+        when(parkService.completeFromDialogue(
+                        any(), any(), any(), any(), anyInt(), any(), anyBoolean()))
+                .thenReturn(new com.mormi.backend.amusementpark.AmusementParkDtos.StageResultResponse(
+                        visit.getPublicId(),
+                        "ticket",
+                        true,
+                        "snack_split",
+                        true,
+                        1));
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> response = (Map<String, Object>)
+                service.respond(7L, "conversation-park-1", childResponse);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> progress = (Map<String, Object>) response.get("stage_progress");
+        assertThat(progress)
+                .containsEntry("completed", true)
+                .containsEntry("next_stage", "snack_split");
+        verify(parkService).completeFromDialogue(
+                7L,
+                visit.getPublicId(),
+                "ticket",
+                Map.of("ticket_price", 3000, "party_count", 2, "total_price", 6000),
+                900_005,
+                "supported",
+                false);
+    }
 
     @Test
     void completedCafeDialogueAdvancesFromVerifiedFactsOnly() throws Exception {

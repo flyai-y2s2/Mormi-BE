@@ -1,6 +1,5 @@
 package com.mormi.backend.amusementpark;
 
-import com.mormi.backend.curriculum.AmusementParkCatalog;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -19,9 +18,9 @@ import lombok.Setter;
 /**
  * 놀이동산 방문 한 회. 새로고침해도 이 진행 상태로 복구된다.
  *
- * <p>카페와 다르게 문제 숫자(가격·인원)를 방문 행에 고정 저장한다. 이슈 계약이
- * "방문을 시작할 때 가격과 인원을 고정하고 같은 visit_id 안에서는 바꾸지 않는다"를 요구하므로,
- * 프런트가 요청마다 숫자를 보내는 카페 방식 대신 서버가 방문 시작 시 한 번만 정한다.
+ * <p>문제 스냅샷은 Mormi-AI 대화 상태에 고정된다. 이 엔티티는 방문·해금·현재 단계만 소유한다.
+ * {@code facts} 컬럼은 운영 데이터와의 무중단 호환을 위해 남겨 둔 폐기 예정 컬럼이며 새 방문은
+ * 빈 객체를 저장한다.
  */
 @Entity
 @Table(name = "amusement_park_visits")
@@ -42,7 +41,8 @@ public class AmusementParkVisit {
     @Column(name = "stage", nullable = false, length = 30)
     private String stage;
 
-    /** 방문 시작 시 고정된 주어진 값. ticket_price, party_count 처럼 스테이지를 통틀어 유일한 키다. */
+    /** @deprecated 문제 원장은 Mormi-AI다. DB 마이그레이션 전까지 빈 객체로만 유지한다. */
+    @Deprecated
     @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
     @Column(name = "facts", nullable = false, columnDefinition = "jsonb", updatable = false)
     private Map<String, Integer> facts = new LinkedHashMap<>();
@@ -54,19 +54,14 @@ public class AmusementParkVisit {
     @Setter
     private OffsetDateTime completedAt;
 
-    private AmusementParkVisit(Long learnerId, Map<String, Integer> facts) {
+    private AmusementParkVisit(Long learnerId) {
         this.publicId = "park_visit_" + UUID.randomUUID().toString().replace("-", "");
         this.learnerId = learnerId;
         this.stage = AmusementParkStage.TICKET.value();
-        this.facts = new LinkedHashMap<>(facts);
     }
 
     public static AmusementParkVisit start(Long learnerId) {
-        return new AmusementParkVisit(learnerId, AmusementParkCatalog.initialFacts());
-    }
-
-    static AmusementParkVisit start(Long learnerId, Map<String, Integer> facts) {
-        return new AmusementParkVisit(learnerId, facts);
+        return new AmusementParkVisit(learnerId);
     }
 
     public AmusementParkStage stage() {
