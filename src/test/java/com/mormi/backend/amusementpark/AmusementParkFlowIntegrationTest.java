@@ -305,7 +305,9 @@ class AmusementParkFlowIntegrationTest {
                                 "request_id", "restart-completed-visit"))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.conversation_id").isNotEmpty())
-                .andExpect(jsonPath("$.stage_progress.stage").value("complete"));
+                .andExpect(jsonPath("$.stage_progress.stage").value("pass_break_even"))
+                .andExpect(jsonPath("$.stage_progress.completed").value(false))
+                .andExpect(jsonPath("$.stage_progress.next_stage").value("complete"));
     }
 
     @Test
