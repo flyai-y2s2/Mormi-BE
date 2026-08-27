@@ -36,8 +36,11 @@ public class AmusementParkService {
         if (!themeProgressService.syncAmusementParkUnlock(learnerId)) {
             throw ApiException.forbidden("아직 놀이동산이 열리지 않았습니다. 카페를 먼저 마쳐 주세요.");
         }
+        // 카페와 동일하게 완료한 방문도 연습 모드로 다시 연다. 완료 상태와 과거
+        // 시도는 보존하고, 각 스테이지의 새 문제는 대화 round로 구분한다.
         AmusementParkVisit visit = visitRepository
                 .findFirstByLearnerIdAndCompletedAtIsNullOrderByIdDesc(learnerId)
+                .or(() -> visitRepository.findFirstByLearnerIdOrderByIdDesc(learnerId))
                 .orElseGet(() -> visitRepository.save(AmusementParkVisit.start(learnerId)));
         return view(learnerId, visit.getPublicId());
     }

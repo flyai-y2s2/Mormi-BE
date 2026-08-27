@@ -225,6 +225,10 @@ public class DialogueService {
 
         Learner learner = learnerService.require(learnerId);
         Map<String, Object> body = baseRequest(learner, "cafe", request.scenarioId());
+        // AI의 V3 선택과 멱등키는 방문·시나리오·회차를 함께 사용한다. 새로고침은
+        // 위에서 저장된 대화를 복구하고, 명시적 restart만 다음 round를 보낸다.
+        body.put("learning_session_id", visit.getPublicId());
+        body.put("conversation_round", round);
         body.put(contextKey, contextValue);
         Map<String, Object> scenarioContext = new LinkedHashMap<>();
         scenarioContext.put(contextKey, contextValue);
@@ -254,12 +258,6 @@ public class DialogueService {
             throw ApiException.badRequest(
                     "dialogue_scenario_invalid", "지원하지 않는 놀이동산 대화입니다: " + request.scenarioId());
         }
-        if (visit.isCompleted() && request.wantsRestart()) {
-            throw ApiException.conflict(
-                    "park_visit_completed",
-                    "완료된 놀이동산 방문은 새 방문을 시작한 뒤 대화를 열어 주세요.");
-        }
-
         DialogueConversation replayed = findReplayedRequest(learnerId, request.requestId());
         if (replayed != null) {
             if (!visit.getId().equals(replayed.getParkVisitId())
@@ -290,6 +288,10 @@ public class DialogueService {
 
         Learner learner = learnerService.require(learnerId);
         Map<String, Object> body = baseRequest(learner, "amusement_park", request.scenarioId());
+        // 완료된 방문도 연습 모드로 유지한다. 같은 시나리오의 restart만 round를
+        // 증가시키며, 서로 다른 세 시나리오는 동일 방문 ID 아래 독립적으로 열린다.
+        body.put("learning_session_id", visit.getPublicId());
+        body.put("conversation_round", round);
         Map<String, Object> scenarioContext = new LinkedHashMap<>();
         scenarioContext.put("content_owner", "mormi_ai");
 

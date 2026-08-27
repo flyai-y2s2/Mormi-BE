@@ -13,6 +13,7 @@ import static org.mockito.Mockito.when;
 import com.mormi.backend.cafe.CafeVisitRepository;
 import com.mormi.backend.cafe.CafeVisit;
 import com.mormi.backend.amusementpark.AmusementParkService;
+import com.mormi.backend.amusementpark.AmusementParkStage;
 import com.mormi.backend.amusementpark.AmusementParkVisit;
 import com.mormi.backend.amusementpark.AmusementParkVisitRepository;
 import com.mormi.backend.cafe.CafeService;
@@ -24,6 +25,7 @@ import com.mormi.backend.cafe.CafeDtos.QueueRequest;
 import com.mormi.backend.cafe.CafeDtos.StageResultResponse;
 import com.mormi.backend.common.ApiException;
 import com.mormi.backend.dialogue.DialogueDtos.StartCafeDialogueRequest;
+import com.mormi.backend.dialogue.DialogueDtos.StartParkDialogueRequest;
 import com.mormi.backend.dialogue.DialogueDtos.StartTeachingRequest;
 import com.mormi.backend.learner.Learner;
 import com.mormi.backend.learner.LearnerService;
@@ -406,6 +408,13 @@ class DialogueServiceTest {
         assertThat(result.get("scenario_context"))
                 .isEqualTo(Map.of("queue_context", Map.of("left_count", 4, "right_count", 1)));
 
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> aiRequest = ArgumentCaptor.forClass(Map.class);
+        verify(dialogueClient).createConversation(aiRequest.capture());
+        assertThat(aiRequest.getValue())
+                .containsEntry("learning_session_id", visit.getPublicId())
+                .containsEntry("conversation_round", 2);
+
         ArgumentCaptor<DialogueConversation> saved =
                 ArgumentCaptor.forClass(DialogueConversation.class);
         verify(dialogueRepository).save(saved.capture());
@@ -418,6 +427,77 @@ class DialogueServiceTest {
         assertThat(progress)
                 .containsEntry("completed", false)
                 .containsEntry("source", "pending");
+    }
+
+    @Test
+    void completedParkVisitCanRestartOneScenarioWithStableV2Identity() throws Exception {
+        DialogueClient dialogueClient = mock(DialogueClient.class);
+        DialogueConversationRepository dialogueRepository = mock(DialogueConversationRepository.class);
+        AmusementParkVisitRepository visitRepository = mock(AmusementParkVisitRepository.class);
+        AmusementParkService parkService = mock(AmusementParkService.class);
+        LearnerService learnerService = mock(LearnerService.class);
+        DialogueService service = new DialogueService(
+                dialogueClient,
+                dialogueRepository,
+                mock(LearningSessionRepository.class),
+                mock(AttemptRepository.class),
+                mock(CafeVisitRepository.class),
+                mock(CafeService.class),
+                visitRepository,
+                parkService,
+                learnerService,
+                mock(RewardService.class));
+
+        AmusementParkVisit visit = AmusementParkVisit.start(7L);
+        ReflectionTestUtils.setField(visit, "id", 31L);
+        visit.advanceTo(AmusementParkStage.COMPLETE);
+        Learner learner = Learner.register("표시 이름", "R-007", 1L);
+        ReflectionTestUtils.setField(learner, "id", 7L);
+        DialogueConversation firstRound = DialogueConversation.forParkVisit(
+                "conversation-park-1",
+                7L,
+                31L,
+                "amusement_pass_compare",
+                1,
+                Map.of("content_owner", "mormi_ai"),
+                null);
+        JsonNode envelope = new ObjectMapper().readTree("""
+                {
+                  "conversation_id": "conversation-park-2",
+                  "turn": {"status": "active", "completion": null}
+                }
+                """);
+
+        when(parkService.requireOwned(7L, visit.getPublicId())).thenReturn(visit);
+        when(visitRepository.findById(31L)).thenReturn(Optional.of(visit));
+        when(dialogueRepository.findByLearnerIdAndRequestId(7L, "park-restart-2"))
+                .thenReturn(Optional.empty());
+        when(dialogueRepository.findFirstByParkVisitIdAndScenarioIdOrderByRoundDesc(
+                        31L, "amusement_pass_compare"))
+                .thenReturn(Optional.of(firstRound));
+        when(learnerService.require(7L)).thenReturn(learner);
+        when(dialogueClient.createConversation(any())).thenReturn(envelope);
+
+        Map<String, Object> result = service.startParkDialogue(
+                7L,
+                visit.getPublicId(),
+                new StartParkDialogueRequest(
+                        "amusement_pass_compare", "restart", "park-restart-2"));
+
+        assertThat(result.get("conversation_id")).isEqualTo("conversation-park-2");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> aiRequest = ArgumentCaptor.forClass(Map.class);
+        verify(dialogueClient).createConversation(aiRequest.capture());
+        assertThat(aiRequest.getValue())
+                .containsEntry("learning_session_id", visit.getPublicId())
+                .containsEntry("conversation_round", 2)
+                .containsEntry("scenario_id", "amusement_pass_compare");
+
+        ArgumentCaptor<DialogueConversation> saved =
+                ArgumentCaptor.forClass(DialogueConversation.class);
+        verify(dialogueRepository).save(saved.capture());
+        assertThat(saved.getValue().getParkVisitId()).isEqualTo(31L);
+        assertThat(saved.getValue().getRound()).isEqualTo(2);
     }
 
     @Test
