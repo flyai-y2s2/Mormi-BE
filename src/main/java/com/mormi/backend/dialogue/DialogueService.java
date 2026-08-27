@@ -130,6 +130,9 @@ public class DialogueService {
 
         Map<String, Object> body = baseRequest(learner, "home_teach", "home_teach");
         body.put("learning_session_id", session.getPublicId());
+        // AI idempotency is scoped to (learner, learning session, round).
+        // A retry reuses this round while an explicit restart increments it.
+        body.put("conversation_round", round);
         body.put("practice_result_id", practiceResultId);
         body.put("practice_summary", buildPracticeSummary(session));
 
@@ -139,10 +142,9 @@ public class DialogueService {
         session.setPracticeResultId(practiceResultId);
         // 세션이 신뢰하는 대화는 항상 마지막 회차. 이전 회차는 분석용으로만 남는다.
         session.setConversationId(conversationId);
-        // AI는 같은 학습 세션이면 새로 만들지 않고 기존 대화를 그대로 돌려준다
-        // (learning_session_id 멱등). 그 경우 새 회차가 아니라 같은 대화의 복구이므로
-        // 행을 다시 만들지 않는다. 무조건 INSERT 하면 uq_dialogue_conversation_id 에
-        // 걸려 두 번째 시작부터 항상 500 이 된다. (#37)
+        // 현재 AI는 (learning_session_id, conversation_round)로 새 회차를 구분한다.
+        // 다만 구버전 AI와의 순차 배포 또는 비정상 상류 응답이 같은 conversation_id를
+        // 돌려줄 수 있으므로, 그때는 새 행을 INSERT하지 않고 안전하게 기존 행을 유지한다.
         DialogueConversation existing =
                 dialogueRepository.findByConversationId(conversationId).orElse(null);
         if (existing == null) {
@@ -223,6 +225,10 @@ public class DialogueService {
 
         Learner learner = learnerService.require(learnerId);
         Map<String, Object> body = baseRequest(learner, "cafe", request.scenarioId());
+        // AI의 V3 선택과 멱등키는 방문·시나리오·회차를 함께 사용한다. 새로고침은
+        // 위에서 저장된 대화를 복구하고, 명시적 restart만 다음 round를 보낸다.
+        body.put("learning_session_id", visit.getPublicId());
+        body.put("conversation_round", round);
         body.put(contextKey, contextValue);
         Map<String, Object> scenarioContext = new LinkedHashMap<>();
         scenarioContext.put(contextKey, contextValue);
@@ -252,12 +258,6 @@ public class DialogueService {
             throw ApiException.badRequest(
                     "dialogue_scenario_invalid", "지원하지 않는 놀이동산 대화입니다: " + request.scenarioId());
         }
-        if (visit.isCompleted() && request.wantsRestart()) {
-            throw ApiException.conflict(
-                    "park_visit_completed",
-                    "완료된 놀이동산 방문은 새 방문을 시작한 뒤 대화를 열어 주세요.");
-        }
-
         DialogueConversation replayed = findReplayedRequest(learnerId, request.requestId());
         if (replayed != null) {
             if (!visit.getId().equals(replayed.getParkVisitId())
@@ -288,6 +288,10 @@ public class DialogueService {
 
         Learner learner = learnerService.require(learnerId);
         Map<String, Object> body = baseRequest(learner, "amusement_park", request.scenarioId());
+        // 완료된 방문도 연습 모드로 유지한다. 같은 시나리오의 restart만 round를
+        // 증가시키며, 서로 다른 세 시나리오는 동일 방문 ID 아래 독립적으로 열린다.
+        body.put("learning_session_id", visit.getPublicId());
+        body.put("conversation_round", round);
         Map<String, Object> scenarioContext = new LinkedHashMap<>();
         scenarioContext.put("content_owner", "mormi_ai");
 

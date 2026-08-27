@@ -9,4 +9,6 @@ public interface AmusementParkVisitRepository extends JpaRepository<AmusementPar
 
     Optional<AmusementParkVisit> findFirstByLearnerIdAndCompletedAtIsNullOrderByIdDesc(Long learnerId);
 
+    Optional<AmusementParkVisit> findFirstByLearnerIdOrderByIdDesc(Long learnerId);
+
 }

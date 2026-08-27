@@ -230,7 +230,7 @@
 
 가르치기 대화는 `.../teaching` 호출 때 BE가 생성하고 세션에 귀속합니다. 완료 요청이 임의의 `conversation_id`를 지정할 수 없으며, BE가 저장한 대화의 `completion.teach_reward_eligible`만 확인합니다. 보상 멱등키는 세션당 하나인 `teach-reward:{session}`입니다.
 
-`.../teaching`은 정답 처리된 서로 다른 반복 문제 5개가 모두 저장된 뒤에만 성공합니다. 시도에서 `PracticeSummary`를 집계하고, 결정형 `practice_result_id`와 인라인 요약을 AI에 전달한 뒤 최초 전체 `TurnContract`를 반환합니다. body 없이(또는 `start_mode` 없이) 다시 보내면 마지막 회차 대화를 복구합니다.
+`.../teaching`은 정답 처리된 서로 다른 반복 문제 5개가 모두 저장된 뒤에만 성공합니다. 시도에서 `PracticeSummary`를 집계하고, 결정형 `practice_result_id`, 인라인 요약, 현재 `conversation_round`를 AI에 전달한 뒤 최초 전체 `TurnContract`를 반환합니다. body 없이(또는 `start_mode` 없이) 다시 보내면 마지막 회차 대화를 복구합니다.
 
 ```jsonc
 // POST .../teaching  — body 는 선택
@@ -240,7 +240,8 @@
 `start_mode: "restart"` 는 기존 대화를 보존한 채 새 회차(`round` 증가)의 새 대화를 만들어
 첫 턴부터 시작합니다. 세션이 신뢰하는 대화(`learning_sessions.conversation_id`)는 항상
 마지막 회차를 가리키고, 가르치기 보상 멱등키는 세션당 하나라 재시작해도 보상이 중복되지
-않습니다. `request_id` 규칙은 카페 재시작(E 절)과 같습니다.
+않습니다. BE의 `round`는 AI의 `conversation_round`로 전달되며, 같은 회차 재시도만 기존
+대화를 반환합니다. `request_id` 규칙은 카페 재시작(E 절)과 같습니다.
 
 ### E. 카페
 
@@ -289,6 +290,9 @@
 
 방문이 `complete` 여도 네 단계 모두 제출·대화가 열립니다. 진행도는 전진 전용이라 재시작이
 `stage` 를 되돌리지는 않습니다.
+BE는 카페 방문의 `public_id`와 시나리오별 `round`를 각각 AI의
+`learning_session_id`, `conversation_round`로 전달합니다. 따라서 같은 시작 요청은 같은
+대화로 복구되고, 명시적 재시작만 새 V3 대화 스냅샷을 만듭니다.
 
 ```jsonc
 // POST .../queue   정답은 min(left,right). 좌우 인원은 1~5 이고 서로 달라야 한다
@@ -349,7 +353,7 @@
 
 | Method | Path | 설명 |
 |---|---|---|
-| `POST` | `/v1/amusement-park-visits` | 방문 시작 (해금 검증, 진행 중 방문 있으면 이어받고 완료 뒤에는 새 방문 생성) |
+| `POST` | `/v1/amusement-park-visits` | 방문 시작 (해금 검증, 최근 방문을 이어받음; 완료 방문은 연습 모드) |
 | `GET` | `/v1/amusement-park-visits/{id}` | 진행 복구 (지도 껍데기 + AI 완료 시도) |
 | `POST` | `/v1/amusement-park-visits/{id}/complete` | 완료 |
 | `POST` | `/v1/amusement-park-visits/{id}/dialogues` | 현재 놀이동산 단계의 AI 대화 시작·복구 |
@@ -392,9 +396,10 @@ AI 완료 증거의 단계별 필수 `verified_facts` 키는 다음과 같습니
 - 문제 응답과 단계 완료는 AI 대화 경로로만 처리합니다. BE에는 별도 출제·정답 제출 API가
   없습니다.
 - 세 단계를 모두 통과하기 전 완료 요청은 `stage_incomplete` 409 입니다.
-- 완료된 뒤 다시 `POST /v1/amusement-park-visits` 를 호출하면 새 `visit_id`를 받습니다.
-  각 새 대화는 AI가 새 문제 스냅샷을 생성합니다.
-- 완료된 `visit_id` 로 대화를 `restart` 하면 409 `park_visit_completed` 입니다.
+- 완료된 뒤 다시 `POST /v1/amusement-park-visits` 를 호출하면 같은 `visit_id`를 연습
+  모드로 돌려줍니다. 세 단계는 모두 `completed`지만 각각 독립적으로 다시 열 수 있습니다.
+- 완료된 `visit_id`에서도 원하는 시나리오를 `restart`할 수 있습니다. 진행도와 과거 시도는
+  보존되고, 해당 시나리오의 `round`만 증가해 AI가 새 문제 스냅샷을 만듭니다.
 
 ```jsonc
 // POST .../dialogues   BE는 권한 확인 뒤 scenario_id만 AI에 전달한다
@@ -402,6 +407,10 @@ AI 완료 증거의 단계별 필수 `verified_facts` 키는 다음과 같습니
   "start_mode": "resume",                       // restart | resume
   "request_id": "9f4c…(요청마다 새 UUID)" }
 ```
+
+BE는 놀이동산 방문의 `public_id`와 시나리오별 `round`를 각각 AI의
+`learning_session_id`, `conversation_round`로 전달합니다. 세 시나리오는 같은 방문 ID를
+공유해도 `scenario_id`로 분리되므로 서로의 재시작 회차를 덮어쓰지 않습니다.
 
 대화 완료 턴에서 `completion.stage_completion_eligible=true`이면 단계를 통과시킵니다.
 `verified_facts`는 허용 키와 숫자 범위만 검증해 시도 증거로 저장합니다. 정답 판정은 이미

@@ -271,27 +271,27 @@ class AmusementParkFlowIntegrationTest {
     }
 
     @Test
-    void 같은_학습자가_완료_뒤_다시_시작하면_빈_진행도의_새_방문을_받는다() throws Exception {
+    void 같은_학습자가_완료_뒤_다시_시작하면_완료된_방문을_연습_모드로_이어받는다() throws Exception {
         String token = unlockedParkToken("지우", "MORMI-R47");
         String firstVisitId = startParkVisit(token);
         completeParkStages(firstVisitId);
 
         String body = mockMvc.perform(post("/v1/amusement-park-visits").header("Authorization", token))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.visit_id").value(org.hamcrest.Matchers.not(firstVisitId)))
-                .andExpect(jsonPath("$.stage_progress.ticket").value("available"))
-                .andExpect(jsonPath("$.stage_progress.snack_split").value("locked"))
-                .andExpect(jsonPath("$.stage_progress.pass_break_even").value("locked"))
-                .andExpect(jsonPath("$.completed_at").doesNotExist())
-                .andExpect(jsonPath("$.attempts.length()").value(0))
+                .andExpect(jsonPath("$.visit_id").value(firstVisitId))
+                .andExpect(jsonPath("$.stage_progress.ticket").value("completed"))
+                .andExpect(jsonPath("$.stage_progress.snack_split").value("completed"))
+                .andExpect(jsonPath("$.stage_progress.pass_break_even").value("completed"))
+                .andExpect(jsonPath("$.completed_at").isNotEmpty())
+                .andExpect(jsonPath("$.attempts.length()").value(3))
                 .andReturn().getResponse().getContentAsString();
 
         JsonNode root = objectMapper.readTree(body);
-        assertThat(root.get("visit_id").asString()).isNotEqualTo(firstVisitId);
+        assertThat(root.get("visit_id").asString()).isEqualTo(firstVisitId);
     }
 
     @Test
-    void 완료된_방문_id로_대화를_restart하면_새_방문_시작을_요구한다() throws Exception {
+    void 완료된_방문_id로_원하는_스테이지_대화를_독립적으로_restart할_수_있다() throws Exception {
         String token = unlockedParkToken("로아", "MORMI-R48");
         String visitId = startParkVisit(token);
         completeParkStages(visitId);
@@ -299,12 +299,15 @@ class AmusementParkFlowIntegrationTest {
         mockMvc.perform(post("/v1/amusement-park-visits/{id}/dialogues", visitId)
                         .header("Authorization", token)
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "scenario_id", "amusement_ticket_multiply",
+                .content(objectMapper.writeValueAsString(Map.of(
+                                "scenario_id", "amusement_pass_compare",
                                 "start_mode", "restart",
                                 "request_id", "restart-completed-visit"))))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("park_visit_completed"));
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.conversation_id").isNotEmpty())
+                .andExpect(jsonPath("$.stage_progress.stage").value("pass_break_even"))
+                .andExpect(jsonPath("$.stage_progress.completed").value(false))
+                .andExpect(jsonPath("$.stage_progress.next_stage").value("complete"));
     }
 
     @Test

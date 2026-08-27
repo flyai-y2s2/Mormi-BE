@@ -25,9 +25,33 @@ class ParkDialogueAiContractTest {
             "amusement_ticket_multiply", "amusement_snack_divide", "amusement_pass_compare");
     private static final ObjectMapper JSON = new ObjectMapper();
 
+    private static Map<String, Object> cafeSessionCreateBody(String scenarioId) {
+        Map<String, Object> body = DialogueService.baseRequest(
+                1L, true, "permanent", "cafe", scenarioId);
+        body.put("learning_session_id", "cafe_visit_contract");
+        body.put("conversation_round", 3);
+        if ("cafe_queue".equals(scenarioId)) {
+            body.put("queue_context", Map.of("left_count", 2, "right_count", 5));
+        } else {
+            Map<String, Object> cafeContext = new java.util.LinkedHashMap<>();
+            cafeContext.put("menu_items", List.of(
+                    Map.of("id", "americano", "name", "아메리카노", "price", 3000),
+                    Map.of("id", "cookie", "name", "쿠키", "price", 2000)));
+            cafeContext.put("mormi_menu_id", "americano");
+            if ("cafe_budget_menu".equals(scenarioId)) {
+                cafeContext.put("budget", 7000);
+            }
+            body.put("cafe_context", cafeContext);
+        }
+        return body;
+    }
+
     private static Map<String, Object> sessionCreateBody(String scenarioId) {
-        return DialogueService.baseRequest(
+        Map<String, Object> body = DialogueService.baseRequest(
                 1L, true, "permanent", "amusement_park", scenarioId);
+        body.put("learning_session_id", "park_visit_contract");
+        body.put("conversation_round", 2);
+        return body;
     }
 
     @Test
@@ -37,6 +61,8 @@ class ParkDialogueAiContractTest {
             assertThat(body)
                     .containsEntry("scene", "amusement_park")
                     .containsEntry("scenario_id", scenarioId)
+                    .containsEntry("learning_session_id", "park_visit_contract")
+                    .containsEntry("conversation_round", 2)
                     .doesNotContainKeys("park_context", "facts", "prompt", "transfer");
         }
         assertThat(AmusementParkCatalog.stages())
@@ -52,6 +78,22 @@ class ParkDialogueAiContractTest {
         JsonNode result = runAiSchemaCheck(Map.of("accept", accept, "reject", List.of()));
         assertThat(result.path("failures").valueStream().map(JsonNode::asString).toList())
                 .as("실제 AI SessionCreate 스키마 검증")
+                .isEmpty();
+    }
+
+    @Test
+    void 카페_네_시나리오도_V3_identity와_화면_context로_AI_스키마를_통과한다()
+            throws Exception {
+        List<Map<String, Object>> accept = List.of(
+                cafeSessionCreateBody("cafe_queue"),
+                cafeSessionCreateBody("cafe_budget_menu"),
+                cafeSessionCreateBody("cafe_menu_total"),
+                cafeSessionCreateBody("cafe_change"));
+
+        JsonNode result = runAiSchemaCheck(Map.of("accept", accept, "reject", List.of()));
+
+        assertThat(result.path("failures").valueStream().map(JsonNode::asString).toList())
+                .as("카페 V3 실제 AI SessionCreate 스키마 검증")
                 .isEmpty();
     }
 
