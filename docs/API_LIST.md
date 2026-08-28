@@ -282,8 +282,9 @@
 - `start_mode: "restart"` — 새로고침·다시 연습. 기존 기록은 분석용으로 보존한 채 새
   회차(`dialogue_conversations.round` 증가)의 새 `conversation_id` 를 만들고, 그때 화면이
   뽑은 새 문제를 그 회차의 `scenario_context` 로 고정합니다.
-- `start_mode: "resume"` — 명시적 이어하기. 마지막 회차를 그대로 돌려줍니다(없으면 새로
-  만듭니다).
+- `start_mode: "resume"` — 진행 중인 마지막 회차만 이어갑니다. 마지막 회차가 이미
+  `completed`이면 완료 화면을 재사용하지 않고 다음 `round`의 새 대화를 만듭니다.
+  동일 `request_id`의 네트워크 재시도만 생성된 기존 회차로 멱등 수렴합니다.
 - `request_id` — FE가 시작 요청마다 새로 뽑는 멱등키. 같은 요청이 네트워크 재시도로 중복
   도착하면 이미 만든 회차를 그대로 돌려주고, `(learner_id, request_id)` 유니크 제약이 중복
   INSERT 를 막습니다. 같은 `request_id` 를 다른 방문·시나리오에 재사용하면 409

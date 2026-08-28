@@ -180,10 +180,15 @@ public class DialogueService {
         DialogueConversation latest = dialogueRepository
                 .findFirstByCafeVisitIdAndScenarioIdOrderByRoundDesc(visit.getId(), request.scenarioId())
                 .orElse(null);
-        // 명시적 이어하기(또는 옛 restart=false)면 마지막 회차를 그대로 이어 준다.
+        // 명시적 이어하기(또는 옛 restart=false)는 진행 중인 회차만 복구한다.
+        // 이미 끝난 회차를 다시 돌려주면 완료 화면에 갇혀 재시도할 수 없으므로,
+        // 완료 상태는 먼저 진행 원장에 반영한 뒤 아래에서 새 round를 연다.
         if (latest != null && !request.wantsRestart()) {
-            return envelopeWithContext(
-                    latest, dialogueClient.getConversation(latest.getConversationId()));
+            JsonNode latestEnvelope = dialogueClient.getConversation(latest.getConversationId());
+            Map<String, Object> restored = envelopeWithContext(latest, latestEnvelope);
+            if (!isCompletedConversation(latestEnvelope)) {
+                return restored;
+            }
         }
 
         // 단계 제출(CafeService.requireStageReached)과 같은 기준으로 연다. 이미 통과한
@@ -271,10 +276,14 @@ public class DialogueService {
         DialogueConversation latest = dialogueRepository
                 .findFirstByParkVisitIdAndScenarioIdOrderByRoundDesc(visit.getId(), request.scenarioId())
                 .orElse(null);
-        // 명시적 재시작이 아니면 새로고침 복구로 보고 마지막 회차를 그대로 이어 준다.
+        // 진행 중인 회차만 이어 준다. 완료 회차는 진행 원장에 반영한 다음 새 round를
+        // 열어, 완료 화면을 재사용하지 않고 같은 스테이지를 처음부터 다시 풀게 한다.
         if (latest != null && !request.wantsRestart()) {
-            return envelopeWithContext(
-                    latest, dialogueClient.getConversation(latest.getConversationId()));
+            JsonNode latestEnvelope = dialogueClient.getConversation(latest.getConversationId());
+            Map<String, Object> restored = envelopeWithContext(latest, latestEnvelope);
+            if (!isCompletedConversation(latestEnvelope)) {
+                return restored;
+            }
         }
 
         // 단계 제출과 같은 기준으로 연다. 막을 것은 아직 도달하지 않은 앞선 단계뿐이다.
@@ -457,8 +466,12 @@ public class DialogueService {
 
         JsonNode turn = envelope.path("turn");
         JsonNode completion = turn.path("completion");
+        boolean stageCompletionEligible = completion.has("stage_completion_eligible")
+                ? completion.path("stage_completion_eligible").asBoolean(false)
+                // 구버전 AI와 순차 배포하는 동안만 사용하는 호환 분기다.
+                : completion.path("teach_reward_eligible").asBoolean(false);
         boolean completedByDialogue = "completed".equals(turn.path("status").asString())
-                && completion.path("teach_reward_eligible").asBoolean(false)
+                && stageCompletionEligible
                 && !"bright_exit".equals(completion.path("outcome").asString());
         if (!completedByDialogue) {
             return stageProgress(expectedStage, visit.stage(), false, "pending");
@@ -566,6 +579,10 @@ public class DialogueService {
         progress.put("next_stage", nextStage.value());
         progress.put("source", source);
         return progress;
+    }
+
+    private boolean isCompletedConversation(JsonNode envelope) {
+        return "completed".equals(envelope.path("turn").path("status").asString());
     }
 
     private StageResultResponse syncQueue(
