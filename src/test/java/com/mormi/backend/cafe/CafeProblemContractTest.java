@@ -96,6 +96,41 @@ class CafeProblemContractTest {
     }
 
     @Test
+    void childMenuMustBeOnTheBoardAndDifferFromMormiMenu() {
+        CafeContext valid = new CafeContext(
+                List.of(
+                        new CafeMenuItem("americano", "아메리카노", 3000),
+                        new CafeMenuItem("milk", "우유", 2000)),
+                "americano",
+                "milk",
+                null);
+        assertThatCode(() -> CafeProblemContract.requireMenuBoard(valid))
+                .doesNotThrowAnyException();
+
+        CafeContext unknown = new CafeContext(
+                List.of(
+                        new CafeMenuItem("americano", "아메리카노", 3000),
+                        new CafeMenuItem("milk", "우유", 2000)),
+                "americano",
+                "cookie",
+                null);
+        assertThatThrownBy(() -> CafeProblemContract.requireMenuBoard(unknown))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "child_menu_unknown");
+
+        CafeContext duplicate = new CafeContext(
+                List.of(
+                        new CafeMenuItem("americano", "아메리카노", 3000),
+                        new CafeMenuItem("milk", "우유", 2000)),
+                "americano",
+                "americano",
+                null);
+        assertThatThrownBy(() -> CafeProblemContract.requireMenuBoard(duplicate))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("code", "menu_duplicate");
+    }
+
+    @Test
     void submittedMenusMustBeKnownAndDistinct() {
         assertThatCode(() -> CafeProblemContract.requireKnownDistinctMenus(
                 List.of("americano", "cookie"))).doesNotThrowAnyException();

@@ -421,7 +421,7 @@ class AmusementParkFlowIntegrationTest {
                 .get("access_token").asString();
     }
 
-    /** 필수 세션 5개 → 카페 4단계 → 카페 완료까지 밀어 놀이동산을 연다. */
+    /** 필수 세션 5개 → 카페 3단계 → 카페 완료까지 밀어 놀이동산을 연다. */
     private String unlockedParkToken(String name, String code) throws Exception {
         String token = learnerToken(name, code);
         for (String sessionKey : CurriculumCatalog.CAFE_REQUIRED_SESSION_IDS) {
@@ -450,14 +450,6 @@ class AmusementParkFlowIntegrationTest {
                         .content(objectMapper.writeValueAsString(Map.of(
                                 "left_count", 4, "right_count", 2, "chosen_count", 2,
                                 "scaffold_used", false, "attempt_no", 1))))
-                .andExpect(jsonPath("$.is_correct").value(true));
-
-        mockMvc.perform(post("/v1/cafe-visits/{id}/menu", visitId)
-                        .header("Authorization", token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "menu_ids", List.of("americano", "cookie"),
-                                "budget", 8000, "attempt_no", 1))))
                 .andExpect(jsonPath("$.is_correct").value(true));
 
         mockMvc.perform(post("/v1/cafe-visits/{id}/payments", visitId)

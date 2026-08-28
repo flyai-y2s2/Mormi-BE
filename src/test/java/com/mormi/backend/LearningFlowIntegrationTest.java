@@ -312,31 +312,10 @@ class LearningFlowIntegrationTest {
                                 "left_count", 4, "right_count", 2, "chosen_count", 2,
                                 "counting_answer", "4, 2", "scaffold_used", true, "attempt_no", 2))))
                 .andExpect(jsonPath("$.is_correct").value(true))
-                .andExpect(jsonPath("$.next_stage").value("menu"));
-
-        // 메뉴 2개: 예산 8,000원에 케이크 4,500 + 샌드위치 5,000 = 9,500 은 초과.
-        mockMvc.perform(post("/v1/cafe-visits/{id}/menu", visitId)
-                        .header("Authorization", token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "menu_ids", List.of("strawberry-cake", "sandwich"),
-                                "budget", 8000, "attempt_no", 1))))
-                .andExpect(jsonPath("$.is_correct").value(false))
-                .andExpect(jsonPath("$.feedback_code").value("menu_over_budget"))
-                .andExpect(jsonPath("$.next_stage").value("menu"));
-
-        // 아메리카노 3,000 + 쿠키 2,000 = 5,000 은 예산 안.
-        mockMvc.perform(post("/v1/cafe-visits/{id}/menu", visitId)
-                        .header("Authorization", token)
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(Map.of(
-                                "menu_ids", List.of("americano", "cookie"),
-                                "budget", 8000, "attempt_no", 2))))
-                .andExpect(jsonPath("$.is_correct").value(true))
-                .andExpect(jsonPath("$.submitted_amount").value(5000))
                 .andExpect(jsonPath("$.next_stage").value("calculate"));
 
-        // 계산: 이 단계 메뉴는 다시 뽑힌다. 케이크 4,500 + 샌드위치 5,000 = 9,500.
+        // 2단계: 모르미와 아이가 화면에서 하나씩 고른 메뉴의 합을 계산한다.
+        // 메뉴 선택 자체는 채점 스테이지가 아니다.
         mockMvc.perform(post("/v1/cafe-visits/{id}/payments", visitId)
                         .header("Authorization", token)
                         .contentType(MediaType.APPLICATION_JSON)
@@ -371,16 +350,15 @@ class LearningFlowIntegrationTest {
 
         // 새로고침해도 복구되고, 틀린 시도까지 전부 남아 있다.
         mockMvc.perform(get("/v1/cafe-visits/{id}", visitId).header("Authorization", token))
-                .andExpect(jsonPath("$.order_total").value(5000))
+                .andExpect(jsonPath("$.order_total").value(9500))
                 .andExpect(jsonPath("$.paid_amount").value(9500))
                 .andExpect(jsonPath("$.change_amount").value(7000))
-                .andExpect(jsonPath("$.attempts.length()").value(7))
+                .andExpect(jsonPath("$.attempts.length()").value(5))
                 .andExpect(jsonPath("$.attempts[0].is_correct").value(false))
                 .andExpect(jsonPath("$.attempts[0].payload.chosen_count").value(4))
-                .andExpect(jsonPath("$.attempts[2].payload.budget").value(8000))
-                .andExpect(jsonPath("$.attempts[4].payload.answer_amount").value(9000));
+                .andExpect(jsonPath("$.attempts[2].payload.answer_amount").value(9000));
 
-        // 카페를 끝낸 뒤에도 방문은 그대로 남아 네 단계를 다시 연습할 수 있다.
+        // 카페를 끝낸 뒤에도 방문은 그대로 남아 세 단계를 다시 연습할 수 있다.
         mockMvc.perform(post("/v1/cafe-visits").header("Authorization", token))
                 .andExpect(jsonPath("$.cafe_visit_id").value(visitId))
                 .andExpect(jsonPath("$.stage").value("complete"));
@@ -406,7 +384,7 @@ class LearningFlowIntegrationTest {
         mockMvc.perform(get("/v1/cafe-visits/{id}", visitId).header("Authorization", token))
                 .andExpect(jsonPath("$.stage").value("complete"))
                 .andExpect(jsonPath("$.completed_at").isNotEmpty())
-                .andExpect(jsonPath("$.attempts.length()").value(9));
+                .andExpect(jsonPath("$.attempts.length()").value(7));
 
         // 완료 재호출은 멱등이다.
         mockMvc.perform(post("/v1/cafe-visits/{id}/complete", visitId).header("Authorization", token))
@@ -463,7 +441,7 @@ class LearningFlowIntegrationTest {
                                 "left_count", 2, "right_count", 5, "chosen_count", 2,
                                 "scaffold_used", false, "attempt_no", 1))))
                 .andExpect(jsonPath("$.is_correct").value(true))
-                .andExpect(jsonPath("$.next_stage").value("menu"));
+                .andExpect(jsonPath("$.next_stage").value("calculate"));
 
         // 같은 메뉴 두 개는 제출 단계에서도 거절한다.
         mockMvc.perform(post("/v1/cafe-visits/{id}/menu", visitId)

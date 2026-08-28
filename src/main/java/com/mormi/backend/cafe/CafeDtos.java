@@ -44,11 +44,21 @@ public final class CafeDtos {
             @NotNull Integer price) {
     }
 
-    /** 카페 대화 시작 시 화면이 보내는 메뉴 문제. budget 은 cafe_budget_menu 에서만 필수다. */
+    /**
+     * 카페 대화 시작 시 화면이 보내는 메뉴 문제.
+     * childMenuId 는 cafe_menu_total에서 아이가 문제 시작 전에 직접 고른 메뉴다.
+     * budget 은 호환용 cafe_budget_menu 에서만 필수다.
+     */
     public record CafeContext(
             @NotEmpty @Size(max = 10) List<@Valid CafeMenuItem> menuItems,
             @NotBlank @Size(max = 40) String mormiMenuId,
+            @Size(max = 40) String childMenuId,
             Integer budget) {
+
+        /** 옛 클라이언트·테스트의 3필드 생성 계약을 순차 배포 동안 유지한다. */
+        public CafeContext(List<CafeMenuItem> menuItems, String mormiMenuId, Integer budget) {
+            this(menuItems, mormiMenuId, null, budget);
+        }
     }
 
     /** 메뉴 고르기. 예산은 화면이 방문마다 뽑으므로 함께 받되, 서버는 허용 목록의 값만 인정한다. */
@@ -60,7 +70,7 @@ public final class CafeDtos {
     }
 
     /**
-     * 메뉴값 계산. 이 단계의 두 메뉴는 메뉴 고르기 단계와 별개로 다시 뽑히므로 함께 받는다.
+     * 메뉴값 계산. 화면에서 모르미가 하나, 아이가 하나 고른 두 메뉴를 함께 받는다.
      * answerAmount 는 아이가 적어 낸 합계이고, 정답은 서버 가격표로 계산한다.
      */
     public record PaymentRequest(

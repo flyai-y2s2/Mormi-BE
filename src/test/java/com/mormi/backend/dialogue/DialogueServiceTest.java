@@ -20,6 +20,7 @@ import com.mormi.backend.cafe.CafeService;
 import com.mormi.backend.cafe.CafeStage;
 import com.mormi.backend.cafe.CafeDtos.CafeContext;
 import com.mormi.backend.cafe.CafeDtos.CafeMenuItem;
+import com.mormi.backend.cafe.CafeDtos.PaymentRequest;
 import com.mormi.backend.cafe.CafeDtos.QueueContext;
 import com.mormi.backend.cafe.CafeDtos.QueueRequest;
 import com.mormi.backend.cafe.CafeDtos.StageResultResponse;
@@ -181,7 +182,7 @@ class DialogueServiceTest {
         when(dialogueClient.respond("conversation-queue-1", childResponse)).thenReturn(envelope);
         when(cafeService.submitQueue(any(), any(), any())).thenReturn(
                 new StageResultResponse(
-                        visit.getPublicId(), "queue", true, "menu", true, 2, 2, 2, 0, "queue_correct"));
+                        visit.getPublicId(), "queue", true, "calculate", true, 2, 2, 2, 0, "queue_correct"));
 
         Object raw = service.respond(7L, "conversation-queue-1", childResponse);
 
@@ -192,13 +193,80 @@ class DialogueServiceTest {
         assertThat(progress)
                 .containsEntry("stage", "queue")
                 .containsEntry("completed", true)
-                .containsEntry("next_stage", "menu")
+                .containsEntry("next_stage", "calculate")
                 .containsEntry("source", "dialogue_verified_facts");
 
         ArgumentCaptor<QueueRequest> request = ArgumentCaptor.forClass(QueueRequest.class);
         verify(cafeService).submitQueue(any(), any(), request.capture());
         assertThat(request.getValue().chosenCount()).isEqualTo(2);
         assertThat(request.getValue().scaffoldUsed()).isTrue();
+    }
+
+    @Test
+    void cafeCalculationUsesTheChildMenuPinnedBeforeDialogueAndOnlyAiResultFact() throws Exception {
+        DialogueClient dialogueClient = mock(DialogueClient.class);
+        DialogueConversationRepository dialogueRepository = mock(DialogueConversationRepository.class);
+        CafeVisitRepository cafeVisitRepository = mock(CafeVisitRepository.class);
+        CafeService cafeService = mock(CafeService.class);
+        DialogueService service = new DialogueService(
+                dialogueClient,
+                dialogueRepository,
+                mock(LearningSessionRepository.class),
+                mock(AttemptRepository.class),
+                cafeVisitRepository,
+                cafeService,
+                mock(AmusementParkVisitRepository.class),
+                mock(AmusementParkService.class),
+                mock(LearnerService.class),
+                mock(RewardService.class));
+
+        CafeVisit visit = CafeVisit.start(7L);
+        ReflectionTestUtils.setField(visit, "id", 21L);
+        Map<String, Object> cafeContext = Map.of(
+                "menu_items", List.of(
+                        Map.of("id", "americano", "name", "아메리카노", "price", 3000),
+                        Map.of("id", "cookie", "name", "쿠키", "price", 2000),
+                        Map.of("id", "sandwich", "name", "샌드위치", "price", 5000)),
+                "mormi_menu_id", "americano",
+                "child_menu_id", "sandwich");
+        DialogueConversation dialogue = DialogueConversation.forCafeVisit(
+                "conversation-total-1",
+                7L,
+                21L,
+                "cafe_menu_total",
+                1,
+                Map.of("cafe_context", cafeContext));
+        JsonNode childResponse = new ObjectMapper().readTree("{\"turn_id\":\"turn-total-1\"}");
+        JsonNode envelope = new ObjectMapper().readTree("""
+                {
+                  "conversation_id": "conversation-total-1",
+                  "turn": {
+                    "status": "completed",
+                    "state_version": 4,
+                    "completion": {
+                      "outcome": "taught",
+                      "teach_reward_eligible": true,
+                      "verified_facts": {"result": 8000}
+                    }
+                  }
+                }
+                """);
+
+        when(dialogueRepository.findByConversationId("conversation-total-1"))
+                .thenReturn(Optional.of(dialogue));
+        when(cafeVisitRepository.findById(21L)).thenReturn(Optional.of(visit));
+        when(dialogueClient.respond("conversation-total-1", childResponse)).thenReturn(envelope);
+        when(cafeService.submitPayment(any(), any(), any())).thenReturn(
+                new StageResultResponse(
+                        visit.getPublicId(), "calculate", true, "change", true, 1,
+                        8000, 8000, 0, "payment_exact"));
+
+        service.respond(7L, "conversation-total-1", childResponse);
+
+        ArgumentCaptor<PaymentRequest> request = ArgumentCaptor.forClass(PaymentRequest.class);
+        verify(cafeService).submitPayment(any(), any(), request.capture());
+        assertThat(request.getValue().menuIds()).containsExactly("americano", "sandwich");
+        assertThat(request.getValue().answerAmount()).isEqualTo(8000);
     }
 
     @Test
@@ -277,7 +345,7 @@ class DialogueServiceTest {
                 learnerService,
                 mock(RewardService.class));
 
-        // 줄 서기·메뉴·계산을 마쳐 거스름돈까지 온 방문. 앞 돌다리를 다시 눌러도
+        // 줄 서기·계산을 마쳐 거스름돈까지 온 방문. 앞 돌다리를 다시 눌러도
         // (또는 그때 AI 대화 생성이 실패해 저장된 대화가 없어도) 대화는 열려야 한다.
         CafeVisit visit = CafeVisit.start(7L);
         ReflectionTestUtils.setField(visit, "id", 21L);
@@ -367,7 +435,7 @@ class DialogueServiceTest {
                 learnerService,
                 mock(RewardService.class));
 
-        // 카페를 끝낸 방문. 네 단계가 모두 열린 연습 모드라 줄 서기를 다시 열 수 있어야 한다.
+        // 카페를 끝낸 방문. 세 단계가 모두 열린 연습 모드라 줄 서기를 다시 열 수 있어야 한다.
         CafeVisit visit = CafeVisit.start(7L);
         ReflectionTestUtils.setField(visit, "id", 21L);
         visit.advanceTo(CafeStage.COMPLETE);

@@ -189,7 +189,7 @@ public class DialogueService {
         // 단계 제출(CafeService.requireStageReached)과 같은 기준으로 연다. 이미 통과한
         // 돌다리를 다시 눌러도 대화가 열려야 하고, 첫 시도 때 AI 대화 생성이 실패해
         // 저장된 대화가 없는 단계도 뒤늦게 다시 열 수 있어야 한다. 막을 것은 아직
-        // 도달하지 않은 앞선 단계뿐이다. 완료된 방문은 네 단계를 모두 지났으므로
+        // 도달하지 않은 앞선 단계뿐이다. 완료된 방문은 세 제품 단계를 모두 지났으므로
         // 어느 단계든 다시 연습할 수 있다.
         CafeStage requestedStage = stageForScenario(request.scenarioId());
         if (!visit.isCompleted() && !requestedStage.isReachedBy(visit.stage())) {
@@ -603,11 +603,18 @@ public class DialogueService {
     private StageResultResponse syncCalculation(
             DialogueConversation dialogue, JsonNode facts, int attemptNo) {
         Map<String, Object> context = nestedContext(dialogue, "cafe_context");
+        String mormiMenuId = contextString(context, "mormi_menu_id");
+        String childMenuId = optionalContextString(context, "child_menu_id");
+        if (childMenuId == null) {
+            // 구 FE/AI 회차는 child_menu_id가 없을 수 있다. 메뉴판 순서의 첫 다른
+            // 메뉴를 사용한 AI 호환 기본값과 똑같이 복원한다.
+            childMenuId = firstDifferentMenuId(context, mormiMenuId);
+        }
         return cafeService.submitPayment(
                 dialogue.getLearnerId(),
                 cafeVisitPublicId(dialogue),
                 new PaymentRequest(
-                        List.of(contextString(context, "mormi_menu_id"), factText(facts, "child_menu_id")),
+                        List.of(mormiMenuId, childMenuId),
                         factInt(facts, "result"),
                         attemptNo,
                         null));
@@ -647,10 +654,34 @@ public class DialogueService {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("menu_items", menuItems);
         map.put("mormi_menu_id", context.mormiMenuId());
+        if (context.childMenuId() != null) {
+            map.put("child_menu_id", context.childMenuId());
+        }
         if (context.budget() != null) {
             map.put("budget", context.budget());
         }
         return map;
+    }
+
+    private String optionalContextString(Map<String, Object> context, String key) {
+        Object value = context.get(key);
+        return value instanceof String text && !text.isBlank() ? text : null;
+    }
+
+    private String firstDifferentMenuId(Map<String, Object> context, String mormiMenuId) {
+        Object rawItems = context.get("menu_items");
+        if (rawItems instanceof List<?> items) {
+            for (Object rawItem : items) {
+                if (rawItem instanceof Map<?, ?> item) {
+                    Object rawId = item.get("id");
+                    if (rawId instanceof String id && !id.equals(mormiMenuId)) {
+                        return id;
+                    }
+                }
+            }
+        }
+        throw ApiException.serviceUnavailable(
+                "dialogue_context_missing", "합산할 아이 메뉴 정보를 찾지 못했습니다.");
     }
 
     private String cafeVisitPublicId(DialogueConversation dialogue) {

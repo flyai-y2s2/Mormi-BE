@@ -40,7 +40,7 @@ public class CafeService {
             throw ApiException.forbidden("아직 카페가 열리지 않았습니다. 집에서 필수 학습 %d개를 먼저 마쳐 주세요."
                     .formatted(CurriculumCatalog.CAFE_REQUIRED_SESSION_IDS.size()));
         }
-        // 이미 끝낸 방문도 그대로 이어 준다. 네 단계가 모두 열린 연습 모드가 되어
+        // 이미 끝낸 방문도 그대로 이어 준다. 세 단계가 모두 열린 연습 모드가 되어
         // 아이가 원하는 스테이지를 골라 다시 연습할 수 있다.
         CafeVisit visit = visitRepository
                 .findFirstByLearnerIdAndCompletedAtIsNullOrderByIdDesc(learnerId)
@@ -118,6 +118,9 @@ public class CafeService {
         payload.put("expected_total", expected);
 
         if (correct) {
+            // 메뉴 선택은 별도 스테이지가 아니다. 아이가 고른 두 메뉴의 합산을
+            // 맞힌 이 시점이 주문 합계의 단일 권위다.
+            visit.setOrderTotal(expected);
             visit.setPaidAmount(expected);
         }
         return recordStage(
@@ -256,7 +259,7 @@ public class CafeService {
     }
 
     private void requireStageReached(CafeVisit visit, CafeStage stage) {
-        // 완료된 방문은 네 단계를 모두 지났으므로 어느 단계든 다시 연습할 수 있다.
+        // 완료된 방문은 세 단계를 모두 지났으므로 어느 단계든 다시 연습할 수 있다.
         // advanceTo 가 전진 전용이라 재연습 제출이 진행도를 되돌리지는 않는다.
         if (visit.isCompleted()) {
             return;

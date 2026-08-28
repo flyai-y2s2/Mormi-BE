@@ -250,16 +250,19 @@
 | `POST` | `/v1/cafe-visits` | 방문 시작 (해금 검증, 기존 방문 있으면 이어받음) |
 | `GET` | `/v1/cafe-visits/{id}` | 진행 복구 (시도 전체 포함) |
 | `POST` | `/v1/cafe-visits/{id}/queue` | 줄 서기 (짧은 줄 인원수) |
-| `POST` | `/v1/cafe-visits/{id}/menu` | 메뉴 2개 (예산 안) |
+| `POST` | `/v1/cafe-visits/{id}/menu` | 구버전 예산 메뉴 스테이지 호환 제출 |
 | `POST` | `/v1/cafe-visits/{id}/payments` | 메뉴값 계산 (두 메뉴 합계) |
 | `POST` | `/v1/cafe-visits/{id}/change` | 거스름돈 |
 | `POST` | `/v1/cafe-visits/{id}/complete` | 완료 |
 | `POST` | `/v1/cafe-visits/{id}/dialogues` | 현재 카페 단계의 AI 대화 시작·복구 |
 
-`stage = queue | menu | calculate | change | complete`. 다음 돌다리 해금은 서버가 판정합니다. 해금 전 방문은 403.
+저장 호환을 위해 `stage = queue | menu | calculate | change | complete`를 읽습니다. 신규 제품
+진행은 `queue → calculate → change → complete`이며 `menu`는 구버전 방문 복구에만 사용합니다.
+다음 돌다리 해금은 서버가 판정합니다. 해금 전 방문은 403.
 
-네 단계(줄 서기·메뉴·계산·거스름돈)의 **문제는 화면이 방문마다 새로 뽑습니다**. 좌우 인원, 예산,
-계산·거스름돈에 쓰이는 메뉴가 매번 달라지므로 요청에 문제를 함께 싣고, 정오는 서버가 판정합니다.
+세 단계(줄 서기·계산·거스름돈)의 **문제는 화면이 방문마다 새로 뽑습니다**. 합산 단계에서는
+모르미가 메뉴 하나를 정하고 아이가 다른 메뉴 하나를 직접 고른 뒤 두 ID를 요청에 함께 싣습니다.
+메뉴 선택 자체는 별도 채점 단계가 아니고 합계의 정오는 서버가 판정합니다.
 대화의 구조 맥락은 `dialogue_conversations.scenario_context`에 저장합니다. 같은 스테이지를
 다시 열면 BE가 저장된 맥락을 `scenario_context`로 돌려주므로, 새로고침 뒤 화면 숫자와 AI가
 기억하는 숫자가 달라지지 않습니다.
@@ -288,7 +291,7 @@
 - **폐기 예정**: 옛 `"restart": true|false` boolean 은 `start_mode` 가 없을 때만
   해석합니다(true→restart, false→resume). FE가 `start_mode` 로 전환을 마치면 제거합니다.
 
-방문이 `complete` 여도 네 단계 모두 제출·대화가 열립니다. 진행도는 전진 전용이라 재시작이
+방문이 `complete` 여도 세 제품 단계 모두 제출·대화가 열립니다. 진행도는 전진 전용이라 재시작이
 `stage` 를 되돌리지는 않습니다.
 BE는 카페 방문의 `public_id`와 시나리오별 `round`를 각각 AI의
 `learning_session_id`, `conversation_round`로 전달합니다. 따라서 같은 시작 요청은 같은
@@ -299,7 +302,7 @@ BE는 카페 방문의 `public_id`와 시나리오별 `round`를 각각 AI의
 { "left_count": 4, "right_count": 2, "chosen_count": 2,
   "scaffold_used": false, "attempt_no": 1 }
 
-// POST .../menu    budget 은 7000 | 8000 만 허용 (구버전 저장분 9000 | 10000 은 한시 허용)
+// POST .../menu    구버전 클라이언트 호환 전용
 { "menu_ids": ["americano", "cookie"], "budget": 7000, "attempt_no": 1 }
 
 // POST .../payments   두 메뉴값의 합을 아이가 적어 낸다
@@ -316,14 +319,14 @@ BE는 카페 방문의 `public_id`와 시나리오별 `round`를 각각 AI의
 
 - 메뉴 합계는 클라이언트 값이 아니라 **서버 가격표**로 계산합니다. 가격표는 `CafeJourney.tsx` 와 같아야 합니다.
 - 화폐별 최종 구성만 저장하고 −/＋ 버튼 클릭 로그는 저장하지 않습니다.
-- 예산 초과 주문도 **오답으로 기록**합니다(`menu_over_budget`). 다음 단계는 열리지 않습니다.
+- 구버전 예산 메뉴 제출의 초과 주문은 **오답으로 기록**합니다(`menu_over_budget`).
 - **문제 계약 위반은 채점이 아니라 4xx 거절**이고 시도 기록도 남지 않습니다. 줄 인원이
   1~5 를 벗어나거나(`queue_count_range`) 좌우가 같으면(`queue_count_equal`), 같은 메뉴 두 개를
   내면(`menu_duplicate`), 카탈로그에 없는 메뉴면(`menu_unknown`) 거절됩니다.
   코드는 `ERROR_CODES.md` 를 참고합니다.
 
 `POST .../dialogues` 의 문제 컨텍스트는 타입 있는 계약으로 검증합니다. 줄 서기는
-`queue_context`, 나머지 세 단계는 `cafe_context` 를 싣습니다. 계약 위반은 **AI 대화를
+`queue_context`, 계산·거스름돈과 호환 메뉴 시나리오는 `cafe_context` 를 싣습니다. 계약 위반은 **AI 대화를
 만들기 전에 400 으로 거절**하므로, 대화를 끝까지 진행한 뒤 완료 동기화에서 5xx 로
 실패하는 일이 없습니다. 메뉴 ID·가격은 서버 카탈로그와 대조하고(`menu_unknown`,
 `menu_price_mismatch`, `menu_items_duplicate`), `mormi_menu_id` 는 메뉴판 안에 있어야
@@ -335,15 +338,15 @@ BE는 카페 방문의 `public_id`와 시나리오별 `round`를 각각 AI의
   "queue_context": { "left_count": 3, "right_count": 5 },
   "start_mode": "resume" }
 
-// POST .../dialogues  메뉴·계산·거스름돈
-{ "scenario_id": "cafe_budget_menu",
+// POST .../dialogues  2단계 메뉴 합산
+{ "scenario_id": "cafe_menu_total",
   "cafe_context": {
     "menu_items": [
       { "id": "americano", "name": "아메리카노", "price": 3000 },
       { "id": "cookie", "name": "쿠키", "price": 2000 }
     ],
     "mormi_menu_id": "americano",
-    "budget": 8000
+    "child_menu_id": "cookie"
   },
   "start_mode": "restart",
   "request_id": "9f4c…(요청마다 새 UUID)" }

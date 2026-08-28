@@ -53,7 +53,7 @@ public class ProgressService {
                 .orElse(null);
 
         // 진행 중 방문이 없으면 마지막 방문을 돌려준다. 끝낸 방문도 그대로 다시 열어
-        // 네 단계를 연습할 수 있어야 하므로, 새로고침 뒤에도 같은 방문으로 돌아온다.
+        // 세 제품 단계를 연습할 수 있어야 하므로, 새로고침 뒤에도 같은 방문으로 돌아온다.
         String activeVisitId = cafeVisitRepository
                 .findFirstByLearnerIdAndCompletedAtIsNullOrderByIdDesc(learnerId)
                 .or(() -> cafeVisitRepository.findFirstByLearnerIdOrderByIdDesc(learnerId))

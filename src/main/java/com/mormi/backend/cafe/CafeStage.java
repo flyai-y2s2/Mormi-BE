@@ -35,12 +35,21 @@ public enum CafeStage {
     }
 
     public CafeStage next() {
+        // 메뉴 선택은 2단계 합산 문제를 구성하는 화면 준비 동작이지 별도 학습
+        // 스테이지가 아니다. 신규 방문은 줄 서기에서 바로 합산으로 간다.
+        if (this == QUEUE || this == MENU) {
+            return CALCULATE;
+        }
         int index = ORDER.indexOf(this);
         return index >= ORDER.size() - 1 ? COMPLETE : ORDER.get(index + 1);
     }
 
     /** 아직 도달하지 않은 단계를 건너뛰어 제출하는 것을 막는다. */
     public boolean isReachedBy(CafeStage current) {
+        // 옛 배포에서 MENU에 멈춘 방문도 새 3단계 흐름의 합산을 바로 열 수 있다.
+        if (this == CALCULATE && current == MENU) {
+            return true;
+        }
         return ORDER.indexOf(current) >= ORDER.indexOf(this);
     }
 }

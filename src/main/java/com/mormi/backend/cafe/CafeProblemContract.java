@@ -67,6 +67,16 @@ public final class CafeProblemContract {
             throw ApiException.badRequest(
                     "mormi_menu_unknown", "모르미 메뉴가 메뉴판에 없습니다: " + context.mormiMenuId());
         }
+        if (context.childMenuId() != null) {
+            if (!boardIds.contains(context.childMenuId())) {
+                throw ApiException.badRequest(
+                        "child_menu_unknown", "아이 메뉴가 메뉴판에 없습니다: " + context.childMenuId());
+            }
+            if (context.childMenuId().equals(context.mormiMenuId())) {
+                throw ApiException.badRequest(
+                        "menu_duplicate", "모르미와 아이는 서로 다른 메뉴를 골라야 합니다.");
+            }
+        }
     }
 
     /** 제출된 메뉴는 전부 카탈로그에 있어야 하고, 같은 메뉴를 두 번 고를 수 없다. */

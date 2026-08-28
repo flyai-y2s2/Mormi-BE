@@ -19,7 +19,7 @@
 - 집 반복 문제의 정답·오답, 구조화 오개념, 보상 원장 저장
 - 마지막 반복 기록 이후 `POST /v1/learning-sessions/{id}/teaching` 한 번으로 반복 결과 집계 + AI 가르치기 시작
 - AI `TurnContract` 전체를 변경 없이 FE에 전달
-- 카페 네 단계 판정과 단계별 AI 대화 생성, 최초 문제 맥락의 새로고침 복구
+- 카페 세 단계 판정과 단계별 AI 대화 생성, 최초 문제 맥락의 새로고침 복구
 - 놀이동산은 방문·해금만 관리하고 문제·정답·힌트·전이 콘텐츠는 Mormi-AI에 단일화
 - AI가 도움 경로까지 완료하면 `completion.verified_facts`만 사용해 카페 단계 기록을
   동기화하고 `stage_progress`를 FE에 반환
