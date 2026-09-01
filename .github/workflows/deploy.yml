@@ -184,10 +184,12 @@ jobs:
             -c '
           set -eu
           path=/mormi-config/mormi.env
+          directory_gid="$(stat -c %g /mormi-config)"
           temporary="${path}.tmp"
           grep -v '\''^MORMI_OBSERVATION_INGEST_KEY='\'' "${path}" > "${temporary}" || true
           printf '\''MORMI_OBSERVATION_INGEST_KEY=%s\n'\'' "${MORMI_OBSERVATION_INGEST_KEY}" >> "${temporary}"
-          chmod 600 "${temporary}"
+          chown 0:"${directory_gid}" "${temporary}"
+          chmod 640 "${temporary}"
           mv "${temporary}" "${path}"
           '
 
