@@ -178,7 +178,7 @@ jobs:
           docker run --rm \
             --user 0:0 \
             --entrypoint sh \
-            -v /etc/mormi-backend:/mormi-config \
+            -v /etc/mormi-backend:/mormi-config:Z \
             -e MORMI_OBSERVATION_INGEST_KEY="${OBSERVATION_INGEST_KEY}" \
             "${IMAGE_URI}" \
             -c '
