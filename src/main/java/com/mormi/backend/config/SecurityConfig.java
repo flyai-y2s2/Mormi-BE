@@ -58,6 +58,10 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/v1/auth/login").permitAll()
                         .requestMatchers(HttpMethod.GET, "/v1/local-report-admin/**").permitAll()
                         .requestMatchers(HttpMethod.POST, "/v1/local-report-admin/auth-attempt").permitAll()
+                        .requestMatchers(
+                                HttpMethod.POST,
+                                "/v1/local-report-admin/learners/*/ladder-recommendations/*/approve")
+                        .permitAll()
                         // 내부 서버 전용. 인증 토큰이 아니라 서비스 키로만 통과한다.
                         .requestMatchers("/internal/**")
                         .hasAuthority(InternalServiceKeyFilter.SERVICE_AUTHORITY)

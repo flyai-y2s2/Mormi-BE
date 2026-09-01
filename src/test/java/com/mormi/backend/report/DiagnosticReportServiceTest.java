@@ -355,7 +355,7 @@ class DiagnosticReportServiceTest {
         assertThat(report.dataRange().totalLifeVisits()).isEqualTo(1);
         assertThat(report.modes()).extracting(ModeReport::mode).containsExactly(HOME, LIFE);
         assertThat(report.modes().getFirst().domains()).extracting(domain -> domain.label())
-                .contains("돈 세기 단원 · 반복학습");
+                .contains("돈을 세어요 단원 · 반복학습");
         assertThat(report.modes().getLast().domains()).extracting(domain -> domain.label())
                 .contains("메뉴 값 계산하기 단원");
         assertThat(report.evidenceCounts().drillAttempts()).isEqualTo(3);
@@ -398,7 +398,7 @@ class DiagnosticReportServiceTest {
 
         assertThat(report.narrativeFallback()).isTrue();
         assertThat(report.modes()).isNotEmpty();
-        assertThat(report.currentSummary().conceptPerformance().text()).contains("돈 세기");
+        assertThat(report.currentSummary().conceptPerformance().text()).contains("돈을 세어요");
         assertThat(report.currentSummary().explanationChange().text()).contains("발화 근거");
     }
 
@@ -409,11 +409,11 @@ class DiagnosticReportServiceTest {
         DiagnosticReport report = service.current(LEARNER_ID, REPORT_WEEK);
 
         assertThat(report.currentSummary().conceptPerformance().text())
-                .isEqualTo("돈 세기 단원 반복학습 수행은 최근 60%이며 상태는 발달 중입니다.");
+                .isEqualTo("돈을 세어요 단원 반복학습 수행은 최근 60%이며 상태는 발달 중입니다.");
         assertThat(report.currentSummary().conceptPerformance().evidenceRefs())
                 .containsExactly("drill:money-count");
         assertThat(report.observePoint().text())
-                .isEqualTo("돈 세기 단원의 현재 상태는 발달 중이므로 계속 관찰합니다.");
+                .isEqualTo("돈을 세어요 단원의 현재 상태는 발달 중이므로 계속 관찰합니다.");
         assertThat(report.observePoint().evidenceRefs())
                 .containsExactly("observe:drill:money-count");
 
@@ -434,7 +434,7 @@ class DiagnosticReportServiceTest {
         DiagnosticReport report = service.current(LEARNER_ID, REPORT_WEEK);
 
         assertThat(report.improvedPoint().text())
-                .isEqualTo("돈 세기 단원 반복학습 수행은 이전 기록보다 좋아졌습니다.");
+                .isEqualTo("돈을 세어요 단원 반복학습 수행은 이전 기록보다 좋아졌습니다.");
         assertThat(report.improvedPoint().evidenceRefs())
                 .containsExactly("improved:drill:money-count");
     }
@@ -498,7 +498,7 @@ class DiagnosticReportServiceTest {
 
         assertThat(report.evidenceCounts().teachConversations()).isEqualTo(1);
         assertThat(report.modes().getFirst().domains()).extracting(domain -> domain.label())
-                .contains("돈 세기 단원 · 모르미 가르치기");
+                .contains("돈을 세어요 단원 · 모르미 가르치기");
     }
 
     @Test
@@ -546,7 +546,7 @@ class DiagnosticReportServiceTest {
 
         assertThat(report.narrativeFallback()).isFalse();
         assertThat(report.currentSummary().conceptPerformance().text())
-                .isEqualTo("돈 세기 단원 반복학습 수행은 최근 100%이며 상태는 관찰 중입니다.");
+                .isEqualTo("돈을 세어요 단원 반복학습 수행은 최근 100%이며 상태는 관찰 중입니다.");
     }
 
     @Test
@@ -868,7 +868,7 @@ class DiagnosticReportServiceTest {
         assertThat(facts.getValue())
                 .filteredOn(fact -> fact.evidenceId().equals("speech:money-count"))
                 .extracting(ReportFact::statement)
-                .containsExactly("돈 세기 단원 발화 비교에서 공통 검증 요소 1개가 확인되었고 도움 수준은 H3에서 H0로 바뀌었습니다.");
+                .containsExactly("돈을 세어요 단원 발화 비교에서 공통 검증 요소 1개가 확인되었고 도움 수준은 H3에서 H0로 바뀌었습니다.");
         assertThat(facts.getValue()).allMatch(fact -> !fact.statement().contains(" recent "));
     }
 
