@@ -14,9 +14,10 @@ class DeploymentWorkflowContractTest {
         String workflow = Files.readString(Path.of(".github/workflows/deploy.yml"));
 
         assertThat(workflow).contains("MORMI_OBSERVATION_INGEST_KEY");
-        assertThat(workflow).contains("head -c 32 /dev/urandom");
-        assertThat(workflow).contains("never print the value");
+        assertThat(workflow).contains("secrets.MORMI_OBSERVATION_INGEST_KEY");
+        assertThat(workflow).contains("the dedicated observation ingest key is not configured");
         assertThat(workflow).contains("MORMI_OBSERVATION_INGEST_KEY is not configured");
         assertThat(workflow).doesNotContain("echo \"${observation_ingest_key}\"");
+        assertThat(workflow).doesNotContain("echo \"${OBSERVATION_INGEST_KEY}\"");
     }
 }

@@ -131,11 +131,12 @@ jobs:
           IMAGE_URI: ${{ steps.tags.outputs.sha_image }}
           REGISTRY: ${{ steps.ecr.outputs.registry }}
           AWS_REGION: ${{ env.AWS_REGION }}
+          OBSERVATION_INGEST_KEY: ${{ secrets.MORMI_OBSERVATION_INGEST_KEY }}
 
         run: |
           ssh -i ~/.ssh/id_deploy \
               "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-              "IMAGE_URI='${IMAGE_URI}' REGISTRY='${REGISTRY}' AWS_REGION='${AWS_REGION}' bash -s" <<'REMOTE'
+              "IMAGE_URI='${IMAGE_URI}' REGISTRY='${REGISTRY}' AWS_REGION='${AWS_REGION}' OBSERVATION_INGEST_KEY='${OBSERVATION_INGEST_KEY}' bash -s" <<'REMOTE'
 
           set -euo pipefail
 
@@ -167,27 +168,27 @@ jobs:
 
           docker pull "${IMAGE_URI}"
 
-          # Star-note ingestion uses a private AI→BE key. Older hosts may not
-          # have one because the endpoint was deployed before delivery was
-          # enabled. Create it once inside a root helper container, preserve it
-          # in the host-owned env file, and never print the value.
+          # Star-note ingestion uses a dedicated AI→BE key stored as the same
+          # encrypted GitHub Actions secret in both repositories. Persist the
+          # value without printing it so key rotation is applied on deployment.
+          if [ -z "${OBSERVATION_INGEST_KEY:-}" ]; then
+            echo "the dedicated observation ingest key is not configured"
+            exit 1
+          fi
           docker run --rm \
             --user 0:0 \
             --entrypoint sh \
             -v /etc/mormi-backend:/mormi-config \
+            -e MORMI_OBSERVATION_INGEST_KEY="${OBSERVATION_INGEST_KEY}" \
             "${IMAGE_URI}" \
             -c '
           set -eu
           path=/mormi-config/mormi.env
-          current="$(awk -F= '\''$1 == "MORMI_OBSERVATION_INGEST_KEY" {sub(/^[^=]*=/, ""); print; exit}'\'' "${path}")"
-          if [ -z "${current}" ]; then
-            generated="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d " \n")"
-            temporary="${path}.tmp"
-            grep -v '\''^MORMI_OBSERVATION_INGEST_KEY='\'' "${path}" > "${temporary}" || true
-            printf '\''MORMI_OBSERVATION_INGEST_KEY=%s\n'\'' "${generated}" >> "${temporary}"
-            chmod 600 "${temporary}"
-            mv "${temporary}" "${path}"
-          fi
+          temporary="${path}.tmp"
+          grep -v '\''^MORMI_OBSERVATION_INGEST_KEY='\'' "${path}" > "${temporary}" || true
+          printf '\''MORMI_OBSERVATION_INGEST_KEY=%s\n'\'' "${MORMI_OBSERVATION_INGEST_KEY}" >> "${temporary}"
+          chmod 600 "${temporary}"
+          mv "${temporary}" "${path}"
           '
 
           docker rm -f mormi-backend 2>/dev/null || true
