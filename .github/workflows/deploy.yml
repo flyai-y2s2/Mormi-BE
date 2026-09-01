@@ -167,6 +167,29 @@ jobs:
 
           docker pull "${IMAGE_URI}"
 
+          # Star-note ingestion uses a private AI→BE key. Older hosts may not
+          # have one because the endpoint was deployed before delivery was
+          # enabled. Create it once inside a root helper container, preserve it
+          # in the host-owned env file, and never print the value.
+          docker run --rm \
+            --user 0:0 \
+            --entrypoint sh \
+            -v /etc/mormi-backend:/mormi-config \
+            "${IMAGE_URI}" \
+            -c '
+          set -eu
+          path=/mormi-config/mormi.env
+          current="$(awk -F= '\''$1 == "MORMI_OBSERVATION_INGEST_KEY" {sub(/^[^=]*=/, ""); print; exit}'\'' "${path}")"
+          if [ -z "${current}" ]; then
+            generated="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d " \n")"
+            temporary="${path}.tmp"
+            grep -v '\''^MORMI_OBSERVATION_INGEST_KEY='\'' "${path}" > "${temporary}" || true
+            printf '\''MORMI_OBSERVATION_INGEST_KEY=%s\n'\'' "${generated}" >> "${temporary}"
+            chmod 600 "${temporary}"
+            mv "${temporary}" "${path}"
+          fi
+          '
+
           docker rm -f mormi-backend 2>/dev/null || true
 
           # AI와 BE가 같은 EC2에 있다면 컨테이너 이름으로 직접 통신한다.
@@ -242,6 +265,13 @@ jobs:
             | awk -F= '$1 == "MORMI_DIALOGUE_SERVICE_KEY" {sub(/^[^=]*=/, ""); print; exit}')"
           if [ -z "${dialogue_service_key}" ]; then
             echo "MORMI_DIALOGUE_SERVICE_KEY is not configured"
+            exit 1
+          fi
+          observation_ingest_key="$(docker inspect mormi-backend \
+            --format '{{range .Config.Env}}{{println .}}{{end}}' \
+            | awk -F= '$1 == "MORMI_OBSERVATION_INGEST_KEY" {sub(/^[^=]*=/, ""); print; exit}')"
+          if [ -z "${observation_ingest_key}" ]; then
+            echo "MORMI_OBSERVATION_INGEST_KEY is not configured"
             exit 1
           fi
           if ! docker run --rm --network container:mormi-backend \
