@@ -43,10 +43,37 @@ import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 class DialogueServiceTest {
+
+    /**
+     * 단위 테스트에는 DB도 트랜잭션 매니저도 없다. 콜백을 그대로 실행하는 템플릿을 주어
+     * applyTurn() 안쪽 로직이 지금까지와 똑같이 검증되도록 한다. 트랜잭션 경계 자체는
+     * DialogueTransactionBoundaryTest 가 확인한다.
+     */
+    private static TransactionTemplate directTransactions() {
+        return new TransactionTemplate(new PlatformTransactionManager() {
+            @Override
+            public TransactionStatus getTransaction(TransactionDefinition definition) {
+                return new SimpleTransactionStatus();
+            }
+
+            @Override
+            public void commit(TransactionStatus status) {
+            }
+
+            @Override
+            public void rollback(TransactionStatus status) {
+            }
+        });
+    }
 
     @Test
     void jointParkCompletionUnlocksStageWithoutTeachingReward() throws Exception {
@@ -64,7 +91,8 @@ class DialogueServiceTest {
                 visitRepository,
                 parkService,
                 mock(LearnerService.class),
-                mock(RewardService.class));
+                mock(RewardService.class),
+                directTransactions());
 
         AmusementParkVisit visit = AmusementParkVisit.start(7L);
         ReflectionTestUtils.setField(visit, "id", 31L);
@@ -97,8 +125,11 @@ class DialogueServiceTest {
                 }
                 """);
 
+        // applyTurn() 이 트랜잭션을 다시 열고 detached 엔티티를 PK로 재조회한다.
+        ReflectionTestUtils.setField(dialogue, "id", 901L);
         when(dialogueRepository.findByConversationId("conversation-park-1"))
                 .thenReturn(Optional.of(dialogue));
+        when(dialogueRepository.findById(901L)).thenReturn(Optional.of(dialogue));
         when(visitRepository.findById(31L)).thenReturn(Optional.of(visit));
         when(dialogueClient.respond("conversation-park-1", childResponse)).thenReturn(envelope);
         when(parkService.completeFromDialogue(
@@ -149,7 +180,8 @@ class DialogueServiceTest {
                 mock(AmusementParkVisitRepository.class),
                 mock(AmusementParkService.class),
                 learnerService,
-                rewardService);
+                rewardService,
+                directTransactions());
 
         CafeVisit visit = CafeVisit.start(7L);
         ReflectionTestUtils.setField(visit, "id", 21L);
@@ -177,8 +209,11 @@ class DialogueServiceTest {
                 }
                 """);
 
+        // applyTurn() 이 트랜잭션을 다시 열고 detached 엔티티를 PK로 재조회한다.
+        ReflectionTestUtils.setField(dialogue, "id", 902L);
         when(dialogueRepository.findByConversationId("conversation-queue-1"))
                 .thenReturn(Optional.of(dialogue));
+        when(dialogueRepository.findById(902L)).thenReturn(Optional.of(dialogue));
         when(cafeVisitRepository.findById(21L)).thenReturn(Optional.of(visit));
         when(dialogueClient.respond("conversation-queue-1", childResponse)).thenReturn(envelope);
         when(cafeService.submitQueue(any(), any(), any())).thenReturn(
@@ -219,7 +254,8 @@ class DialogueServiceTest {
                 mock(AmusementParkVisitRepository.class),
                 mock(AmusementParkService.class),
                 learnerService,
-                mock(RewardService.class));
+                mock(RewardService.class),
+                directTransactions());
 
         CafeVisit visit = CafeVisit.start(7L);
         ReflectionTestUtils.setField(visit, "id", 21L);
@@ -286,7 +322,8 @@ class DialogueServiceTest {
                 visitRepository,
                 parkService,
                 learnerService,
-                mock(RewardService.class));
+                mock(RewardService.class),
+                directTransactions());
 
         AmusementParkVisit visit = AmusementParkVisit.start(7L);
         ReflectionTestUtils.setField(visit, "id", 31L);
@@ -353,7 +390,8 @@ class DialogueServiceTest {
                 mock(AmusementParkVisitRepository.class),
                 mock(AmusementParkService.class),
                 mock(LearnerService.class),
-                mock(RewardService.class));
+                mock(RewardService.class),
+                directTransactions());
 
         CafeVisit visit = CafeVisit.start(7L);
         ReflectionTestUtils.setField(visit, "id", 21L);
@@ -387,8 +425,11 @@ class DialogueServiceTest {
                 }
                 """);
 
+        // applyTurn() 이 트랜잭션을 다시 열고 detached 엔티티를 PK로 재조회한다.
+        ReflectionTestUtils.setField(dialogue, "id", 904L);
         when(dialogueRepository.findByConversationId("conversation-total-1"))
                 .thenReturn(Optional.of(dialogue));
+        when(dialogueRepository.findById(904L)).thenReturn(Optional.of(dialogue));
         when(cafeVisitRepository.findById(21L)).thenReturn(Optional.of(visit));
         when(dialogueClient.respond("conversation-total-1", childResponse)).thenReturn(envelope);
         when(cafeService.submitPayment(any(), any(), any())).thenReturn(
@@ -424,7 +465,8 @@ class DialogueServiceTest {
                 mock(AmusementParkVisitRepository.class),
                 mock(AmusementParkService.class),
                 learnerService,
-                rewardService);
+                rewardService,
+                directTransactions());
 
         CafeVisit visit = CafeVisit.start(7L);
         ReflectionTestUtils.setField(visit, "id", 21L);
@@ -478,7 +520,8 @@ class DialogueServiceTest {
                 mock(AmusementParkVisitRepository.class),
                 mock(AmusementParkService.class),
                 learnerService,
-                mock(RewardService.class));
+                mock(RewardService.class),
+                directTransactions());
 
         // 줄 서기·계산을 마쳐 거스름돈까지 온 방문. 앞 돌다리를 다시 눌러도
         // (또는 그때 AI 대화 생성이 실패해 저장된 대화가 없어도) 대화는 열려야 한다.
@@ -526,7 +569,8 @@ class DialogueServiceTest {
                 mock(AmusementParkVisitRepository.class),
                 mock(AmusementParkService.class),
                 mock(LearnerService.class),
-                mock(RewardService.class));
+                mock(RewardService.class),
+                directTransactions());
 
         CafeVisit visit = CafeVisit.start(7L);
         ReflectionTestUtils.setField(visit, "id", 21L);
@@ -568,7 +612,8 @@ class DialogueServiceTest {
                 mock(AmusementParkVisitRepository.class),
                 mock(AmusementParkService.class),
                 learnerService,
-                mock(RewardService.class));
+                mock(RewardService.class),
+                directTransactions());
 
         // 카페를 끝낸 방문. 세 단계가 모두 열린 연습 모드라 줄 서기를 다시 열 수 있어야 한다.
         CafeVisit visit = CafeVisit.start(7L);
@@ -649,7 +694,8 @@ class DialogueServiceTest {
                 visitRepository,
                 parkService,
                 learnerService,
-                mock(RewardService.class));
+                mock(RewardService.class),
+                directTransactions());
 
         AmusementParkVisit visit = AmusementParkVisit.start(7L);
         ReflectionTestUtils.setField(visit, "id", 31L);
@@ -719,7 +765,8 @@ class DialogueServiceTest {
                 mock(AmusementParkVisitRepository.class),
                 mock(AmusementParkService.class),
                 mock(LearnerService.class),
-                mock(RewardService.class));
+                mock(RewardService.class),
+                directTransactions());
 
         CafeVisit visit = CafeVisit.start(7L);
         ReflectionTestUtils.setField(visit, "id", 21L);
@@ -748,8 +795,11 @@ class DialogueServiceTest {
                 }
                 """);
 
+        // applyTurn() 이 트랜잭션을 다시 열고 detached 엔티티를 PK로 재조회한다.
+        ReflectionTestUtils.setField(secondRound, "id", 903L);
         when(dialogueRepository.findByConversationId("conversation-queue-2"))
                 .thenReturn(Optional.of(secondRound));
+        when(dialogueRepository.findById(903L)).thenReturn(Optional.of(secondRound));
         when(cafeVisitRepository.findById(21L)).thenReturn(Optional.of(visit));
         when(dialogueClient.respond("conversation-queue-2", childResponse)).thenReturn(envelope);
         when(cafeService.submitQueue(any(), any(), any())).thenReturn(
@@ -782,7 +832,8 @@ class DialogueServiceTest {
                 mock(AmusementParkVisitRepository.class),
                 mock(AmusementParkService.class),
                 learnerService,
-                mock(RewardService.class));
+                mock(RewardService.class),
+                directTransactions());
 
         // 대화를 몇 턴 진행한 뒤 새로고침. 옛 restart=false 여도 start_mode 가 우선한다.
         CafeVisit visit = CafeVisit.start(7L);
@@ -842,7 +893,8 @@ class DialogueServiceTest {
                 mock(AmusementParkVisitRepository.class),
                 mock(AmusementParkService.class),
                 mock(LearnerService.class),
-                mock(RewardService.class));
+                mock(RewardService.class),
+                directTransactions());
 
         CafeVisit visit = CafeVisit.start(7L);
         ReflectionTestUtils.setField(visit, "id", 21L);
@@ -892,7 +944,8 @@ class DialogueServiceTest {
                 mock(AmusementParkVisitRepository.class),
                 mock(AmusementParkService.class),
                 mock(LearnerService.class),
-                mock(RewardService.class));
+                mock(RewardService.class),
+                directTransactions());
 
         CafeVisit visit = CafeVisit.start(7L);
         ReflectionTestUtils.setField(visit, "id", 21L);
@@ -936,7 +989,8 @@ class DialogueServiceTest {
                 mock(AmusementParkVisitRepository.class),
                 mock(AmusementParkService.class),
                 mock(LearnerService.class),
-                mock(RewardService.class));
+                mock(RewardService.class),
+                directTransactions());
 
         LearningSession session = LearningSession.start(7L, "number-count", 42);
         ReflectionTestUtils.setField(session, "id", 11L);
@@ -973,7 +1027,8 @@ class DialogueServiceTest {
                 mock(AmusementParkVisitRepository.class),
                 mock(AmusementParkService.class),
                 learnerService,
-                rewardService);
+                rewardService,
+                directTransactions());
 
         LearningSession session = LearningSession.start(7L, "number-count", 42);
         ReflectionTestUtils.setField(session, "id", 11L);
@@ -1035,7 +1090,8 @@ class DialogueServiceTest {
                 mock(AmusementParkVisitRepository.class),
                 mock(AmusementParkService.class),
                 learnerService,
-                mock(RewardService.class));
+                mock(RewardService.class),
+                directTransactions());
 
         LearningSession session = LearningSession.start(7L, "number-count", 42);
         ReflectionTestUtils.setField(session, "id", 11L);
@@ -1088,7 +1144,8 @@ class DialogueServiceTest {
                 mock(AmusementParkVisitRepository.class),
                 mock(AmusementParkService.class),
                 learnerService,
-                mock(RewardService.class));
+                mock(RewardService.class),
+                directTransactions());
 
         LearningSession session = LearningSession.start(7L, "number-count", 42);
         ReflectionTestUtils.setField(session, "id", 11L);
@@ -1232,7 +1289,8 @@ class DialogueServiceTest {
                 mock(AmusementParkVisitRepository.class),
                 mock(AmusementParkService.class),
                 mock(LearnerService.class),
-                mock(RewardService.class));
+                mock(RewardService.class),
+                directTransactions());
 
         CafeVisit visit = CafeVisit.start(7L);
         ReflectionTestUtils.setField(visit, "id", 21L);
@@ -1264,7 +1322,8 @@ class DialogueServiceTest {
                 mock(AmusementParkVisitRepository.class),
                 mock(AmusementParkService.class),
                 learnerService,
-                rewardService);
+                rewardService,
+                directTransactions());
 
         LearningSession session = LearningSession.start(7L, "number-count", 42);
         ReflectionTestUtils.setField(session, "id", 11L);
