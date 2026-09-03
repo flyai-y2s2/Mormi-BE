@@ -42,6 +42,7 @@ import java.util.Map;
 import java.util.Set;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
 
 /**
@@ -65,6 +66,7 @@ public class DialogueService {
     private final AmusementParkService amusementParkService;
     private final LearnerService learnerService;
     private final RewardService rewardService;
+    private final TransactionTemplate transactionTemplate;
 
     public DialogueService(
             DialogueClient dialogueClient,
@@ -76,7 +78,8 @@ public class DialogueService {
             AmusementParkVisitRepository parkVisitRepository,
             AmusementParkService amusementParkService,
             LearnerService learnerService,
-            RewardService rewardService) {
+            RewardService rewardService,
+            TransactionTemplate transactionTemplate) {
         this.dialogueClient = dialogueClient;
         this.dialogueRepository = dialogueRepository;
         this.sessionRepository = sessionRepository;
@@ -87,6 +90,7 @@ public class DialogueService {
         this.amusementParkService = amusementParkService;
         this.learnerService = learnerService;
         this.rewardService = rewardService;
+        this.transactionTemplate = transactionTemplate;
     }
 
     /** 마지막 drill 저장 이후 호출한다. 반복 결과 저장과 가르치기 시작을 한 API로 묶는다. */
@@ -331,19 +335,58 @@ public class DialogueService {
                 "같은 request_id 가 다른 대화 시작에 이미 사용되었습니다.");
     }
 
-    @Transactional
+    /**
+     * 대화 조회. 아래 respond() 와 같은 이유로 트랜잭션을 걸지 않는다.
+     * GET 이지만 재조회 시점에 단계 통과를 반영할 수 있어 applyTurn() 을 함께 쓴다.
+     */
     public Object getConversation(Long learnerId, String conversationId) {
         DialogueConversation dialogue = requireDialogueOwned(learnerId, conversationId);
         JsonNode envelope = dialogueClient.getConversation(conversationId);
-        return dialogue.isVisitScoped() ? envelopeWithContext(dialogue, envelope) : envelope;
+        return applyTurn(dialogue, envelope);
     }
 
-    /** 원문은 저장하지 않고, 소유권 확인 뒤 AI로만 전달한다. */
-    @Transactional
+    /**
+     * 원문은 저장하지 않고, 소유권 확인 뒤 AI로만 전달한다.
+     *
+     * <p>메서드 전체에 {@code @Transactional} 을 걸지 않는다. 자유 발화 한 턴은 분류기와
+     * 화자를 순차 호출하는 AI 응답을 약 10초 기다리는데, 그 대기를 트랜잭션 안에서 하면
+     * DB 커넥션 하나가 10초 내내 묶인다. 실제 DB 작업은 앞뒤로 수 ms 뿐이라 커넥션의
+     * 99% 가 노는 시간이었고, 기본 풀(10)에서 동시 20명이 천장이 됐다
+     * (부하테스트 2026-08-27: 30명에서 커넥션 대기 p50 +8.6s, 30초 타임아웃 503).
+     *
+     * <p>그래서 한 덩어리 트랜잭션을 셋으로 쪼갠다.
+     * <ol>
+     *   <li>소유권 확인 — 단건 조회 한 번. 조회가 끝나면 커넥션은 바로 반납된다.</li>
+     *   <li>AI 호출 — 트랜잭션 밖. 10초를 기다려도 커넥션을 쥐고 있지 않다.</li>
+     *   <li>결과 반영 — {@link #applyTurn} 이 짧은 트랜잭션을 다시 열어 수 ms 안에 끝낸다.</li>
+     * </ol>
+     */
     public Object respond(Long learnerId, String conversationId, JsonNode response) {
         DialogueConversation dialogue = requireDialogueOwned(learnerId, conversationId);
         JsonNode envelope = dialogueClient.respond(conversationId, response);
-        return dialogue.isVisitScoped() ? envelopeWithContext(dialogue, envelope) : envelope;
+        return applyTurn(dialogue, envelope);
+    }
+
+    /**
+     * AI 응답을 진행 원장에 반영하는 3단계. 여기서만 트랜잭션을 연다.
+     *
+     * <p>1단계에서 읽은 {@code dialogue} 는 그 조회 트랜잭션이 끝나면서 이미 영속성 컨텍스트
+     * 밖(detached)이다. 그 객체로 {@code markCleared()} 를 호출해 봐야 더티 체킹이 걸리지
+     * 않아 {@code cleared_at} 이 저장되지 않는다. 그래서 트랜잭션을 연 뒤 id 로 다시 읽는다.
+     *
+     * <p>단계 반영은 카페/놀이동산 제출과 {@code markCleared()} 를 함께 커밋해야 하므로
+     * 하나의 트랜잭션으로 묶는다. 홈 가르치기는 반영할 진행도가 없어 그냥 통과시킨다.
+     */
+    private Object applyTurn(DialogueConversation dialogue, JsonNode envelope) {
+        if (!dialogue.isVisitScoped()) {
+            return envelope;
+        }
+        Long dialogueId = dialogue.getId();
+        return transactionTemplate.execute(status -> {
+            DialogueConversation attached = dialogueRepository.findById(dialogueId)
+                    .orElseThrow(() -> ApiException.notFound("대화를 찾을 수 없습니다."));
+            return envelopeWithContext(attached, envelope);
+        });
     }
 
     private Map<String, Object> buildPracticeSummary(LearningSession session) {

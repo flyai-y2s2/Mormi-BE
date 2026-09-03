@@ -5,6 +5,17 @@ spring:
   profiles:
     default: local
 
+  # DialogueService.respond() 는 @Transactional 안에서 AI 대화 응답(약 10초)을 기다리므로
+  # 자유 발화 1건이 DB 커넥션 1개를 그 시간 동안 점유한다. 기본 풀(10)로는 동시 사용자
+  # 약 20명이 천장이고(부하테스트 2026-08-27: 30명에서 대기 p50 +8.6s, 30초 타임아웃 503),
+  # 30명 동시 세션을 위해 풀을 넓힌다. 세션이 끝나면 idle 커넥션은 60초 뒤 반납해
+  # RDS(db.t4g) 메모리를 오래 잡지 않는다. 근본 해결은 AI 호출을 트랜잭션 밖으로 빼는 것.
+  datasource:
+    hikari:
+      maximum-pool-size: ${MORMI_DB_POOL_MAX:30}
+      minimum-idle: ${MORMI_DB_POOL_MIN_IDLE:10}
+      idle-timeout: 60000
+
   jpa:
     hibernate:
       ddl-auto: validate
